@@ -1,0 +1,14 @@
+# Core toolkit scripts (wallet_watcher.py, victim_collator.py, link_tracer.py)
+requests
+
+# crypto_address_watcher.py
+feedparser
+beautifulsoup4
+openpyxl
+pandas
+
+# api_server.py
+fastapi
+uvicorn[standard]
+bcrypt
+pyjwt
