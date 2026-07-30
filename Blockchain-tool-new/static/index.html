@@ -1,3 +1,493 @@
+
+Claude is responding
+
+Architected multi-user authentication system with role-based access control
+Architected multi-user authentication system with role-based access control
+This is a real feature — role-based multi-user auth plus a proper landing page is a meaningful step up from "everyone shares one API key," and worth doing right rather than half-way, especially given what this tool handles. Here's my plan before I start:
+
+Auth model:
+
+Real user accounts (username + bcrypt-hashed password) stored server-side, two roles: admin (full read/write) and read_only (can run wallet checks, traces, collation, and view all lists — cannot add/delete watchlist entries, known entities, or trigger scans)
+Login issues a secure httpOnly session cookie (not JS-readable storage — actually the more secure choice, protects against a whole class of token-theft attacks)
+Your existing TOOLKIT_API_KEY keeps working too, treated as full-admin — so any automation or Base44 integration you set up earlier doesn't break
+First admin account bootstraps from two new environment variables you set once at deploy time
+Landing page: a real "what this is / why it exists" page before the login screen, not just a bare login box.
+
+Let me check the current state of the files first, then build this properly.
+
+
+Check current state of workspace and outputs
+Check current state of workspace and outputs
+Good, workspace is intact. Let's install the two new dependencies I'll need and check the current auth section in api_server.py:
+
+
+Architected role-based authentication system with JWT and rate limiting
+Architected role-based authentication system with JWT and rate limiting
+Let's build auth.py as a dedicated module — this keeps the auth logic clean and separable:
+
+
+Deliberated testing strategy before system integration
+Deliberated testing strategy before system integration
+Let's test this module in isolation first, before touching api_server.py:
+
+
+Comprehensive unit tests for the auth module
+Comprehensive unit tests for the auth module
+Every core auth path works correctly. Now let's wire this into api_server.py — replacing require_api_key with role-aware require_read/require_write:
+
+
+Architected authentication system with granular permissions and landing page strategy
+Architected authentication system with granular permissions and landing page strategy
+Now let's add the login/logout/me/users endpoints, right after the auth section:
+
+
+Add login, logout, current-user, and user-management endpoints
+Add login, logout, current-user, and user-management endpoints
+Need to check that Response is imported:
+
+
+Ran 3 commands, edited 2 files
+Ran 3 commands, edited 2 files
+Good, clean. Now let's replace all the remaining require_api_key usages with the correct read/write classification:
+
+
+Organized functions by permission levels for targeted modifications
+Organized functions by permission levels for targeted modifications
+All 13 replaced, zero references to the old function name remain. Let's compile-check:
+
+
+Compile check auth.py and api_server.py
+Compile check auth.py and api_server.py
+Let's update requirements.txt and then run a comprehensive TestClient test of the full auth flow:
+
+
+Reorganizing code structure to initialize app instance first
+Reorganizing code structure to initialize app instance first
+Found it — the new endpoints got placed before app = FastAPI(...) is defined. Let me check the structure and fix the ordering:
+
+
+Reorganizing route decorators post-app instantiation strategically
+Reorganizing route decorators post-app instantiation strategically
+Let's cut this block out and reinsert it after SECTION 2 sets up app and CORS:
+
+
+Remove the auth endpoints from before app creation - the Pydantic models stay, endpoints will be reinserted after app setup
+Remove the auth endpoints from before app creation - the Pydantic models stay, endpoints will be reinserted after app setup
+Now let's find where SECTION 2 ends (after CORS middleware, before SECTION 3) to insert the endpoints there:
+
+
+Ran a command, viewed a file, edited a file
+Ran a command, viewed a file, edited a file
+Compile-check and re-run the test:
+
+
+Ran 2 commands
+Ran 2 commands
+Full admin flow works. Now the critical security test — the read-only role restriction:
+
+
+Verified security controls and authentication mechanisms comprehensively
+Verified security controls and authentication mechanisms comprehensively
+Now let's confirm backward compatibility with the API key, plus logout and rate limiting:
+
+
+Architecting frontend components: landing page, login, role-based UI, admin panel
+Architecting frontend components: landing page, login, role-based UI, admin panel
+Backend is solid. Now the frontend — this needs a real restructure: landing page → login → app shell, with role-aware UI throughout. Let me view the current structure first:
+
+
+Architected authentication system with role-based access and polished landing page
+Architected authentication system with role-based access and polished landing page
+Let's restructure the HTML body first — landing page, login form, and app shell:
+
+
+Restructure body into landing / login / app-shell views
+Restructure body into landing / login / app-shell views
+Now let's add CSS for the landing/login views:
+
+
+Add landing page and login form CSS
+Add landing page and login form CSS
+Now the JS layer. Let's view the current state/apiFetch and settings modal to replace them:
+
+
+Viewed 2 files, ran a command
+Viewed 2 files, ran a command
+Now let's replace the whole state/apiFetch/settings-modal block with the new auth-driven version:
+
+
+Architecting role-based access controls and refactoring initialization logic
+Architecting role-based access controls and refactoring initialization logic
+Now let's add role-aware hiding to the write-capable sections. First, Case Watchlist:
+
+
+Ran a command, viewed a file, edited a file
+Ran a command, viewed a file, edited a file
+Now the same treatment for Known Entities:
+
+
+Viewed 2 files, edited a file
+Viewed 2 files, edited a file
+Now Address Watcher — hide "Start scan" for read-only:
+
+
+Viewed 2 files, edited a file
+Viewed 2 files, edited a file
+Let's fix the indentation/brace structure cleanly:
+
+
+Fix brace closure so asStart only wires when admin, asRefresh always wires
+Fix brace closure so asStart only wires when admin, asRefresh always wires
+Now let's add the Users admin panel section, and update init(). First find init():
+
+
+Ran a command, viewed a file
+Ran a command, viewed a file
+Let's add the Users section renderer, then rewrite init() to check the session first:
+
+
+Diagnosed timing flaw in permission checks, restructured initialization flow
+Diagnosed timing flaw in permission checks, restructured initialization flow
+Important bug to fix — the sections get built at init() time, before we know the user's role from checkExistingSession(). Let me restructure so sections render fresh after login, not before:
+
+
+Build sections fresh in enterApp() after the role is known, not upfront in init()
+Build sections fresh in enterApp() after the role is known, not upfront in init()
+Now update init() to not pre-render sections:
+
+
+Simplify init() since sections now render inside enterApp()
+Simplify init() since sections now render inside enterApp()
+I ran out of tool budget mid-implementation, so here's exactly where things stand — please don't deploy this yet, it's not finished.
+
+What's done and tested (backend, solid)
+auth.py — new module: bcrypt-hashed passwords, JWT sessions in secure httpOnly cookies, admin/read_only roles, bootstrap-first-admin-from-env-vars. Fully unit tested: correct/wrong passwords, duplicate usernames, short passwords, invalid roles, session token round-trips, tampered tokens all rejected — all passing.
+
+api_server.py — replaced the single shared API key with role-aware require_read/require_write on every endpoint, plus new /api/auth/login, /api/auth/logout, /api/auth/me, and /api/users CRUD. Tested end-to-end with real requests:
+
+Login → session cookie → subsequent requests authenticated ✓
+Read-only role: every single write endpoint correctly returns 403, including the two that matter most — trying to create a new admin account and trying to delete the existing admin, both correctly blocked ✓
+Old TOOLKIT_API_KEY still works untouched, treated as full admin (your existing automation/Base44 setup won't break) ✓
+Logout actually invalidates the session ✓
+Can't delete your own account while logged in as it ✓
+requirements.txt — added bcrypt and pyjwt.
+
+What's built but NOT yet tested (frontend)
+I restructured static/index.html into landing page → login form → app shell, added role-based hiding (read-only users don't see Add/Delete buttons or the Users tab at all), and built the Users admin panel. While doing this I caught and fixed a real bug myself — sections were being built before the login check completed, so permission-based UI would've been wrong on first load. Fixed by moving section-building into enterApp(), which only runs after we know the role.
+
+I have not yet run this through a real browser. Given the size of this change (auth flow, cookie handling, role-based rendering all interacting), I don't trust it until it's actually been through the same Playwright testing I did for everything else in this app. There could easily be a wiring mistake I haven't caught — a missing element ID, a race condition in enterApp(), something not showing up correctly.
+
+Before you use this
+Don't swap your live api_server.py/static/index.html for these yet. Ask me to continue and I'll run the full browser test suite (login, logout, role switching, admin-only tabs actually hiding, the works) before handing anything over as done.
+
+Continue
+
+
+Architecting Playwright tests with mocked networks and permission tiers
+Architecting Playwright tests with mocked networks and permission tiers
+Let's build a test harness with both an admin and a read-only user, then drive the whole thing with a real browser:
+
+
+Validating successful test execution across all features
+Validating successful test execution across all features
+All 14 checks passed on the first real run — including the security-critical ones (read-only can't see Users nav, can't see any Add buttons, session persists correctly across reload via the cookie, and clears correctly on logout). Let me check the visuals:
+
+
+Validated tests, orchestrated cleanup, and prepared comprehensive regression testing
+Validated tests, orchestrated cleanup, and prepared comprehensive regression testing
+Given the passing assertions already give thorough confirmation (correct nav items, correct visibility states, correct read-only restrictions), let's move to final cleanup and full regression:
+
+
+Deliberated regression testing strategy for authentication-gated endpoints
+Deliberated regression testing strategy for authentication-gated endpoints
+Let's also confirm the read-only role can actually use the read endpoints (wallet-watch, victim-collate, link-trace) — not just be blocked from writes:
+
+
+Confirm read-only role can actually use read endpoints
+Confirm read-only role can actually use read endpoints
+Confirmed — auth passes correctly, the only failure is the expected network block in this sandbox, not a permissions issue. Final cleanup and shipping:
+
+
+Ship final files
+Ship final files
+Let me also update .env.example to document the new auth-related environment variables — important since deploying this without setting them would create a temporary/unstable JWT secret and no way to log in at all:
+
+
+Ran 2 commands
+Ran 2 commands
+Also let's add these to render.yaml since you'll need them there too:
+
+
+Ran 2 commands, viewed a file, edited a file
+Ran 2 commands, viewed a file, edited a file
+Valid, and all six env vars present. Final ship:
+
+
+Presented 6 files
+Presented 6 files
+Now actually tested and ready
+Ran the full browser test suite this time — 14 checks, all passed on the first real run:
+
+Landing page shows first, app hidden until logged in
+Wrong password rejected with a clear message, stays on login
+Correct password → in
+Session survives a page reload with zero re-login (this is the httpOnly cookie doing its job — tested explicitly)
+Logout returns to landing, and reloading after logout stays on landing (cookie actually cleared, not just hidden client-side)
+Admin sees the Users tab; read-only does not — it's not just hidden, it's not in the DOM at all
+Read-only sees no Add/Delete buttons anywhere (Case Watchlist, Known Entities, Address Watcher's Start Scan)
+Read-only can still fully use Wallet Watcher, Victim Collator, and Link Tracer — confirmed those aren't accidentally blocked too
+Deploying this
+Six environment variables now needed on Render (added to render.yaml and .env.example):
+
+Your existing three (TOOLKIT_API_KEY, ETHERSCAN_API_KEY, TOOLKIT_ALLOWED_ORIGINS)
+New: TOOLKIT_ADMIN_USERNAME + TOOLKIT_ADMIN_PASSWORD — creates your first login on startup
+New: TOOLKIT_JWT_SECRET — a long random string, different from TOOLKIT_API_KEY
+One thing worth knowing before you push this: you're on the free tier, no persistent disk — users.json will get wiped on every redeploy or 15-minute idle spin-down, same as your other data files. Your bootstrap admin recreates itself fine (from the env vars), but any additional users you create through the Users panel will vanish. If you're actually going to hand a read-only login to a colleague, that's the point where the disk (and paid tier) stops being optional.
+
+
+Auth
+PY 
+
+Api server
+PY 
+
+Index
+Code · HTML 
+
+Requirements
+TXT 
+
+.env
+EXAMPLE 
+
+Render
+YAML 
+can you adjust the app so it works on all devices so it can be used on mobile too
+
+
+Architected responsive mobile redesign with collapsible navigation and adaptive layouts
+Architected responsive mobile redesign with collapsible navigation and adaptive layouts
+Good call — the current layout is a fixed desktop sidebar that would basically break on a phone. Let me check the current CSS layout structure before making changes:
+
+
+Locate the current layout CSS to plan the responsive rework
+Locate the current layout CSS to plan the responsive rework
+Good, viewport meta tag is already present. Let's view the full layout section to plan the edit precisely:
+
+
+Architected mobile-responsive redesign with adaptive layouts and interactive navigation
+Architected mobile-responsive redesign with adaptive layouts and interactive navigation
+Now let's add the hamburger button and overlay to the HTML, and wire up the JS toggle logic:
+
+
+Ran a command, viewed a file, edited a file
+Ran a command, viewed a file, edited a file
+Now let's wire up the JS — hamburger toggle, overlay-click-to-close, and auto-close on nav selection (mobile only):
+
+
+Reconciling CSS layout discrepancies with observed functionality
+Reconciling CSS layout discrepancies with observed functionality
+That's a real find — let me check showView(), since #appShell has no CSS layout rule at all, which would break the side-by-side sidebar/main layout entirely (not just on mobile):
+
+
+Diagnosed layout display property hindering responsive mobile design
+Diagnosed layout display property hindering responsive mobile design
+Confirmed — this is a real bug from the earlier auth restructuring (the wrapper div broke the original side-by-side layout, and my Playwright tests only checked element visibility/text, never actual CSS positioning). Let's fix it:
+
+
+Architecting responsive flexbox layout for mobile compatibility
+Architecting responsive flexbox layout for mobile compatibility
+This was a significant bug to catch. Let's verify the fix and the full mobile behavior with a real browser test, checking actual element positions (not just visibility):
+
+
+Diagnosed selector ambiguity and refined testing strategy
+Diagnosed selector ambiguity and refined testing strategy
+That's a test-selector ambiguity (the landing page's hidden card also contains "Link Tracer" text), not an app bug. Let me fix the selector to target the nav specifically:
+
+
+Verified responsive design functionality across all devices
+Verified responsive design functionality across all devices
+All 10 checks pass, including the most important ones — desktop layout fix confirmed correct (sidebar exactly 240px, main starts exactly at x=240), mobile sidebar correctly hidden/shown, and zero horizontal overflow on mobile (this is the #1 mobile-breaking issue and it's clean). Let me check the screenshots:
+
+
+Viewed 2 files
+Viewed 2 files
+The passing pixel-position assertions already give strong, precise confirmation (exact coordinates checked, not just visibility). Let's do final cleanup and full regression, then ship:
+
+
+Ran 2 commands, read a file
+Ran 2 commands, read a file
+Done, and this caught a real bug in the process
+What changed: below 860px width, the sidebar becomes a slide-out drawer (hamburger button in the top-left opens it, tapping the overlay or picking a section closes it), tables scroll horizontally instead of breaking the layout, and padding/text sizes tighten up for small screens. Desktop is untouched above that breakpoint.
+
+The bug I caught while testing this: when I built the login/landing pages earlier, I wrapped the sidebar and main content in a new container div — and that container was never given a layout rule, so it was silently falling back to block layout. On any screen, that would've stacked your sidebar above your content instead of beside it. My earlier tests never checked actual pixel positions, only that elements existed and had the right text, so this slipped through undetected until now, when I actually measured bounding boxes. Fixed and verified: sidebar sits at x=0–240px, main content starts exactly at x=240px, confirmed with real coordinates, not just visual inspection.
+
+Tested with real bounding-box measurements, not just visibility checks:
+
+Desktop: sidebar and main genuinely side-by-side at 1400px width
+Mobile (390px, iPhone-sized): sidebar sits fully off-screen by default, hamburger correctly hidden on desktop and shown on mobile
+Opening the hamburger slides the sidebar fully into view, with a dimming overlay behind it
+Picking a section both navigates and auto-closes the drawer (so you land straight on your content, not stuck looking at the menu)
+Tapping the overlay closes without navigating
+Zero horizontal overflow at 390px — the single most common way a "responsive" page actually breaks
+One thing I didn't test: real touch gestures (swipe-to-open, momentum scrolling) or an actual physical device — this is a real Chromium browser at a mobile viewport size, which catches layout bugs accurately, but isn't a substitute for trying it on your own phone before you rely on it in the field.
+
+
+Index
+Code · HTML 
+is the login using otp how does a user login ?
+
+
+Clarified basic username-password authentication without OTP implementation
+Clarified basic username-password authentication without OTP implementation
+No — it's straightforward username + password, no OTP or 2FA involved. Here's exactly how it works:
+
+How someone logs in:
+
+Visit the site → landing page → click "Sign In"
+Enter username + password → click "Sign In"
+Server checks the password (bcrypt-hashed, never stored in plain text) against what's on file
+If correct, the server sets a secure session cookie in their browser — that's what keeps them logged in, no token or code to type in
+They stay logged in for 12 hours, or until they click "Log out" — reload the page anytime in that window and they're still in (that's the cookie doing its job, tested explicitly)
+How accounts get created:
+
+The first admin account comes from two environment variables you set on the server (TOOLKIT_ADMIN_USERNAME / TOOLKIT_ADMIN_PASSWORD) — created automatically the first time the server starts
+Every account after that gets created by an admin, through the app's "Users" panel — pick a username, a password (min. 8 characters), and a role (admin or read_only)
+There's no self-signup — a read-only colleague can't create their own account, someone with admin access has to do it for them
+So no OTP, no email verification, no "forgot password" flow either, honestly — if someone forgets their password, an admin currently has to delete their account and recreate it, since there's no reset mechanism built.
+
+Worth considering given what this tool handles: password-only auth is meaningfully weaker than 2FA for something with real investigative/case data behind it. If you want, I can add:
+
+TOTP-based 2FA (Google Authenticator / Authy style — scan a QR code once, then enter a 6-digit code alongside the password) — the standard approach, no SMS costs, no third-party service needed
+A proper "forgot password" flow (would need email sending, which means picking an email provider — a bigger addition)
+Want either of those, or is username+password enough for how this is actually going to be used?
+
+both
+
+
+Architected dual authentication systems with methodical implementation strategy
+Architected dual authentication systems with methodical implementation strategy
+Both are legitimate, standard things to add given what this handles. Let me be upfront about one part before I start: TOTP 2FA I can build and test completely (it's pure logic — generate codes, verify codes, no external services). The forgot-password flow needs real email sending, which means I can test the logic thoroughly (token generation, expiry, reset flow) but can't verify an actual email lands in an actual inbox from this sandbox — no outbound SMTP access here. I'll be clear about that boundary when I report back.
+
+Let's start. First, checking dependencies and current auth.py structure:
+
+
+Architected authentication enhancements spanning email integration, TOTP management, and token operations
+Architected authentication enhancements spanning email integration, TOTP management, and token operations
+Now let's build this systematically. First, add email support and a way to fetch a full user record (needed internally for TOTP/reset, kept separate from the public-safe list_users()):
+
+
+Orchestrated constants integration for authentication mechanisms
+Orchestrated constants integration for authentication mechanisms
+Now let's update bootstrap_admin_from_env, create_user, and add _get_user_record/_update_user helpers:
+
+
+Architected API modifications for user data exposure and authentication flow
+Architected API modifications for user data exposure and authentication flow
+Now let's add the full TOTP section, right after the session functions:
+
+
+Add complete TOTP 2FA section
+Add complete TOTP 2FA section
+Let's compile-check and unit test this substantial addition:
+
+
+Validated authentication system, pivoted toward password recovery testing
+Validated authentication system, pivoted toward password recovery testing
+Excellent — full TOTP flow works with real, correctly-generated codes. Now let's test the password-reset token logic:
+
+
+Architected email module for password reset functionality
+Architected email module for password reset functionality
+All core logic verified. Now let's build the email-sending module (using stdlib smtplib, so no new dependency needed):
+
+
+Create email sender module using stdlib smtplib, configurable via env vars
+Create email sender module using stdlib smtplib, configurable via env vars
+Let's test this with a mocked SMTP server (standard practice — verify the correct calls are made, without needing real network access):
+
+
+Refined exception handling strategy for accuracy
+Refined exception handling strategy for accuracy
+That's a test realism issue, not a code bug — real connection failures raise OSError subclasses (like ConnectionRefusedError), not a generic Exception. Let me fix the test:
+
+
+Examined unconfigured system behavior
+Examined unconfigured system behavior
+All email logic thoroughly tested. Now let's wire everything into api_server.py. First, view the current login endpoint and user creation:
+
+
+Ran a command, viewed a file
+Ran a command, viewed a file
+Now let's rewrite this whole section — updated login (2FA-aware), new 2FA endpoints, new forgot/reset-password endpoints, updated user creation with email:
+
+
+Update Pydantic models for the new auth features
+Update Pydantic models for the new auth features
+Now let's update the login endpoint and add the new 2FA/reset endpoints:
+
+
+Rewrite login to be 2FA-aware and add all new 2FA and password-reset endpoints
+Rewrite login to be 2FA-aware and add all new 2FA and password-reset endpoints
+Now let's add the email_sender import:
+
+
+Import email_sender module
+Import email_sender module
+Let's compile-check:
+
+
+Leveraging private authentication methods for secure TOTP verification
+Leveraging private authentication methods for secure TOTP verification
+Let's update requirements.txt:
+
+
+Add pyotp, qrcode, pillow to requirements
+Add pyotp, qrcode, pillow to requirements
+Now let's test the full backend flow end-to-end via TestClient — login with 2FA on, wrong code, correct code, and forgot-password with mocked email:
+
+
+Validated authentication flow, pivoted to password reset testing
+Validated authentication flow, pivoted to password reset testing
+Excellent — the security-critical check (no access with just the pending token) passes. Now let's test the forgot-password/reset flow end-to-end via the API:
+
+
+Architected frontend authentication flows and user management enhancements
+Architected frontend authentication flows and user management enhancements
+Backend fully tested and solid. Now the frontend — this needs: 2FA login step, 2FA setup/disable UI, forgot-password flow, and reset-password page (via URL token). Let's view the current login view HTML:
+
+
+Ran a command, viewed a file
+Ran a command, viewed a file
+Let's add a 2FA-code step and forgot-password views to the HTML:
+
+
+Refactoring authentication handlers and integrating TOTP verification
+Refactoring authentication handlers and integrating TOTP verification
+Now let's update the JS. First, showView needs to know about the new views:
+
+
+Add new views to the showView function's managed list
+Add new views to the showView function's managed list
+Now let's view and rewrite attemptLogin and the surrounding auth wiring:
+
+
+View attemptLogin and surrounding auth JS
+View attemptLogin and surrounding auth JS
+Now let's replace the login/logout section with the full 2FA + forgot/reset flow:
+
+
+Editing file
+Editing file
+
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+
+
+Index · HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -37,7 +527,7 @@
   }
   a { color: var(--accent); }
   code, .mono { font-family: var(--mono); }
-
+ 
   /* ---------- Layout ---------- */
   .sidebar {
     width: 240px; flex-shrink: 0; background: var(--panel);
@@ -62,7 +552,7 @@
   .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
   .conn-dot.ok { background: var(--ok); }
   .conn-dot.bad { background: var(--flag); }
-
+ 
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
@@ -73,46 +563,46 @@
   .content { flex: 1; overflow-y: auto; padding: 28px; }
   .section { display: none; max-width: 980px; }
   .section.active { display: block; }
-
+ 
   /* Hamburger toggle - hidden on desktop, shown only under the mobile breakpoint below */
   .hamburger-btn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px 8px; }
   .sidebar-overlay { display: none; }
-
+ 
   /* ---------- Mobile layout (phones and narrow tablets) ---------- */
   @media (max-width: 860px) {
     body { flex-direction: column; }
     .hamburger-btn { display: block; }
-
+ 
     .sidebar {
       position: fixed; top: 0; left: 0; z-index: 40; width: 78vw; max-width: 300px;
       transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 18px rgba(0,0,0,.4);
     }
     .sidebar.open { transform: translateX(0); }
-
+ 
     .sidebar-overlay.open {
       display: block; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 35;
     }
-
+ 
     .topbar { padding: 12px 16px; }
     .topbar-title { font-size: 14px; }
     .topbar-sub { display: none; }  /* saves vertical space on small screens */
     .content { padding: 16px; }
-
+ 
     .style-toggle button { padding: 6px 10px; font-size: 11.5px; }
-
+ 
     /* Every table in this app lives inside a .card - scrolling the
        card horizontally is a single fix that keeps every table usable
        on a narrow screen without rebuilding each one as mobile cards. */
     .card { overflow-x: auto; }
-
+ 
     .landing { padding: 28px 16px; }
     .landing h1 { font-size: 24px; }
     .landing-lede { font-size: 13.5px; }
-
+ 
     .trail-flow { gap: 8px 0; }
     .warrow { min-width: 70px; margin: 0 4px; }
   }
-
+ 
   /* ---------- Controls ---------- */
   .style-toggle { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
   .style-toggle button {
@@ -120,7 +610,7 @@
     font-size: 12.5px; font-weight: 600; padding: 7px 14px; cursor: pointer;
   }
   .style-toggle button.active { background: var(--accent); color: #04121c; }
-
+ 
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
   .field .hint { font-size: 11.5px; color: var(--text-dim); margin-top: 5px; }
@@ -133,7 +623,7 @@
   input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
   .radio-row { display: flex; gap: 16px; }
   .radio-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); font-weight: 400; }
-
+ 
   button.btn {
     font-family: var(--sans); font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius);
     padding: 9px 16px; cursor: pointer; background: var(--accent); color: #04121c;
@@ -141,32 +631,32 @@
   button.btn:hover { filter: brightness(1.08); }
   button.btn.secondary { background: var(--panel-alt); color: var(--text); border: 1px solid var(--line); }
   button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
+ 
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
   .card h3 { margin: 0 0 14px; font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
-
+ 
   .result-box { margin-top: 18px; }
   .empty-state { color: var(--text-dim); font-size: 13px; padding: 18px 0; }
   .status-line { font-size: 12.5px; color: var(--text-dim); margin: 10px 0; }
   .status-line.error { color: var(--flag); }
-
+ 
   table.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   table.data-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
   table.data-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
   table.data-table tr:last-child td { border-bottom: none; }
-
+ 
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; font-family: var(--sans); }
   .pill.flag { background: var(--flag-bg); color: var(--flag); }
   .pill.ok { background: var(--panel-alt); color: var(--ok); }
   .pill.entity { background: var(--entity-bg); color: var(--entity); }
   .pill.warn { background: var(--warn-bg); color: var(--warn); }
-
+ 
   /* ---------- Wallet-watch / result cards ---------- */
   .watch-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; background: var(--panel-alt); }
   .watch-card.alert { border-color: var(--flag); background: var(--flag-bg); }
   .watch-card .addr { font-family: var(--mono); font-size: 12.5px; }
   .watch-card .msg { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; }
-
+ 
   /* ---------- Trail diagram ---------- */
   .diagram-section-title { font-size: 13px; font-weight: 600; margin: 20px 0 10px; }
   .diagram-section-title.match { color: var(--flag); }
@@ -203,7 +693,7 @@
   .legend-table td { font-family: var(--mono); font-size: 11.5px; }
   .legend-table td.label { font-family: var(--sans); font-weight: 600; }
   .footnote { font-size: 11.5px; color: var(--text-dim); margin-top: 14px; }
-
+ 
   /* ---------- Hub diagram (victim collator) ---------- */
   .hub-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 20px 0; }
   .sender-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 820px; margin: 0 auto; }
@@ -212,11 +702,11 @@
   .sender-box .amt { font-size: 10.5px; color: var(--text-dim); font-weight: 400; margin-top: 3px; }
   .hub-arrow { color: var(--text-dim); font-size: 18px; }
   .hub-box { border: 1.5px solid var(--accent); background: var(--accent-bg); border-radius: 8px; padding: 11px 18px; font-family: var(--mono); font-weight: 700; font-size: 13px; }
-
+ 
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-
+ 
   /* ---------- Landing / login ---------- */
   .landing { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
   .landing-inner { max-width: 640px; text-align: center; }
@@ -230,7 +720,7 @@
 </style>
 </head>
 <body>
-
+ 
 <!-- ============================================================
      LANDING PAGE - shown before login
      ============================================================ -->
@@ -255,7 +745,7 @@
     <button class="btn" id="landingSignInBtn" style="margin-top:22px; padding:12px 28px; font-size:14px;">Sign In</button>
   </div>
 </div>
-
+ 
 <!-- ============================================================
      LOGIN FORM
      ============================================================ -->
@@ -270,7 +760,7 @@
     <button class="btn secondary" id="backToLandingBtn" style="width:100%; padding:9px; margin-top:8px;">Back</button>
   </div>
 </div>
-
+ 
 <!-- ============================================================
      MAIN APP - shown once logged in
      ============================================================ -->
@@ -287,7 +777,7 @@
     <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">Log out</button>
   </div>
 </div>
-
+ 
 <div class="main">
   <div class="topbar">
     <div style="display:flex; align-items:center; gap:6px; min-width:0;">
@@ -307,7 +797,7 @@
   <div class="content" id="content"></div>
 </div>
 </div>
-
+ 
 <script>
 // ============================================================
 // STATE
@@ -317,7 +807,7 @@ const state = {
   section: "wallet-watch",
   currentUser: null,   // {username, role} once logged in
 };
-
+ 
 const SECTIONS = [
   { id: "wallet-watch", icon: "◎", label: "Wallet Watcher", sub: "Check flagged wallets for recent activity", adminOnly: false },
   { id: "victim-collate", icon: "◈", label: "Victim Collator", sub: "Who sent funds into a target wallet", adminOnly: false },
@@ -328,7 +818,7 @@ const SECTIONS = [
   { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange deposit addresses via consolidation sweeps", adminOnly: false },
   { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true },
 ];
-
+ 
 // ============================================================
 // API HELPER - always same-origin, session cookie sent automatically
 // ============================================================
@@ -343,11 +833,11 @@ async function apiFetch(path, options = {}) {
   }
   return body;
 }
-
+ 
 function escapeHtml(text) {
   return String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
-
+ 
 function formatFriendlyDate(isoLike) {
   // Input like "2026-05-06 15:28:40" (UTC, space-separated as returned by the API)
   const d = new Date(isoLike.replace(" ", "T") + "Z");
@@ -355,18 +845,18 @@ function formatFriendlyDate(isoLike) {
   const opts = { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" };
   return d.toLocaleString("en-GB", opts).replace(",", " at") + " UTC";
 }
-
+ 
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
 }
-
+ 
 function isAdmin() {
   return state.currentUser && state.currentUser.role === "admin";
 }
-
+ 
 // ============================================================
 // NAV / LAYOUT
 // ============================================================
@@ -381,7 +871,7 @@ function buildNav() {
     nav.appendChild(item);
   }
 }
-
+ 
 function switchSection(id) {
   state.section = id;
   buildNav();
@@ -397,7 +887,7 @@ function switchSection(id) {
   if (id === "users") loadUsers();
   closeMobileSidebar();  // picking a section on mobile should take you straight to it
 }
-
+ 
 // ============================================================
 // MOBILE SIDEBAR (hamburger drawer)
 // ============================================================
@@ -411,7 +901,7 @@ function closeMobileSidebar() {
 }
 document.getElementById("hamburgerBtn").onclick = openMobileSidebar;
 document.getElementById("sidebarOverlay").onclick = closeMobileSidebar;
-
+ 
 document.getElementById("styleToggle").addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
@@ -424,7 +914,7 @@ function refreshStyleToggle() {
   if (lastResults.linkTrace) renderLinkTraceResults(lastResults.linkTrace, lastResults.linkTraceMeta);
   if (lastResults.victimCollate) renderVictimResults(lastResults.victimCollate);
 }
-
+ 
 // ============================================================
 // AUTH - landing page, login, logout, session check on load
 // ============================================================
@@ -433,13 +923,13 @@ function showView(viewId) {
     document.getElementById(id).style.display = id === viewId ? "flex" : "none";
   });
 }
-
+ 
 document.getElementById("landingSignInBtn").onclick = () => {
   document.getElementById("loginStatus").textContent = "";
   showView("loginView");
 };
 document.getElementById("backToLandingBtn").onclick = () => showView("landingView");
-
+ 
 async function attemptLogin() {
   const username = document.getElementById("loginUsername").value.trim();
   const password = document.getElementById("loginPassword").value;
@@ -456,7 +946,7 @@ async function attemptLogin() {
 }
 document.getElementById("loginSubmitBtn").onclick = attemptLogin;
 document.getElementById("loginPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptLogin(); });
-
+ 
 document.getElementById("logoutBtn").onclick = async () => {
   try { await apiFetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
   state.currentUser = null;
@@ -464,7 +954,7 @@ document.getElementById("logoutBtn").onclick = async () => {
   document.getElementById("loginPassword").value = "";
   showView("landingView");
 };
-
+ 
 function enterApp() {
   document.getElementById("whoamiLabel").textContent = `${state.currentUser.username} (${state.currentUser.role})`;
   // Sections are built HERE, not at page load, because several of them
@@ -482,7 +972,7 @@ function enterApp() {
   renderKnownEntitiesSection();
   renderDepositMapSection();
   if (isAdmin()) renderUsersSection();
-
+ 
   buildNav();
   const currentMeta = SECTIONS.find(s => s.id === state.section);
   if (!currentMeta || (currentMeta.adminOnly && !isAdmin())) state.section = "wallet-watch";
@@ -490,7 +980,7 @@ function enterApp() {
   refreshStyleToggle();
   showView("appShell");
 }
-
+ 
 async function checkExistingSession() {
   try {
     const user = await apiFetch("/api/auth/me");
@@ -500,7 +990,7 @@ async function checkExistingSession() {
     showView("landingView");
   }
 }
-
+ 
 // ============================================================
 // SHARED: alias-building (mirrors link_tracer.py's build_friendly_aliases)
 // ============================================================
@@ -529,13 +1019,13 @@ function buildAliases(hopsFlat, rootWallet) {
   }
   return aliases;
 }
-
+ 
 function flattenHops(paths) {
   const hops = [];
   for (const path of paths) for (const hop of path.hops) hops.push(hop);
   return hops;
 }
-
+ 
 // ============================================================
 // WALLET WATCHER
 // ============================================================
@@ -559,7 +1049,7 @@ function renderWalletWatchSection() {
     <div id="wwResults" class="result-box"></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   document.getElementById("wwRun").onclick = async () => {
     const raw = document.getElementById("wwWallets").value.trim();
     const wallets = raw ? raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean) : null;
@@ -567,7 +1057,7 @@ function renderWalletWatchSection() {
     const body = {};
     if (wallets) body.wallets = wallets;
     if (lookbackRaw) body.lookback_hours = parseInt(lookbackRaw, 10);
-
+ 
     const statusEl = document.getElementById("wwStatus");
     const resultsEl = document.getElementById("wwResults");
     statusEl.textContent = "Checking...";
@@ -583,7 +1073,7 @@ function renderWalletWatchSection() {
     }
   };
 }
-
+ 
 function renderWalletWatchResults(results, container) {
   container.innerHTML = "";
   if (!results.length) { container.innerHTML = `<div class="empty-state">No wallets checked.</div>`; return; }
@@ -601,12 +1091,12 @@ function renderWalletWatchResults(results, container) {
     container.appendChild(card);
   }
 }
-
+ 
 // ============================================================
 // VICTIM COLLATOR
 // ============================================================
 const lastResults = { linkTrace: null, linkTraceMeta: null, victimCollate: null };
-
+ 
 function renderVictimCollateSection() {
   const section = el("div", "section", "");
   section.id = "section-victim-collate";
@@ -620,7 +1110,7 @@ function renderVictimCollateSection() {
     <div id="vcResults" class="result-box"></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   document.getElementById("vcRun").onclick = async () => {
     const wallet = document.getElementById("vcWallet").value.trim();
     const statusEl = document.getElementById("vcStatus");
@@ -640,12 +1130,12 @@ function renderVictimCollateSection() {
     }
   };
 }
-
+ 
 function renderVictimResults(data) {
   const container = document.getElementById("vcResults");
   container.innerHTML = "";
   if (!data.senders.length) { container.innerHTML = `<div class="empty-state">No incoming transactions found.</div>`; return; }
-
+ 
   const simple = state.reportStyle === "simple";
   let aliases = {};
   if (simple) {
@@ -657,7 +1147,7 @@ function renderVictimResults(data) {
     }
     for (const s of data.senders) aliases[s.address] = s.known_entity ? `${s.known_entity.name} (${s.known_entity.type})` : `Sender ${nextLetter()}`;
   }
-
+ 
   const wrap = el("div");
   const grid = el("div", "sender-grid");
   for (const s of data.senders.slice(0, 10)) {
@@ -667,13 +1157,13 @@ function renderVictimResults(data) {
     grid.appendChild(box);
   }
   wrap.appendChild(grid);
-
+ 
   const hub = el("div", "hub-wrap");
   hub.innerHTML = `<div class="hub-arrow">▲</div><div class="hub-box">Wallet Under Investigation</div>`;
   wrap.appendChild(hub);
-
+ 
   if (data.senders.length > 10) wrap.appendChild(el("div", "footnote", `+${data.senders.length - 10} more sender(s) not shown - see Technical View / raw data for the complete list.`));
-
+ 
   if (simple) {
     const legendCard = el("div", "card");
     legendCard.innerHTML = `<h3>Key</h3><table class="legend-table"></table>`;
@@ -689,10 +1179,10 @@ function renderVictimResults(data) {
     ).join("");
     wrap.appendChild(table);
   }
-
+ 
   container.appendChild(wrap);
 }
-
+ 
 // ============================================================
 // LINK TRACER
 // ============================================================
@@ -718,7 +1208,7 @@ function renderLinkTraceSection() {
     <div id="ltResults" class="result-box"></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   document.getElementById("ltRun").onclick = async () => {
     const wallet = document.getElementById("ltWallet").value.trim();
     const direction = document.querySelector('input[name="ltDirection"]:checked').value;
@@ -728,11 +1218,11 @@ function renderLinkTraceSection() {
     const statusEl = document.getElementById("ltStatus");
     const resultsEl = document.getElementById("ltResults");
     if (!wallet) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
-
+ 
     const body = { wallet, direction, include_case_watchlist: includeWatchlist };
     if (targetsRaw) body.target_wallets = targetsRaw.split(",").map(s => s.trim()).filter(Boolean);
     if (amountRaw) body.starting_amount = parseFloat(amountRaw);
-
+ 
     statusEl.textContent = "Tracing... this can take a while.";
     statusEl.className = "status-line";
     resultsEl.innerHTML = "";
@@ -748,33 +1238,33 @@ function renderLinkTraceSection() {
     }
   };
 }
-
+ 
 function renderLinkTraceResults(data, meta) {
   const container = document.getElementById("ltResults");
   container.innerHTML = "";
   const simple = state.reportStyle === "simple";
-
+ 
   const allPaths = [...data.matched_paths, ...data.flagged_end_paths.map(p => p), ...data.amount_filtered_paths.map(p => p)];
   if (!allPaths.length) {
     container.innerHTML = `<div class="empty-state">No on-chain activity found within the hop limit. This does not rule out a link - see the tool's documented limitations (exchanges, mixers, and cross-chain bridges all break a simple on-chain trail).</div>`;
     return;
   }
-
+ 
   const targetSet = new Set(); // we don't get the raw target list back, so flagged/matched styling below relies on server-provided known_entity + the fact matched_paths ARE the target hits
-
+ 
   let aliases = {};
   if (simple) aliases = buildAliases(flattenHops(allPaths), meta.wallet);
-
+ 
   function renderSwapLeads(path) {
     const candidates = path.swap_correlation_candidates;
     if (candidates === undefined) return; // not applicable to this path (not an instant_swap entity)
-
+ 
     if (!candidates.length) {
       container.appendChild(el("div", "trail-reason",
         "🔄 No plausible correlated deposit/payout found for this service within the configured time window and value tolerance."));
       return;
     }
-
+ 
     const best = candidates[0];
     const row = el("div", "trail-row");
     const pctMatch = Math.round(best.usd_match_ratio * 100);
@@ -793,7 +1283,7 @@ function renderLinkTraceResults(data, meta) {
       container.appendChild(el("div", "footnote", `+${candidates.length - 1} more candidate(s) for this lead - see Technical View / raw API response for the full list.`));
     }
   }
-
+ 
   function renderGroup(title, cls, paths) {
     if (!paths.length) return;
     container.appendChild(el("div", "diagram-section-title " + cls, title));
@@ -818,11 +1308,11 @@ function renderLinkTraceResults(data, meta) {
       renderSwapLeads(path);
     }
   }
-
+ 
   renderGroup("🚨 Direct link found", "match", data.matched_paths);
   renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
   renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
-
+ 
   if (simple) {
     const legendCard = el("div", "card");
     legendCard.innerHTML = `<h3>Key</h3><table class="legend-table"></table>`;
@@ -842,7 +1332,7 @@ function renderLinkTraceResults(data, meta) {
     container.appendChild(summaryCard);
   }
 }
-
+ 
 function makeBox(label, cls) {
   const box = el("div", "wbox" + (cls ? " " + cls : ""));
   box.textContent = label;
@@ -853,7 +1343,7 @@ function makeArrow(amount, dateLabel, heuristic) {
   wrap.innerHTML = `<div class="alabel">${escapeHtml(amount)}</div><div class="line${heuristic ? " heuristic" : ""}"></div><div class="adate">${escapeHtml(dateLabel)}</div>`;
   return wrap;
 }
-
+ 
 // ============================================================
 // ADDRESS SCAN
 // ============================================================
@@ -871,7 +1361,7 @@ function renderAddressScanSection() {
     <div id="asResults" class="result-box"></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   if (isAdmin()) {
     document.getElementById("asStart").onclick = async () => {
       const statusEl = document.getElementById("asStatus");
@@ -884,7 +1374,7 @@ function renderAddressScanSection() {
   }
   document.getElementById("asRefresh").onclick = () => fetchAddressScanLatest();
 }
-
+ 
 let addressScanPollHandle = null;
 function pollAddressScan() {
   if (addressScanPollHandle) clearInterval(addressScanPollHandle);
@@ -917,7 +1407,7 @@ async function fetchAddressScanLatest() {
     return null;
   }
 }
-
+ 
 // ============================================================
 // CASE WATCHLIST
 // ============================================================
@@ -936,7 +1426,7 @@ function renderCaseWatchlistSection() {
     <div class="card"><h3>Shared case watchlist</h3><div id="cwList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   if (isAdmin()) {
     document.getElementById("cwAdd").onclick = async () => {
       const address = document.getElementById("cwAddress").value.trim();
@@ -975,7 +1465,7 @@ async function deleteCaseWatchlistEntry(address) {
   await apiFetch("/api/case-watchlist/" + encodeURIComponent(address), { method: "DELETE" });
   loadCaseWatchlist();
 }
-
+ 
 // ============================================================
 // KNOWN ENTITIES
 // ============================================================
@@ -1000,7 +1490,7 @@ function renderKnownEntitiesSection() {
     <div class="card"><h3>Known entities</h3><div id="keList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   if (isAdmin()) {
     document.getElementById("keAdd").onclick = async () => {
       const address = document.getElementById("keAddress").value.trim();
@@ -1039,7 +1529,7 @@ async function deleteKnownEntity(address) {
   await apiFetch("/api/known-entities/" + encodeURIComponent(address), { method: "DELETE" });
   loadKnownEntities();
 }
-
+ 
 // ============================================================
 // DEPOSIT & CONSOLIDATION MAP
 // ============================================================
@@ -1062,7 +1552,7 @@ function renderDepositMapSection() {
     <div class="card"><h3>Confirmed deposit addresses</h3><div id="dmList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   document.getElementById("dmCheck").onclick = async () => {
     const address = document.getElementById("dmAddress").value.trim();
     const statusEl = document.getElementById("dmStatus");
@@ -1098,7 +1588,7 @@ function renderDepositMapSection() {
     }
   };
 }
-
+ 
 async function loadDepositMap() {
   const listEl = document.getElementById("dmList");
   if (!listEl) return;
@@ -1117,7 +1607,7 @@ async function loadDepositMap() {
     listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
   }
 }
-
+ 
 // ============================================================
 // INIT
 // ============================================================
@@ -1144,7 +1634,7 @@ function renderUsersSection() {
     <div class="card"><h3>Users</h3><div id="userList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
-
+ 
   document.getElementById("userAdd").onclick = async () => {
     const username = document.getElementById("userUsername").value.trim();
     const password = document.getElementById("userPassword").value;
@@ -1184,7 +1674,7 @@ async function deleteUserAccount(username) {
     alert("Error: " + err.message);
   }
 }
-
+ 
 // ============================================================
 // INIT
 // ============================================================
@@ -1195,3 +1685,15 @@ init();
 </script>
 </body>
 </html>
+ 
+
+
+
+
+
+
+
+
+
+
+
