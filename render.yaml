@@ -1,0 +1,57 @@
+# ====================================================================
+# RENDER BLUEPRINT
+# ====================================================================
+# What this is: a one-file description of how to deploy this whole
+# toolkit on Render. Push this repo (with this file at the root) to
+# GitHub/GitLab/Bitbucket, then in the Render Dashboard:
+#     New + -> Blueprint -> select this repo
+# Render reads this file and sets up the web service, the persistent
+# disk, and prompts you for the secret environment variables below -
+# no manual "Build Command"/"Start Command" typing needed.
+#
+# IMPORTANT - PLAN: this uses "starter" (a paid plan), not "free".
+# Free-tier Render services CANNOT attach a Persistent Disk, and this
+# app's shared case_watchlist.json / known_entities.json need one to
+# survive redeploys and restarts - without it, that data is wiped
+# every time the service redeploys OR spins down (free tier spins
+# down after just 15 minutes of inactivity). If you only want to
+# test this without any paid plan, change "plan: starter" to "free"
+# below and remove the "disk:" section entirely - just know your
+# watchlist/known-entities data won't persist between sessions.
+#
+# AFTER YOUR FIRST DEPLOY: Render will have assigned you a URL like
+# https://on-chain-investigations-toolkit-xxxx.onrender.com - copy
+# that, then go to your service's Environment tab and set
+# TOOLKIT_ALLOWED_ORIGINS to that exact URL (see the envVars below -
+# it's left blank on purpose since Render can't know this URL before
+# the first deploy happens).
+# ====================================================================
+
+services:
+  - type: web
+    name: on-chain-investigations-toolkit
+    runtime: python
+    plan: starter
+    region: oregon                # change to whichever Render region is closest to you
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn api_server:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      # You'll be prompted to fill these in during Blueprint setup in
+      # the Render Dashboard - they are never stored in this file or
+      # committed to your repo.
+      - key: TOOLKIT_API_KEY
+        sync: false
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: TOOLKIT_ALLOWED_ORIGINS
+        sync: false            # set this to your https://...onrender.com URL AFTER the first deploy
+      # This one is NOT secret - it just needs to match the disk
+      # mount path below, so it's set directly here rather than
+      # prompted for.
+      - key: TOOLKIT_DATA_DIR
+        value: /var/data
+    disk:
+      name: toolkit-data
+      mountPath: /var/data
+      sizeGB: 1
