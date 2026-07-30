@@ -218,7 +218,7 @@
   ::-webkit-scrollbar-track { background: transparent; }
 
   /* ---------- Landing / login ---------- */
-  .landing { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+  .landing { width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
   .landing-inner { max-width: 640px; text-align: center; }
   .landing h1 { font-size: 30px; margin: 10px 0 14px; }
   .landing-lede { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
@@ -267,7 +267,52 @@
     <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="loginPassword"></div>
     <div class="status-line error" id="loginStatus" style="min-height:16px;"></div>
     <button class="btn" id="loginSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Sign In</button>
-    <button class="btn secondary" id="backToLandingBtn" style="width:100%; padding:9px; margin-top:8px;">Back</button>
+    <button class="btn secondary" id="forgotPasswordLinkBtn" style="width:100%; padding:9px; margin-top:8px; background:transparent; border:none; color:var(--accent);">Forgot password?</button>
+    <button class="btn secondary" id="backToLandingBtn" style="width:100%; padding:9px; margin-top:4px;">Back</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     2FA CODE ENTRY - second login step, only shown when the
+     account has 2FA enabled
+     ============================================================ -->
+<div id="totpView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Enter your code</h1>
+    <p class="landing-lede" style="font-size:13px;">Open your authenticator app and enter the current 6-digit code.</p>
+    <div class="field" style="text-align:left; margin-top:16px;"><label>Code</label><input type="text" id="totpCode" inputmode="numeric" maxlength="6" placeholder="123456"></div>
+    <div class="status-line error" id="totpStatus" style="min-height:16px;"></div>
+    <button class="btn" id="totpSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Verify</button>
+    <button class="btn secondary" id="totpBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     FORGOT PASSWORD
+     ============================================================ -->
+<div id="forgotView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Reset your password</h1>
+    <p class="landing-lede" style="font-size:13px;">Enter your username or email - if your account has an email on file, we'll send a reset link.</p>
+    <div class="field" style="text-align:left; margin-top:16px;"><label>Username or email</label><input type="text" id="forgotIdentifier"></div>
+    <div class="status-line" id="forgotStatus" style="min-height:16px;"></div>
+    <button class="btn" id="forgotSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Send reset link</button>
+    <button class="btn secondary" id="forgotBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     RESET PASSWORD - reached via the emailed link (?reset_token=...)
+     ============================================================ -->
+<div id="resetView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Set a new password</h1>
+    <div class="field" style="text-align:left; margin-top:16px;"><label>New password (min. 8 characters)</label><input type="password" id="resetNewPassword"></div>
+    <div class="status-line" id="resetStatus" style="min-height:16px;"></div>
+    <button class="btn" id="resetSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Set new password</button>
   </div>
 </div>
 
@@ -284,7 +329,8 @@
   <div class="nav" id="nav"></div>
   <div class="sidebar-foot">
     <div class="conn-pill"><span class="conn-dot ok"></span><span id="whoamiLabel">-</span></div>
-    <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">Log out</button>
+    <button class="btn secondary" id="security2faBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">🔐 Two-Factor Auth</button>
+    <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:8px; padding:7px; font-size:12px;">Log out</button>
   </div>
 </div>
 
@@ -429,7 +475,7 @@ function refreshStyleToggle() {
 // AUTH - landing page, login, logout, session check on load
 // ============================================================
 function showView(viewId) {
-  ["landingView", "loginView", "appShell"].forEach(id => {
+  ["landingView", "loginView", "totpView", "forgotView", "resetView", "appShell"].forEach(id => {
     document.getElementById(id).style.display = id === viewId ? "flex" : "none";
   });
 }
@@ -440,6 +486,8 @@ document.getElementById("landingSignInBtn").onclick = () => {
 };
 document.getElementById("backToLandingBtn").onclick = () => showView("landingView");
 
+let pendingTotpToken = null;
+
 async function attemptLogin() {
   const username = document.getElementById("loginUsername").value.trim();
   const password = document.getElementById("loginPassword").value;
@@ -447,8 +495,16 @@ async function attemptLogin() {
   if (!username || !password) { statusEl.textContent = "Enter both a username and password."; return; }
   statusEl.textContent = "";
   try {
-    const user = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
-    state.currentUser = user;
+    const result = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    if (result.requires_totp) {
+      pendingTotpToken = result.temp_token;
+      document.getElementById("totpStatus").textContent = "";
+      document.getElementById("totpCode").value = "";
+      showView("totpView");
+      document.getElementById("totpCode").focus();
+      return;
+    }
+    state.currentUser = { username: result.username, role: result.role };
     enterApp();
   } catch (err) {
     statusEl.textContent = err.message || "Login failed.";
@@ -457,6 +513,64 @@ async function attemptLogin() {
 document.getElementById("loginSubmitBtn").onclick = attemptLogin;
 document.getElementById("loginPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptLogin(); });
 
+async function attemptTotpVerify() {
+  const code = document.getElementById("totpCode").value.trim();
+  const statusEl = document.getElementById("totpStatus");
+  if (!code) { statusEl.textContent = "Enter the 6-digit code."; return; }
+  statusEl.textContent = "";
+  try {
+    const result = await apiFetch("/api/auth/2fa/verify", { method: "POST", body: JSON.stringify({ temp_token: pendingTotpToken, code }) });
+    state.currentUser = { username: result.username, role: result.role };
+    pendingTotpToken = null;
+    enterApp();
+  } catch (err) {
+    statusEl.textContent = err.message || "Verification failed.";
+  }
+}
+document.getElementById("totpSubmitBtn").onclick = attemptTotpVerify;
+document.getElementById("totpCode").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptTotpVerify(); });
+document.getElementById("totpBackBtn").onclick = () => { pendingTotpToken = null; showView("loginView"); };
+
+document.getElementById("forgotPasswordLinkBtn").onclick = () => {
+  document.getElementById("forgotStatus").textContent = "";
+  document.getElementById("forgotStatus").className = "status-line";
+  document.getElementById("forgotIdentifier").value = "";
+  showView("forgotView");
+};
+document.getElementById("forgotBackBtn").onclick = () => showView("loginView");
+document.getElementById("forgotSubmitBtn").onclick = async () => {
+  const identifier = document.getElementById("forgotIdentifier").value.trim();
+  const statusEl = document.getElementById("forgotStatus");
+  if (!identifier) { statusEl.textContent = "Enter your username or email."; statusEl.className = "status-line error"; return; }
+  try {
+    const result = await apiFetch("/api/auth/forgot-password", { method: "POST", body: JSON.stringify({ identifier }) });
+    statusEl.textContent = result.message;
+    statusEl.className = "status-line";
+  } catch (err) {
+    statusEl.textContent = err.message || "Something went wrong.";
+    statusEl.className = "status-line error";
+  }
+};
+
+document.getElementById("resetSubmitBtn").onclick = async () => {
+  const newPassword = document.getElementById("resetNewPassword").value;
+  const statusEl = document.getElementById("resetStatus");
+  const token = new URLSearchParams(window.location.search).get("reset_token");
+  if (!newPassword || newPassword.length < 8) { statusEl.textContent = "Password must be at least 8 characters."; statusEl.className = "status-line error"; return; }
+  try {
+    await apiFetch("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, new_password: newPassword }) });
+    statusEl.textContent = "Password updated - you can now sign in with your new password.";
+    statusEl.className = "status-line";
+    // Clean the token out of the URL so a page refresh/bookmark doesn't resubmit it.
+    window.history.replaceState({}, "", window.location.pathname);
+    document.getElementById("resetSubmitBtn").disabled = true;
+    setTimeout(() => { showView("loginView"); document.getElementById("resetSubmitBtn").disabled = false; }, 1800);
+  } catch (err) {
+    statusEl.textContent = err.message || "That reset link is invalid or has expired.";
+    statusEl.className = "status-line error";
+  }
+};
+
 document.getElementById("logoutBtn").onclick = async () => {
   try { await apiFetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
   state.currentUser = null;
@@ -464,6 +578,114 @@ document.getElementById("logoutBtn").onclick = async () => {
   document.getElementById("loginPassword").value = "";
   showView("landingView");
 };
+
+// ============================================================
+// 2FA SETUP / DISABLE (from within the app, for your own account)
+// ============================================================
+document.getElementById("security2faBtn").onclick = () => open2FAModal();
+
+function closeModal(overlay) { overlay.remove(); }
+
+async function open2FAModal() {
+  const overlay = el("div");
+  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:60; padding:20px;";
+  document.body.appendChild(overlay);
+
+  let me;
+  try {
+    me = await apiFetch("/api/auth/me");
+  } catch (err) {
+    overlay.remove();
+    return;
+  }
+
+  if (me.totp_enabled) {
+    renderDisable2FA(overlay);
+  } else {
+    renderEnable2FAStart(overlay);
+  }
+}
+
+function renderEnable2FAStart(overlay) {
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Enable Two-Factor Auth</h3>
+      <div class="hint" style="margin-bottom:14px;">
+        Adds a second step to signing in - after your password, you'll also need a 6-digit
+        code from an authenticator app (Google Authenticator, Authy, 1Password, etc.).
+      </div>
+      <button class="btn" id="start2FASetupBtn" style="width:100%;">Get started</button>
+      <button class="btn secondary" id="cancel2FABtn" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  overlay.querySelector("#cancel2FABtn").onclick = () => closeModal(overlay);
+  overlay.querySelector("#start2FASetupBtn").onclick = async () => {
+    try {
+      const data = await apiFetch("/api/auth/2fa/setup", { method: "POST" });
+      renderEnable2FAConfirm(overlay, data);
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  };
+}
+
+function renderEnable2FAConfirm(overlay, data) {
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Scan this code</h3>
+      <div class="hint" style="margin-bottom:12px;">
+        Scan with your authenticator app, or enter this key manually if you can't scan:
+      </div>
+      <div style="text-align:center; margin-bottom:12px;">
+        <img src="data:image/png;base64,${data.qr_code_base64}" style="width:180px; height:180px; border-radius:8px;" alt="2FA QR code">
+      </div>
+      <div class="field">
+        <label>Manual entry key</label>
+        <input type="text" readonly value="${escapeHtml(data.secret)}" style="text-align:center; letter-spacing:1px;">
+      </div>
+      <div class="field">
+        <label>Enter the 6-digit code it's showing now, to confirm</label>
+        <input type="text" id="confirm2FACode" inputmode="numeric" maxlength="6" placeholder="123456">
+      </div>
+      <div class="status-line error" id="confirm2FAStatus"></div>
+      <button class="btn" id="confirm2FABtn" style="width:100%;">Confirm &amp; enable</button>
+      <button class="btn secondary" id="cancel2FABtn2" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  overlay.querySelector("#cancel2FABtn2").onclick = () => closeModal(overlay);
+  overlay.querySelector("#confirm2FABtn").onclick = async () => {
+    const code = overlay.querySelector("#confirm2FACode").value.trim();
+    const statusEl = overlay.querySelector("#confirm2FAStatus");
+    try {
+      await apiFetch("/api/auth/2fa/confirm", { method: "POST", body: JSON.stringify({ code }) });
+      overlay.innerHTML = `<div class="card" style="width:380px; text-align:center;"><h3>✅ Enabled</h3><div class="hint">Two-factor authentication is now on for your account.</div><button class="btn" id="done2FABtn" style="width:100%; margin-top:14px;">Done</button></div>`;
+      overlay.querySelector("#done2FABtn").onclick = () => closeModal(overlay);
+    } catch (err) {
+      statusEl.textContent = err.message || "Incorrect code.";
+    }
+  };
+}
+
+function renderDisable2FA(overlay) {
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Disable Two-Factor Auth</h3>
+      <div class="hint" style="margin-bottom:14px;">Enter your password to confirm.</div>
+      <div class="field"><label>Password</label><input type="password" id="disable2FAPassword"></div>
+      <div class="status-line error" id="disable2FAStatus"></div>
+      <button class="btn" id="confirmDisable2FABtn" style="width:100%;">Disable</button>
+      <button class="btn secondary" id="cancelDisable2FABtn" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  overlay.querySelector("#cancelDisable2FABtn").onclick = () => closeModal(overlay);
+  overlay.querySelector("#confirmDisable2FABtn").onclick = async () => {
+    const password = overlay.querySelector("#disable2FAPassword").value;
+    const statusEl = overlay.querySelector("#disable2FAStatus");
+    try {
+      await apiFetch("/api/auth/2fa/disable", { method: "POST", body: JSON.stringify({ password }) });
+      closeModal(overlay);
+    } catch (err) {
+      statusEl.textContent = err.message || "Incorrect password.";
+    }
+  };
+}
 
 function enterApp() {
   document.getElementById("whoamiLabel").textContent = `${state.currentUser.username} (${state.currentUser.role})`;
@@ -492,6 +714,19 @@ function enterApp() {
 }
 
 async function checkExistingSession() {
+  // A password-reset link takes priority over everything else, even an
+  // existing logged-in session - someone clicking the emailed link
+  // wants to set a new password, not land back in the app they may
+  // already be logged into on this device.
+  const resetToken = new URLSearchParams(window.location.search).get("reset_token");
+  if (resetToken) {
+    document.getElementById("resetStatus").textContent = "";
+    document.getElementById("resetStatus").className = "status-line";
+    document.getElementById("resetNewPassword").value = "";
+    showView("resetView");
+    return;
+  }
+
   try {
     const user = await apiFetch("/api/auth/me");
     state.currentUser = user;
@@ -1132,6 +1367,7 @@ function renderUsersSection() {
       <h3>Add a user</h3>
       <div class="field"><label>Username</label><input type="text" id="userUsername"></div>
       <div class="field"><label>Password (min. 8 characters)</label><input type="password" id="userPassword"></div>
+      <div class="field"><label>Email (optional - needed for that user to use "forgot password")</label><input type="text" id="userEmail"></div>
       <div class="field"><label>Role</label>
         <select id="userRole">
           <option value="read_only">read_only - can run checks/traces, view all lists</option>
@@ -1148,14 +1384,15 @@ function renderUsersSection() {
   document.getElementById("userAdd").onclick = async () => {
     const username = document.getElementById("userUsername").value.trim();
     const password = document.getElementById("userPassword").value;
+    const email = document.getElementById("userEmail").value.trim();
     const role = document.getElementById("userRole").value;
     const statusEl = document.getElementById("userStatus");
     if (!username || !password) { statusEl.textContent = "Enter both a username and password."; statusEl.className = "status-line error"; return; }
     try {
-      await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ username, password, role }) });
+      await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ username, password, role, email }) });
       statusEl.textContent = "Added.";
       statusEl.className = "status-line";
-      document.getElementById("userUsername").value = ""; document.getElementById("userPassword").value = "";
+      document.getElementById("userUsername").value = ""; document.getElementById("userPassword").value = ""; document.getElementById("userEmail").value = "";
       loadUsers();
     } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
   };
@@ -1167,8 +1404,10 @@ async function loadUsers() {
     const users = await apiFetch("/api/users");
     listEl.innerHTML = "";
     const table = el("table", "data-table");
-    table.innerHTML = `<tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr>` + users.map(u =>
-      `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td><td>${escapeHtml(u.created_utc || "")}</td>
+    table.innerHTML = `<tr><th>Username</th><th>Role</th><th>Email</th><th>2FA</th><th>Created</th><th></th></tr>` + users.map(u =>
+      `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td>
+       <td>${escapeHtml(u.email || "-")}</td><td>${u.totp_enabled ? '<span class="pill ok">on</span>' : '<span class="hint">off</span>'}</td>
+       <td>${escapeHtml(u.created_utc || "")}</td>
        <td>${u.username === state.currentUser.username ? "" : `<button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>`}</td></tr>`
     ).join("");
     listEl.appendChild(table);
