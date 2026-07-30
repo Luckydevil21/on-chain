@@ -1227,6 +1227,7 @@ function renderKnownEntitiesSection() {
           <option value="exchange">exchange</option>
           <option value="mixer">mixer</option>
           <option value="instant_swap">instant_swap (no-KYC swap service - enables swap correlation)</option>
+          <option value="bridge">bridge (cross-chain bridge - enables swap correlation)</option>
         </select>
       </div>
       <button class="btn" id="keAdd">Add entity</button>
@@ -1262,7 +1263,7 @@ async function loadKnownEntities() {
     if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No known entities yet.</div>`; return; }
     const table = el("table", "data-table");
     table.innerHTML = `<tr><th>Address</th><th>Name</th><th>Type</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
-      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td><span class="pill ${e.type === 'instant_swap' ? 'entity' : e.type === 'mixer' ? 'flag' : 'warn'}">${escapeHtml(e.type)}</span></td>
+      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td><span class="pill ${(e.type === 'instant_swap' || e.type === 'bridge') ? 'entity' : e.type === 'mixer' ? 'flag' : 'warn'}">${escapeHtml(e.type)}</span></td>
        ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
     ).join("");
     listEl.appendChild(table);
