@@ -1,0 +1,52 @@
+[
+  {
+    "_comment": "type must be one of: exchange, mixer, instant_swap. 'instant_swap' is for no-KYC services like changenow.io/swapuz.io/fixedfloat.com that generate a one-time deposit address per swap - link_tracer.py will try to correlate a deposit into one of these with a plausible payout on the SAME entity's other wallets (see ENABLE_SWAP_CORRELATION in link_tracer.py). Add ONE entry per chain a service operates on, all sharing the exact same 'name' - that's how its wallets get grouped for correlation. 'chain' is optional (auto-detected from the address if omitted), but setting it explicitly avoids ambiguity.",
+    "address": "PASTE_A_CONFIRMED_HOT_WALLET_ADDRESS_HERE",
+    "name": "Example Exchange Name",
+    "type": "exchange"
+  },
+  {
+    "address": "PASTE_A_CONFIRMED_MIXER_CONTRACT_ADDRESS_HERE",
+    "name": "Example Mixer Name",
+    "type": "mixer"
+  },
+  {
+    "_comment": "ChangeNOW's known BTC deposit/treasury wallet - REPLACE with an address you've actually confirmed belongs to them.",
+    "address": "PASTE_A_CONFIRMED_CHANGENOW_BTC_ADDRESS_HERE",
+    "name": "ChangeNOW",
+    "type": "instant_swap",
+    "chain": "bitcoin"
+  },
+  {
+    "_comment": "ChangeNOW's known ETH wallet, if you have one - same 'name' as above groups them together for correlation.",
+    "address": "PASTE_A_CONFIRMED_CHANGENOW_ETH_ADDRESS_HERE",
+    "name": "ChangeNOW",
+    "type": "instant_swap",
+    "chain": "ethereum"
+  },
+  {
+    "address": "PASTE_A_CONFIRMED_SWAPUZ_BTC_ADDRESS_HERE",
+    "name": "Swapuz",
+    "type": "instant_swap",
+    "chain": "bitcoin"
+  },
+  {
+    "address": "PASTE_A_CONFIRMED_SWAPUZ_XRP_ADDRESS_HERE",
+    "name": "Swapuz",
+    "type": "instant_swap",
+    "chain": "xrp"
+  },
+  {
+    "_comment": "Bridge example - type \"bridge\" gets the SAME swap-correlation treatment as instant_swap (deposit on one chain, payout on another shortly after). Add one entry per chain the bridge operates on, all sharing the same name.",
+    "address": "PASTE_A_CONFIRMED_BRIDGE_CONTRACT_ETH_SIDE_HERE",
+    "name": "Example Bridge",
+    "type": "bridge",
+    "chain": "ethereum"
+  },
+  {
+    "address": "PASTE_A_CONFIRMED_BRIDGE_CONTRACT_TRON_SIDE_HERE",
+    "name": "Example Bridge",
+    "type": "bridge",
+    "chain": "tron"
+  }
+]
