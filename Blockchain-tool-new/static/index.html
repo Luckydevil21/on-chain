@@ -66,13 +66,52 @@
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--panel);
+    padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--panel); gap: 12px;
   }
   .topbar-title { font-size: 15px; font-weight: 600; }
   .topbar-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 1px; }
   .content { flex: 1; overflow-y: auto; padding: 28px; }
   .section { display: none; max-width: 980px; }
   .section.active { display: block; }
+
+  /* Hamburger toggle - hidden on desktop, shown only under the mobile breakpoint below */
+  .hamburger-btn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px 8px; }
+  .sidebar-overlay { display: none; }
+
+  /* ---------- Mobile layout (phones and narrow tablets) ---------- */
+  @media (max-width: 860px) {
+    body { flex-direction: column; }
+    .hamburger-btn { display: block; }
+
+    .sidebar {
+      position: fixed; top: 0; left: 0; z-index: 40; width: 78vw; max-width: 300px;
+      transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 18px rgba(0,0,0,.4);
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-overlay.open {
+      display: block; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 35;
+    }
+
+    .topbar { padding: 12px 16px; }
+    .topbar-title { font-size: 14px; }
+    .topbar-sub { display: none; }  /* saves vertical space on small screens */
+    .content { padding: 16px; }
+
+    .style-toggle button { padding: 6px 10px; font-size: 11.5px; }
+
+    /* Every table in this app lives inside a .card - scrolling the
+       card horizontally is a single fix that keeps every table usable
+       on a narrow screen without rebuilding each one as mobile cards. */
+    .card { overflow-x: auto; }
+
+    .landing { padding: 28px 16px; }
+    .landing h1 { font-size: 24px; }
+    .landing-lede { font-size: 13.5px; }
+
+    .trail-flow { gap: 8px 0; }
+    .warrow { min-width: 70px; margin: 0 4px; }
+  }
 
   /* ---------- Controls ---------- */
   .style-toggle { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
@@ -177,36 +216,96 @@
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ---------- Landing / login ---------- */
+  .landing { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+  .landing-inner { max-width: 640px; text-align: center; }
+  .landing h1 { font-size: 30px; margin: 10px 0 14px; }
+  .landing-lede { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
+  .landing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 30px; text-align: left; }
+  .landing-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .landing-card h3 { margin: 0 0 6px; font-size: 14px; }
+  .landing-card p { margin: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+  @media (max-width: 560px) { .landing-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
+<!-- ============================================================
+     LANDING PAGE - shown before login
+     ============================================================ -->
+<div id="landingView" class="landing">
+  <div class="landing-inner">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1>On-Chain Investigations</h1>
+    <p class="landing-lede">
+      A blockchain forensics toolkit for tracing stolen crypto, identifying victims,
+      and building court-ready evidence - built for investigators working with law enforcement.
+    </p>
+    <div class="landing-grid">
+      <div class="landing-card"><h3>◎ Wallet Watcher</h3><p>Monitors flagged wallets across ETH/BTC/XRP and alerts the moment they move funds.</p></div>
+      <div class="landing-card"><h3>◈ Victim Collator</h3><p>Given a scammer's wallet, finds everyone who sent money into it.</p></div>
+      <div class="landing-card"><h3>⇢ Link Tracer</h3><p>Traces funds forward or backward, hop by hop, across multiple wallets automatically.</p></div>
+      <div class="landing-card"><h3>⛃ Deposit Mapping</h3><p>Confirms exchange deposit addresses by watching for consolidation sweeps.</p></div>
+    </div>
+    <p class="landing-lede" style="font-size:13px; margin-top:8px;">
+      Every finding is labeled by confidence - confirmed, heuristic, or lead - nothing is
+      ever presented as proof it isn't.
+    </p>
+    <button class="btn" id="landingSignInBtn" style="margin-top:22px; padding:12px 28px; font-size:14px;">Sign In</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     LOGIN FORM
+     ============================================================ -->
+<div id="loginView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Sign In</h1>
+    <div class="field" style="text-align:left; margin-top:24px;"><label>Username</label><input type="text" id="loginUsername"></div>
+    <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="loginPassword"></div>
+    <div class="status-line error" id="loginStatus" style="min-height:16px;"></div>
+    <button class="btn" id="loginSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Sign In</button>
+    <button class="btn secondary" id="backToLandingBtn" style="width:100%; padding:9px; margin-top:8px;">Back</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN APP - shown once logged in
+     ============================================================ -->
+<div id="appShell" style="display:none;">
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+<div class="sidebar" id="sidebar">
   <div class="brand">
     <div class="brand-mark">CASE TOOLKIT</div>
     <div class="brand-title">On-Chain Investigations</div>
   </div>
   <div class="nav" id="nav"></div>
   <div class="sidebar-foot">
-    <div class="conn-pill"><span class="conn-dot" id="connDot"></span><span id="connLabel">Not connected</span></div>
+    <div class="conn-pill"><span class="conn-dot ok"></span><span id="whoamiLabel">-</span></div>
+    <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">Log out</button>
   </div>
 </div>
 
 <div class="main">
   <div class="topbar">
-    <div>
-      <div class="topbar-title" id="sectionTitle">Wallet Watcher</div>
-      <div class="topbar-sub" id="sectionSub">Check flagged wallets for recent activity</div>
+    <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+      <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu">☰</button>
+      <div style="min-width:0;">
+        <div class="topbar-title" id="sectionTitle">Wallet Watcher</div>
+        <div class="topbar-sub" id="sectionSub">Check flagged wallets for recent activity</div>
+      </div>
     </div>
     <div style="display:flex; align-items:center; gap:14px;">
       <div class="style-toggle" id="styleToggle">
         <button data-style="technical">🎓 Technical</button>
         <button data-style="simple">👤 Simple</button>
       </div>
-      <button class="btn secondary" id="settingsBtn" style="font-size:12px; padding:7px 12px;">⚙ Connection</button>
     </div>
   </div>
   <div class="content" id="content"></div>
+</div>
 </div>
 
 <script>
@@ -214,29 +313,28 @@
 // STATE
 // ============================================================
 const state = {
-  apiBase: window.location.origin,
-  apiKey: "",
   reportStyle: "technical",
   section: "wallet-watch",
+  currentUser: null,   // {username, role} once logged in
 };
 
 const SECTIONS = [
-  { id: "wallet-watch", icon: "◎", label: "Wallet Watcher", sub: "Check flagged wallets for recent activity" },
-  { id: "victim-collate", icon: "◈", label: "Victim Collator", sub: "Who sent funds into a target wallet" },
-  { id: "link-trace", icon: "⇢", label: "Link Tracer", sub: "Trace funds forward or backward, hop by hop" },
-  { id: "address-scan", icon: "◔", label: "Address Watcher", sub: "Scan configured sources for new addresses" },
-  { id: "case-watchlist", icon: "▤", label: "Case Watchlist", sub: "Shared list of flagged illicit wallets" },
-  { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services" },
-  { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange deposit addresses via consolidation sweeps" },
+  { id: "wallet-watch", icon: "◎", label: "Wallet Watcher", sub: "Check flagged wallets for recent activity", adminOnly: false },
+  { id: "victim-collate", icon: "◈", label: "Victim Collator", sub: "Who sent funds into a target wallet", adminOnly: false },
+  { id: "link-trace", icon: "⇢", label: "Link Tracer", sub: "Trace funds forward or backward, hop by hop", adminOnly: false },
+  { id: "address-scan", icon: "◔", label: "Address Watcher", sub: "Scan configured sources for new addresses", adminOnly: false },
+  { id: "case-watchlist", icon: "▤", label: "Case Watchlist", sub: "Shared list of flagged illicit wallets", adminOnly: false },
+  { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false },
+  { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange deposit addresses via consolidation sweeps", adminOnly: false },
+  { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true },
 ];
 
 // ============================================================
-// API HELPER
+// API HELPER - always same-origin, session cookie sent automatically
 // ============================================================
 async function apiFetch(path, options = {}) {
   const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
-  if (state.apiKey) headers["X-API-Key"] = state.apiKey;
-  const response = await fetch(state.apiBase + path, Object.assign({}, options, { headers }));
+  const response = await fetch(path, Object.assign({}, options, { headers, credentials: "include" }));
   let body;
   try { body = await response.json(); } catch (e) { body = null; }
   if (!response.ok) {
@@ -265,6 +363,10 @@ function el(tag, className, text) {
   return node;
 }
 
+function isAdmin() {
+  return state.currentUser && state.currentUser.role === "admin";
+}
+
 // ============================================================
 // NAV / LAYOUT
 // ============================================================
@@ -272,6 +374,7 @@ function buildNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
   for (const section of SECTIONS) {
+    if (section.adminOnly && !isAdmin()) continue;  // read-only users never see admin-only tabs at all
     const item = el("div", "nav-item" + (section.id === state.section ? " active" : ""));
     item.innerHTML = `<span class="nav-icon">${section.icon}</span><span>${section.label}</span>`;
     item.onclick = () => switchSection(section.id);
@@ -287,18 +390,27 @@ function switchSection(id) {
   document.getElementById("sectionSub").textContent = meta.sub;
   document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
   document.getElementById("section-" + id).classList.add("active");
-  // These two sections show live server data - refresh it every time the
-  // tab is opened, rather than relying on a stale load from page-init
-  // (which may have happened before an API key was even set).
+  // These sections show live server data - refresh every time the tab opens.
   if (id === "case-watchlist") loadCaseWatchlist();
   if (id === "known-entities") loadKnownEntities();
   if (id === "deposit-map") loadDepositMap();
+  if (id === "users") loadUsers();
+  closeMobileSidebar();  // picking a section on mobile should take you straight to it
 }
 
-function updateConnStatus(ok) {
-  document.getElementById("connDot").className = "conn-dot " + (ok === null ? "" : ok ? "ok" : "bad");
-  document.getElementById("connLabel").textContent = ok === null ? "Not connected" : ok ? "Connected" : "Connection failed";
+// ============================================================
+// MOBILE SIDEBAR (hamburger drawer)
+// ============================================================
+function openMobileSidebar() {
+  document.getElementById("sidebar").classList.add("open");
+  document.getElementById("sidebarOverlay").classList.add("open");
 }
+function closeMobileSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("sidebarOverlay").classList.remove("open");
+}
+document.getElementById("hamburgerBtn").onclick = openMobileSidebar;
+document.getElementById("sidebarOverlay").onclick = closeMobileSidebar;
 
 document.getElementById("styleToggle").addEventListener("click", (e) => {
   const btn = e.target.closest("button");
@@ -313,48 +425,80 @@ function refreshStyleToggle() {
   if (lastResults.victimCollate) renderVictimResults(lastResults.victimCollate);
 }
 
-document.getElementById("settingsBtn").onclick = () => openSettingsModal();
+// ============================================================
+// AUTH - landing page, login, logout, session check on load
+// ============================================================
+function showView(viewId) {
+  ["landingView", "loginView", "appShell"].forEach(id => {
+    document.getElementById(id).style.display = id === viewId ? "flex" : "none";
+  });
+}
 
-// ============================================================
-// SETTINGS MODAL (API base URL + key)
-// ============================================================
-function openSettingsModal() {
-  const overlay = el("div");
-  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:50;";
-  overlay.innerHTML = `
-    <div class="card" style="width:420px;">
-      <h3>Connection</h3>
-      <div class="field"><label>API base URL</label><input type="text" id="modalBaseUrl" value="${escapeHtml(state.apiBase)}"></div>
-      <div class="field"><label>API key (X-API-Key)</label><input type="password" id="modalApiKey" value="${escapeHtml(state.apiKey)}">
-        <div class="hint">Kept in memory for this browser tab only - never saved to disk.</div>
-      </div>
-      <div style="display:flex; gap:10px; justify-content:flex-end;">
-        <button class="btn secondary" id="modalCancel">Cancel</button>
-        <button class="btn" id="modalSave">Save &amp; Test</button>
-      </div>
-      <div class="status-line" id="modalStatus"></div>
-    </div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelector("#modalCancel").onclick = () => overlay.remove();
-  overlay.querySelector("#modalSave").onclick = async () => {
-    state.apiBase = overlay.querySelector("#modalBaseUrl").value.replace(/\/$/, "");
-    state.apiKey = overlay.querySelector("#modalApiKey").value;
-    const statusEl = overlay.querySelector("#modalStatus");
-    statusEl.textContent = "Testing connection...";
-    statusEl.className = "status-line";
-    try {
-      await apiFetch("/api/case-watchlist");
-      updateConnStatus(true);
-      overlay.remove();
-      if (state.section === "case-watchlist") loadCaseWatchlist();
-      if (state.section === "known-entities") loadKnownEntities();
-      if (state.section === "deposit-map") loadDepositMap();
-    } catch (err) {
-      updateConnStatus(false);
-      statusEl.textContent = "Could not connect: " + err.message;
-      statusEl.className = "status-line error";
-    }
-  };
+document.getElementById("landingSignInBtn").onclick = () => {
+  document.getElementById("loginStatus").textContent = "";
+  showView("loginView");
+};
+document.getElementById("backToLandingBtn").onclick = () => showView("landingView");
+
+async function attemptLogin() {
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const statusEl = document.getElementById("loginStatus");
+  if (!username || !password) { statusEl.textContent = "Enter both a username and password."; return; }
+  statusEl.textContent = "";
+  try {
+    const user = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    state.currentUser = user;
+    enterApp();
+  } catch (err) {
+    statusEl.textContent = err.message || "Login failed.";
+  }
+}
+document.getElementById("loginSubmitBtn").onclick = attemptLogin;
+document.getElementById("loginPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptLogin(); });
+
+document.getElementById("logoutBtn").onclick = async () => {
+  try { await apiFetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
+  state.currentUser = null;
+  document.getElementById("loginUsername").value = "";
+  document.getElementById("loginPassword").value = "";
+  showView("landingView");
+};
+
+function enterApp() {
+  document.getElementById("whoamiLabel").textContent = `${state.currentUser.username} (${state.currentUser.role})`;
+  // Sections are built HERE, not at page load, because several of them
+  // check isAdmin() while rendering (to show/hide add/delete controls) -
+  // and we don't know the role until login/session-check completes.
+  // Rebuilding fresh on every entry also correctly handles logging out
+  // and back in as a different user.
+  const contentEl = document.getElementById("content");
+  contentEl.innerHTML = "";
+  renderWalletWatchSection();
+  renderVictimCollateSection();
+  renderLinkTraceSection();
+  renderAddressScanSection();
+  renderCaseWatchlistSection();
+  renderKnownEntitiesSection();
+  renderDepositMapSection();
+  if (isAdmin()) renderUsersSection();
+
+  buildNav();
+  const currentMeta = SECTIONS.find(s => s.id === state.section);
+  if (!currentMeta || (currentMeta.adminOnly && !isAdmin())) state.section = "wallet-watch";
+  switchSection(state.section);
+  refreshStyleToggle();
+  showView("appShell");
+}
+
+async function checkExistingSession() {
+  try {
+    const user = await apiFetch("/api/auth/me");
+    state.currentUser = user;
+    enterApp();
+  } catch (err) {
+    showView("landingView");
+  }
 }
 
 // ============================================================
@@ -720,7 +864,7 @@ function renderAddressScanSection() {
     <div class="card">
       <h3>Scan configured sources</h3>
       <div class="field hint" style="margin-bottom:14px;">Scans the RSS/Telegram/X sources configured in crypto_address_watcher.py. Runs in the background - this can take a while.</div>
-      <button class="btn" id="asStart">Start scan</button>
+      ${isAdmin() ? `<button class="btn" id="asStart">Start scan</button>` : `<div class="hint">You have read-only access - you can view the latest result but not start a new scan.</div>`}
       <button class="btn secondary" id="asRefresh" style="margin-left:8px;">Check latest result</button>
     </div>
     <div class="status-line" id="asStatus"></div>
@@ -728,14 +872,16 @@ function renderAddressScanSection() {
   `;
   document.getElementById("content").appendChild(section);
 
-  document.getElementById("asStart").onclick = async () => {
-    const statusEl = document.getElementById("asStatus");
-    try {
-      const r = await apiFetch("/api/address-scan/start", { method: "POST" });
-      statusEl.textContent = r.message;
-      pollAddressScan();
-    } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
-  };
+  if (isAdmin()) {
+    document.getElementById("asStart").onclick = async () => {
+      const statusEl = document.getElementById("asStatus");
+      try {
+        const r = await apiFetch("/api/address-scan/start", { method: "POST" });
+        statusEl.textContent = r.message;
+        pollAddressScan();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+  }
   document.getElementById("asRefresh").onclick = () => fetchAddressScanLatest();
 }
 
@@ -779,32 +925,34 @@ function renderCaseWatchlistSection() {
   const section = el("div", "section", "");
   section.id = "section-case-watchlist";
   section.innerHTML = `
-    <div class="card">
+    ${isAdmin() ? `<div class="card">
       <h3>Add a wallet</h3>
       <div class="field"><label>Address</label><input type="text" id="cwAddress"></div>
       <div class="field"><label>Source (optional)</label><input type="text" id="cwSource"></div>
       <div class="field"><label>Context (optional)</label><input type="text" id="cwContext"></div>
       <button class="btn" id="cwAdd">Add to watchlist</button>
     </div>
-    <div class="status-line" id="cwStatus"></div>
+    <div class="status-line" id="cwStatus"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
     <div class="card"><h3>Shared case watchlist</h3><div id="cwList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
 
-  document.getElementById("cwAdd").onclick = async () => {
-    const address = document.getElementById("cwAddress").value.trim();
-    const source = document.getElementById("cwSource").value.trim();
-    const context = document.getElementById("cwContext").value.trim();
-    const statusEl = document.getElementById("cwStatus");
-    if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
-    try {
-      const r = await apiFetch("/api/case-watchlist", { method: "POST", body: JSON.stringify({ address, source, context }) });
-      statusEl.textContent = r.added ? "Added." : (r.message || "Already on the watchlist.");
-      statusEl.className = "status-line";
-      document.getElementById("cwAddress").value = "";
-      loadCaseWatchlist();
-    } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
-  };
+  if (isAdmin()) {
+    document.getElementById("cwAdd").onclick = async () => {
+      const address = document.getElementById("cwAddress").value.trim();
+      const source = document.getElementById("cwSource").value.trim();
+      const context = document.getElementById("cwContext").value.trim();
+      const statusEl = document.getElementById("cwStatus");
+      if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+      try {
+        const r = await apiFetch("/api/case-watchlist", { method: "POST", body: JSON.stringify({ address, source, context }) });
+        statusEl.textContent = r.added ? "Added." : (r.message || "Already on the watchlist.");
+        statusEl.className = "status-line";
+        document.getElementById("cwAddress").value = "";
+        loadCaseWatchlist();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+  }
 }
 async function loadCaseWatchlist() {
   const listEl = document.getElementById("cwList");
@@ -814,9 +962,9 @@ async function loadCaseWatchlist() {
     listEl.innerHTML = "";
     if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No addresses on the shared watchlist yet.</div>`; return; }
     const table = el("table", "data-table");
-    table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>First seen</th><th>Source</th><th></th></tr>` + entries.map(e =>
+    table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>First seen</th><th>Source</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
       `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.chain)}</td><td>${escapeHtml(e.first_seen_utc)}</td><td>${escapeHtml(e.source || "")}</td>
-       <td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCaseWatchlistEntry('${escapeHtml(e.address)}')">Remove</button></td></tr>`
+       ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCaseWatchlistEntry('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
     ).join("");
     listEl.appendChild(table);
   } catch (err) {
@@ -835,7 +983,7 @@ function renderKnownEntitiesSection() {
   const section = el("div", "section", "");
   section.id = "section-known-entities";
   section.innerHTML = `
-    <div class="card">
+    ${isAdmin() ? `<div class="card">
       <h3>Add a known entity</h3>
       <div class="field"><label>Address</label><input type="text" id="keAddress"></div>
       <div class="field"><label>Name</label><input type="text" id="keName" placeholder="e.g. ChangeNOW"></div>
@@ -848,25 +996,27 @@ function renderKnownEntitiesSection() {
       </div>
       <button class="btn" id="keAdd">Add entity</button>
     </div>
-    <div class="status-line" id="keStatus"></div>
+    <div class="status-line" id="keStatus"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
     <div class="card"><h3>Known entities</h3><div id="keList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
 
-  document.getElementById("keAdd").onclick = async () => {
-    const address = document.getElementById("keAddress").value.trim();
-    const name = document.getElementById("keName").value.trim();
-    const type = document.getElementById("keType").value;
-    const statusEl = document.getElementById("keStatus");
-    if (!address || !name) { statusEl.textContent = "Enter both an address and a name."; statusEl.className = "status-line error"; return; }
-    try {
-      await apiFetch("/api/known-entities", { method: "POST", body: JSON.stringify({ address, name, type }) });
-      statusEl.textContent = "Added.";
-      statusEl.className = "status-line";
-      document.getElementById("keAddress").value = ""; document.getElementById("keName").value = "";
-      loadKnownEntities();
-    } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
-  };
+  if (isAdmin()) {
+    document.getElementById("keAdd").onclick = async () => {
+      const address = document.getElementById("keAddress").value.trim();
+      const name = document.getElementById("keName").value.trim();
+      const type = document.getElementById("keType").value;
+      const statusEl = document.getElementById("keStatus");
+      if (!address || !name) { statusEl.textContent = "Enter both an address and a name."; statusEl.className = "status-line error"; return; }
+      try {
+        await apiFetch("/api/known-entities", { method: "POST", body: JSON.stringify({ address, name, type }) });
+        statusEl.textContent = "Added.";
+        statusEl.className = "status-line";
+        document.getElementById("keAddress").value = ""; document.getElementById("keName").value = "";
+        loadKnownEntities();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+  }
 }
 async function loadKnownEntities() {
   const listEl = document.getElementById("keList");
@@ -876,9 +1026,9 @@ async function loadKnownEntities() {
     listEl.innerHTML = "";
     if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No known entities yet.</div>`; return; }
     const table = el("table", "data-table");
-    table.innerHTML = `<tr><th>Address</th><th>Name</th><th>Type</th><th></th></tr>` + entries.map(e =>
+    table.innerHTML = `<tr><th>Address</th><th>Name</th><th>Type</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
       `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td><span class="pill ${e.type === 'instant_swap' ? 'entity' : e.type === 'mixer' ? 'flag' : 'warn'}">${escapeHtml(e.type)}</span></td>
-       <td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td></tr>`
+       ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
     ).join("");
     listEl.appendChild(table);
   } catch (err) {
@@ -971,22 +1121,75 @@ async function loadDepositMap() {
 // ============================================================
 // INIT
 // ============================================================
-function init() {
-  buildNav();
-  renderWalletWatchSection();
-  renderVictimCollateSection();
-  renderLinkTraceSection();
-  renderAddressScanSection();
-  renderCaseWatchlistSection();
-  renderKnownEntitiesSection();
-  renderDepositMapSection();
-  switchSection(state.section);
-  refreshStyleToggle();
-  updateConnStatus(null);
+// ============================================================
+// USERS (admin only)
+// ============================================================
+function renderUsersSection() {
+  const section = el("div", "section", "");
+  section.id = "section-users";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Add a user</h3>
+      <div class="field"><label>Username</label><input type="text" id="userUsername"></div>
+      <div class="field"><label>Password (min. 8 characters)</label><input type="password" id="userPassword"></div>
+      <div class="field"><label>Role</label>
+        <select id="userRole">
+          <option value="read_only">read_only - can run checks/traces, view all lists</option>
+          <option value="admin">admin - full read/write access</option>
+        </select>
+      </div>
+      <button class="btn" id="userAdd">Add user</button>
+    </div>
+    <div class="status-line" id="userStatus"></div>
+    <div class="card"><h3>Users</h3><div id="userList"></div></div>
+  `;
+  document.getElementById("content").appendChild(section);
 
-  // Try a silent connection check on load (works with no key if the
-  // server has none configured, harmless 401 otherwise).
-  apiFetch("/health").then(() => {}).catch(() => {});
+  document.getElementById("userAdd").onclick = async () => {
+    const username = document.getElementById("userUsername").value.trim();
+    const password = document.getElementById("userPassword").value;
+    const role = document.getElementById("userRole").value;
+    const statusEl = document.getElementById("userStatus");
+    if (!username || !password) { statusEl.textContent = "Enter both a username and password."; statusEl.className = "status-line error"; return; }
+    try {
+      await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ username, password, role }) });
+      statusEl.textContent = "Added.";
+      statusEl.className = "status-line";
+      document.getElementById("userUsername").value = ""; document.getElementById("userPassword").value = "";
+      loadUsers();
+    } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+  };
+}
+async function loadUsers() {
+  const listEl = document.getElementById("userList");
+  if (!listEl) return;
+  try {
+    const users = await apiFetch("/api/users");
+    listEl.innerHTML = "";
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr>` + users.map(u =>
+      `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td><td>${escapeHtml(u.created_utc || "")}</td>
+       <td>${u.username === state.currentUser.username ? "" : `<button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>`}</td></tr>`
+    ).join("");
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function deleteUserAccount(username) {
+  try {
+    await apiFetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" });
+    loadUsers();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+  checkExistingSession();
 }
 init();
 </script>
