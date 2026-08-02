@@ -1,0 +1,11 @@
+# link_tracer.py
+requests
+
+# api_server.py
+fastapi
+uvicorn[standard]
+bcrypt
+pyjwt
+pyotp
+qrcode
+pillow
