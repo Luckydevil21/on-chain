@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>On-Chain Investigations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0d1117;
+    --panel: #151b23;
+    --panel-alt: #1c232c;
+    --line: #2a313c;
+    --text: #e6edf3;
+    --text-dim: #7d8590;
+    --accent: #4f8cc9;
+    --accent-dim: #2c4a63;
+    --accent-bg: #142331;
+    --flag: #e0666c;
+    --flag-bg: #2a1416;
+    --entity: #4fb3a3;
+    --entity-bg: #12211f;
+    --ok: #6bbd76;
+    --warn: #d4a72c;
+    --warn-bg: #241c0d;
+    --radius: 8px;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ink); color: var(--text);
+    font-family: var(--sans); font-size: 14px; line-height: 1.5;
+    display: flex;
+  }
+  a { color: var(--accent); }
+  code, .mono { font-family: var(--mono); }
+
+  /* ---------- Layout ---------- */
+  .sidebar {
+    width: 240px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--line); padding: 20px 0;
+    display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0;
+  }
+  .brand { padding: 0 20px 18px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+  .brand-mark { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 0.12em; text-transform: uppercase; }
+  .brand-title { font-size: 16px; font-weight: 600; margin-top: 4px; }
+  .nav { flex: 1; padding: 4px 10px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius);
+    color: var(--text-dim); cursor: pointer; font-size: 13.5px; font-weight: 500; user-select: none;
+    border-left: 2px solid transparent;
+  }
+  .nav-item:hover { background: var(--panel-alt); color: var(--text); }
+  .nav-item.active { background: var(--accent-bg); color: var(--text); border-left: 2px solid var(--accent); }
+  .nav-icon { font-family: var(--mono); font-size: 12px; width: 18px; text-align: center; color: var(--text-dim); }
+  .nav-item.active .nav-icon { color: var(--accent); }
+  .nav-group-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-dim); opacity: 0.6; padding: 14px 12px 6px; user-select: none;
+  }
+  .nav-group-label:first-child { padding-top: 2px; }
+  .sidebar-foot { padding: 12px 20px 0; border-top: 1px solid var(--line); }
+  .conn-pill { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
+  .conn-dot.ok { background: var(--ok); }
+  .conn-dot.bad { background: var(--flag); }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--panel); gap: 12px;
+  }
+  .topbar-title { font-size: 15px; font-weight: 600; }
+  .topbar-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 1px; }
+  .content { flex: 1; overflow-y: auto; padding: 28px; }
+  .section { display: none; max-width: 980px; }
+  .section.active { display: block; }
+
+  /* Hamburger toggle - hidden on desktop, shown only under the mobile breakpoint below */
+  .hamburger-btn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px 8px; }
+  .sidebar-overlay { display: none; }
+
+  /* ---------- Mobile layout (phones and narrow tablets) ---------- */
+  @media (max-width: 860px) {
+    body { flex-direction: column; }
+    .hamburger-btn { display: block; }
+
+    .sidebar {
+      position: fixed; top: 0; left: 0; z-index: 40; width: 78vw; max-width: 300px;
+      transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 18px rgba(0,0,0,.4);
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-overlay.open {
+      display: block; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 35;
+    }
+
+    .topbar { padding: 12px 16px; }
+    .topbar-title { font-size: 14px; }
+    .topbar-sub { display: none; }  /* saves vertical space on small screens */
+    .content { padding: 16px; }
+
+    .style-toggle button { padding: 6px 10px; font-size: 11.5px; }
+
+    /* Every table in this app lives inside a .card - scrolling the
+       card horizontally is a single fix that keeps every table usable
+       on a narrow screen without rebuilding each one as mobile cards. */
+    .card { overflow-x: auto; }
+
+    .landing { padding: 28px 16px; }
+    .landing h1 { font-size: 24px; }
+    .landing-lede { font-size: 13.5px; }
+
+    .trail-flow { gap: 8px 0; }
+    .warrow { min-width: 70px; margin: 0 4px; }
+  }
+
+  /* ---------- Controls ---------- */
+  .style-toggle { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .style-toggle button {
+    border: none; background: transparent; color: var(--text-dim); font-family: var(--sans);
+    font-size: 12.5px; font-weight: 600; padding: 7px 14px; cursor: pointer;
+  }
+  .style-toggle button.active { background: var(--accent); color: #04121c; }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
+  .field .hint { font-size: 11.5px; color: var(--text-dim); margin-top: 5px; }
+  input[type=text], input[type=password], input[type=number], textarea, select {
+    width: 100%; background: var(--panel-alt); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 11px; border-radius: var(--radius); font-family: var(--mono); font-size: 13px;
+  }
+  select { font-family: var(--sans); }
+  textarea { min-height: 70px; resize: vertical; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  .radio-row { display: flex; gap: 16px; }
+  .radio-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); font-weight: 400; }
+
+  button.btn {
+    font-family: var(--sans); font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius);
+    padding: 9px 16px; cursor: pointer; background: var(--accent); color: #04121c;
+  }
+  button.btn:hover { filter: brightness(1.08); }
+  button.btn.secondary { background: var(--panel-alt); color: var(--text); border: 1px solid var(--line); }
+  button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+  .card h3 { margin: 0 0 14px; font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+
+  .result-box { margin-top: 18px; }
+  .empty-state { color: var(--text-dim); font-size: 13px; padding: 18px 0; }
+  .status-line { font-size: 12.5px; color: var(--text-dim); margin: 10px 0; }
+  .status-line.error { color: var(--flag); }
+
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.data-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  table.data-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+  table.data-table tr:last-child td { border-bottom: none; }
+
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; font-family: var(--sans); }
+  .pill.flag { background: var(--flag-bg); color: var(--flag); }
+  .pill.ok { background: var(--panel-alt); color: var(--ok); }
+  .pill.entity { background: var(--entity-bg); color: var(--entity); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+
+  /* ---------- Trail diagram ---------- */
+  .diagram-section-title { font-size: 13px; font-weight: 600; margin: 20px 0 10px; }
+  .diagram-section-title.match { color: var(--flag); }
+  .diagram-section-title.flagged { color: var(--warn); }
+  .trail-reason { font-size: 11.5px; color: var(--text-dim); font-style: italic; margin-bottom: 6px; }
+  .trail-row { margin-bottom: 20px; }
+  .trail-flow { display: flex; align-items: center; flex-wrap: wrap; }
+  .wbox {
+    font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 9px 13px; border-radius: 8px;
+    border: 1.5px solid #3d5a78; background: var(--panel-alt); text-align: center; min-width: 84px;
+    position: relative;
+  }
+  .wbox::before {
+    content: ""; position: absolute; top: -3px; left: -3px; width: 6px; height: 6px;
+    border-radius: 1px; background: #3d5a78;
+  }
+  .wbox.root { border-color: var(--accent); background: var(--accent-bg); }
+  .wbox.root::before { background: var(--accent); }
+  .wbox.entity { border-color: var(--entity); background: var(--entity-bg); }
+  .wbox.entity::before { background: var(--entity); }
+  .wbox.flagged { border-color: var(--flag); background: var(--flag-bg); color: var(--flag); }
+  .wbox.flagged::before { background: var(--flag); }
+  .wbox.guess { border-style: dashed; border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+  .wbox.guess::before { background: var(--warn); }
+  .warrow { display: flex; flex-direction: column; align-items: center; margin: 0 8px; min-width: 90px; }
+  .warrow .line { width: 100%; height: 0; border-top: 2px solid var(--text-dim); position: relative; margin: 4px 0; }
+  .warrow .line.heuristic { border-top: 2px dashed var(--warn); }
+  .warrow .line::after {
+    content: "▶"; position: absolute; right: -2px; top: -8px; font-size: 10px; color: var(--text-dim);
+  }
+  .warrow .line.heuristic::after { color: var(--warn); }
+  .warrow .alabel { font-size: 10.5px; text-align: center; color: var(--text); font-family: var(--mono); }
+  .warrow .adate { font-size: 10px; color: var(--text-dim); }
+  .legend-table td { font-family: var(--mono); font-size: 11.5px; }
+  .legend-table td.label { font-family: var(--sans); font-weight: 600; }
+  .footnote { font-size: 11.5px; color: var(--text-dim); margin-top: 14px; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ---------- Landing / login ---------- */
+  .landing { width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+  .landing-inner { max-width: 640px; text-align: center; }
+  .landing h1 { font-size: 30px; margin: 10px 0 14px; }
+  .landing-lede { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
+  .landing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 30px; text-align: left; }
+  .landing-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .landing-card h3 { margin: 0 0 6px; font-size: 14px; }
+  .landing-card p { margin: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+  @media (max-width: 560px) { .landing-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     LANDING PAGE - shown before login
+     ============================================================ -->
+<div id="landingView" class="landing">
+  <div class="landing-inner">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1>On-Chain Investigations</h1>
+    <p class="landing-lede">
+      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
+      evidence - built for investigators working with law enforcement.
+    </p>
+    <div class="landing-grid">
+      <div class="landing-card"><h3>⇢ Link Tracer</h3><p>Traces funds forward or backward, hop by hop, across multiple wallets automatically.</p></div>
+      <div class="landing-card"><h3>⛃ Deposit Mapping</h3><p>Confirms exchange deposit addresses by watching for consolidation sweeps.</p></div>
+      <div class="landing-card"><h3>⇄ Swap/Bridge Check</h3><p>Finds where funds likely went after passing through a non-KYC exchange or bridge - even across chains.</p></div>
+      <div class="landing-card"><h3>🔍 Tx / Date Search</h3><p>Look up a known transaction hash, or search a wallet's activity around a specific date.</p></div>
+    </div>
+    <p class="landing-lede" style="font-size:13px; margin-top:8px;">
+      Every finding is labeled by confidence - confirmed, heuristic, or lead - nothing is
+      ever presented as proof it isn't.
+    </p>
+    <button class="btn" id="landingSignInBtn" style="margin-top:22px; padding:12px 28px; font-size:14px;">Sign In</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     LOGIN FORM
+     ============================================================ -->
+<div id="loginView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Sign In</h1>
+    <div class="field" style="text-align:left; margin-top:24px;"><label>Username</label><input type="text" id="loginUsername"></div>
+    <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="loginPassword"></div>
+    <div class="status-line error" id="loginStatus" style="min-height:16px;"></div>
+    <button class="btn" id="loginSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Sign In</button>
+    <button class="btn secondary" id="forgotPasswordLinkBtn" style="width:100%; padding:9px; margin-top:8px; background:transparent; border:none; color:var(--accent);">Forgot password?</button>
+    <button class="btn secondary" id="backToLandingBtn" style="width:100%; padding:9px; margin-top:4px;">Back</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     2FA CODE ENTRY - second login step, only shown when the
+     account has 2FA enabled
+     ============================================================ -->
+<div id="totpView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Enter your code</h1>
+    <p class="landing-lede" style="font-size:13px;">Open your authenticator app and enter the current 6-digit code.</p>
+    <div class="field" style="text-align:left; margin-top:16px;"><label>Code</label><input type="text" id="totpCode" inputmode="numeric" maxlength="6" placeholder="123456"></div>
+    <div class="status-line error" id="totpStatus" style="min-height:16px;"></div>
+    <button class="btn" id="totpSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Verify</button>
+    <button class="btn secondary" id="totpBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     FORGOT PASSWORD
+     ============================================================ -->
+<div id="forgotView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Reset your password</h1>
+    <p class="landing-lede" style="font-size:13px;">Enter your username or email - if your account has an email on file, we'll send a reset link.</p>
+    <div class="field" style="text-align:left; margin-top:16px;"><label>Username or email</label><input type="text" id="forgotIdentifier"></div>
+    <div class="status-line" id="forgotStatus" style="min-height:16px;"></div>
+    <button class="btn" id="forgotSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Send reset link</button>
+    <button class="btn secondary" id="forgotBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     RESET PASSWORD - reached via the emailed link (?reset_token=...)
+     ============================================================ -->
+<div id="resetView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:360px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Set a new password</h1>
+    <div class="field" style="text-align:left; margin-top:16px;"><label>New password (min. 8 characters)</label><input type="password" id="resetNewPassword"></div>
+    <div class="status-line" id="resetStatus" style="min-height:16px;"></div>
+    <button class="btn" id="resetSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Set new password</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN APP - shown once logged in
+     ============================================================ -->
+<div id="appShell" style="display:none;">
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+<div class="sidebar" id="sidebar">
+  <div class="brand">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <div class="brand-title">On-Chain Investigations</div>
+  </div>
+  <div class="nav" id="nav"></div>
+  <div class="sidebar-foot">
+    <div class="conn-pill"><span class="conn-dot ok"></span><span id="whoamiLabel">-</span></div>
+    <button class="btn secondary" id="security2faBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">🔐 Two-Factor Auth</button>
+    <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:8px; padding:7px; font-size:12px;">Log out</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="topbar">
+    <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+      <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu">☰</button>
+      <div style="min-width:0;">
+        <div class="topbar-title" id="sectionTitle">Link Tracer</div>
+        <div class="topbar-sub" id="sectionSub">Trace funds forward or backward, hop by hop</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div class="style-toggle" id="styleToggle">
+        <button data-style="technical">🎓 Technical</button>
+        <button data-style="simple">👤 Simple</button>
+      </div>
+    </div>
+  </div>
+  <div class="content" id="content"></div>
+</div>
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+const state = {
+  reportStyle: "technical",
+  section: "link-trace",
+  currentUser: null,   // {username, role} once logged in
+};
+
+// Cached last Link Tracer result, so switching Technical/Simple view
+// instantly re-renders without a fresh API call.
+const lastResults = { linkTrace: null, linkTraceMeta: null };
+
+const SECTIONS = [
+  { id: "link-trace", icon: "⇢", label: "Link Tracer", sub: "Trace funds forward or backward, hop by hop", adminOnly: false, group: "Investigate" },
+  { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
+  { id: "swap-correlation", icon: "⇄", label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
+  { id: "tx-date-search", icon: "🔍", label: "Tx / Date Search", sub: "Look up a known transaction hash, or search a wallet around a specific date", adminOnly: false, group: "Investigate" },
+  { id: "case-watchlist", icon: "▤", label: "Case Watchlist", sub: "Shared list of flagged illicit wallets", adminOnly: false, group: "Case Data" },
+  { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
+  { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
+];
+
+// ============================================================
+// API HELPER - always same-origin, session cookie sent automatically
+// ============================================================
+async function apiFetch(path, options = {}) {
+  const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
+  const response = await fetch(path, Object.assign({}, options, { headers, credentials: "include" }));
+  let body;
+  try { body = await response.json(); } catch (e) { body = null; }
+  if (!response.ok) {
+    const detail = (body && body.detail) ? body.detail : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+  return body;
+}
+
+function escapeHtml(text) {
+  return String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function formatFriendlyDate(isoLike) {
+  // Input like "2026-05-06 15:28:40" (UTC, space-separated as returned by the API)
+  const d = new Date(isoLike.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return isoLike;
+  const opts = { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" };
+  return d.toLocaleString("en-GB", opts).replace(",", " at") + " UTC";
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function isAdmin() {
+  return state.currentUser && state.currentUser.role === "admin";
+}
+
+// ============================================================
+// NAV / LAYOUT
+// ============================================================
+function buildNav() {
+  const nav = document.getElementById("nav");
+  nav.innerHTML = "";
+  let lastGroup = null;
+  for (const section of SECTIONS) {
+    if (section.adminOnly && !isAdmin()) continue;  // read-only users never see admin-only tabs at all
+    if (section.group !== lastGroup) {
+      const header = el("div", "nav-group-label", section.group);
+      nav.appendChild(header);
+      lastGroup = section.group;
+    }
+    const item = el("div", "nav-item" + (section.id === state.section ? " active" : ""));
+    item.innerHTML = `<span class="nav-icon">${section.icon}</span><span>${section.label}</span>`;
+    item.onclick = () => switchSection(section.id);
+    nav.appendChild(item);
+  }
+}
+
+function switchSection(id) {
+  state.section = id;
+  buildNav();
+  const meta = SECTIONS.find(s => s.id === id);
+  document.getElementById("sectionTitle").textContent = meta.label;
+  document.getElementById("sectionSub").textContent = meta.sub;
+  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+  document.getElementById("section-" + id).classList.add("active");
+  // These sections show live server data - refresh every time the tab opens.
+  if (id === "case-watchlist") loadCaseWatchlist();
+  if (id === "known-entities") loadKnownEntities();
+  if (id === "deposit-map") loadDepositMap();
+  if (id === "users") loadUsers();
+  closeMobileSidebar();  // picking a section on mobile should take you straight to it
+}
+
+// ============================================================
+// MOBILE SIDEBAR (hamburger drawer)
+// ============================================================
+function openMobileSidebar() {
+  document.getElementById("sidebar").classList.add("open");
+  document.getElementById("sidebarOverlay").classList.add("open");
+}
+function closeMobileSidebar() {
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("sidebarOverlay").classList.remove("open");
+}
+document.getElementById("hamburgerBtn").onclick = openMobileSidebar;
+document.getElementById("sidebarOverlay").onclick = closeMobileSidebar;
+
+document.getElementById("styleToggle").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  state.reportStyle = btn.dataset.style;
+  refreshStyleToggle();
+});
+function refreshStyleToggle() {
+  document.querySelectorAll("#styleToggle button").forEach(b => b.classList.toggle("active", b.dataset.style === state.reportStyle));
+  // Re-render whatever's currently on screen using cached last results, so the toggle is instant.
+  if (lastResults.linkTrace) renderLinkTraceResults(lastResults.linkTrace, lastResults.linkTraceMeta);
+}
+
+// ============================================================
+// AUTH - landing page, login, logout, session check on load
+// ============================================================
+function showView(viewId) {
+  ["landingView", "loginView", "totpView", "forgotView", "resetView", "appShell"].forEach(id => {
+    document.getElementById(id).style.display = id === viewId ? "flex" : "none";
+  });
+}
+
+document.getElementById("landingSignInBtn").onclick = () => {
+  document.getElementById("loginStatus").textContent = "";
+  showView("loginView");
+};
+document.getElementById("backToLandingBtn").onclick = () => showView("landingView");
+
+let pendingTotpToken = null;
+
+async function attemptLogin() {
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const statusEl = document.getElementById("loginStatus");
+  if (!username || !password) { statusEl.textContent = "Enter both a username and password."; return; }
+  statusEl.textContent = "";
+  try {
+    const result = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    if (result.requires_totp) {
+      pendingTotpToken = result.temp_token;
+      document.getElementById("totpStatus").textContent = "";
+      document.getElementById("totpCode").value = "";
+      showView("totpView");
+      document.getElementById("totpCode").focus();
+      return;
+    }
+    state.currentUser = { username: result.username, role: result.role };
+    enterApp();
+  } catch (err) {
+    statusEl.textContent = err.message || "Login failed.";
+  }
+}
+document.getElementById("loginSubmitBtn").onclick = attemptLogin;
+document.getElementById("loginPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptLogin(); });
+
+async function attemptTotpVerify() {
+  const code = document.getElementById("totpCode").value.trim();
+  const statusEl = document.getElementById("totpStatus");
+  if (!code) { statusEl.textContent = "Enter the 6-digit code."; return; }
+  statusEl.textContent = "";
+  try {
+    const result = await apiFetch("/api/auth/2fa/verify", { method: "POST", body: JSON.stringify({ temp_token: pendingTotpToken, code }) });
+    state.currentUser = { username: result.username, role: result.role };
+    pendingTotpToken = null;
+    enterApp();
+  } catch (err) {
+    statusEl.textContent = err.message || "Verification failed.";
+  }
+}
+document.getElementById("totpSubmitBtn").onclick = attemptTotpVerify;
+document.getElementById("totpCode").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptTotpVerify(); });
+document.getElementById("totpBackBtn").onclick = () => { pendingTotpToken = null; showView("loginView"); };
+
+document.getElementById("forgotPasswordLinkBtn").onclick = () => {
+  document.getElementById("forgotStatus").textContent = "";
+  document.getElementById("forgotStatus").className = "status-line";
+  document.getElementById("forgotIdentifier").value = "";
+  showView("forgotView");
+};
+document.getElementById("forgotBackBtn").onclick = () => showView("loginView");
+document.getElementById("forgotSubmitBtn").onclick = async () => {
+  const identifier = document.getElementById("forgotIdentifier").value.trim();
+  const statusEl = document.getElementById("forgotStatus");
+  if (!identifier) { statusEl.textContent = "Enter your username or email."; statusEl.className = "status-line error"; return; }
+  try {
+    const result = await apiFetch("/api/auth/forgot-password", { method: "POST", body: JSON.stringify({ identifier }) });
+    statusEl.textContent = result.message;
+    statusEl.className = "status-line";
+  } catch (err) {
+    statusEl.textContent = err.message || "Something went wrong.";
+    statusEl.className = "status-line error";
+  }
+};
+
+document.getElementById("resetSubmitBtn").onclick = async () => {
+  const newPassword = document.getElementById("resetNewPassword").value;
+  const statusEl = document.getElementById("resetStatus");
+  const token = new URLSearchParams(window.location.search).get("reset_token");
+  if (!newPassword || newPassword.length < 8) { statusEl.textContent = "Password must be at least 8 characters."; statusEl.className = "status-line error"; return; }
+  try {
+    await apiFetch("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, new_password: newPassword }) });
+    statusEl.textContent = "Password updated - you can now sign in with your new password.";
+    statusEl.className = "status-line";
+    // Clean the token out of the URL so a page refresh/bookmark doesn't resubmit it.
+    window.history.replaceState({}, "", window.location.pathname);
+    document.getElementById("resetSubmitBtn").disabled = true;
+    setTimeout(() => { showView("loginView"); document.getElementById("resetSubmitBtn").disabled = false; }, 1800);
+  } catch (err) {
+    statusEl.textContent = err.message || "That reset link is invalid or has expired.";
+    statusEl.className = "status-line error";
+  }
+};
+
+document.getElementById("logoutBtn").onclick = async () => {
+  try { await apiFetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
+  state.currentUser = null;
+  document.getElementById("loginUsername").value = "";
+  document.getElementById("loginPassword").value = "";
+  showView("landingView");
+};
+
+// ============================================================
+// 2FA SETUP / DISABLE (from within the app, for your own account)
+// ============================================================
+document.getElementById("security2faBtn").onclick = () => open2FAModal();
+
+function closeModal(overlay) { overlay.remove(); }
+
+// ============================================================
+// QUICK-SAVE TO KNOWN ENTITIES (from anywhere an address shows up in results)
+// ============================================================
+function openQuickSaveEntityModal(address) {
+  if (!isAdmin()) return;  // read-only users can't write to known_entities anyway
+  const overlay = el("div");
+  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:60; padding:20px;";
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Save to Known Entities</h3>
+      <div class="field"><label>Address</label><input type="text" value="${escapeHtml(address)}" readonly style="font-family:var(--mono); font-size:12px;"></div>
+      <div class="field"><label>Name</label><input type="text" id="qsName" placeholder="e.g. ChangeNOW"></div>
+      <div class="field"><label>Type</label>
+        <select id="qsType">
+          <option value="exchange">exchange</option>
+          <option value="mixer">mixer</option>
+          <option value="instant_swap">instant_swap</option>
+          <option value="bridge">bridge</option>
+        </select>
+      </div>
+      <div class="status-line error" id="qsStatus"></div>
+      <button class="btn" id="qsSave" style="width:100%;">Save</button>
+      <button class="btn secondary" id="qsCancel" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#qsCancel").onclick = () => closeModal(overlay);
+  overlay.querySelector("#qsSave").onclick = async () => {
+    const name = overlay.querySelector("#qsName").value.trim();
+    const type = overlay.querySelector("#qsType").value;
+    const statusEl = overlay.querySelector("#qsStatus");
+    if (!name) { statusEl.textContent = "Enter a name for this entity."; return; }
+    try {
+      await apiFetch("/api/known-entities", { method: "POST", body: JSON.stringify({ address, name, type }) });
+      overlay.innerHTML = `<div class="card" style="width:380px; text-align:center;"><h3>✅ Saved</h3><button class="btn" id="qsDone" style="width:100%; margin-top:14px;">Done</button></div>`;
+      overlay.querySelector("#qsDone").onclick = () => closeModal(overlay);
+    } catch (err) {
+      statusEl.textContent = err.message || "Something went wrong.";
+    }
+  };
+}
+
+function saveEntityButtonHtml(address) {
+  // Read-only users never get this button at all - matches every other admin-only control in the app.
+  if (!isAdmin()) return "";
+  return `<button class="btn secondary" style="padding:3px 8px; font-size:10.5px; margin-left:6px;" onclick="openQuickSaveEntityModal('${escapeHtml(address)}')">+ Save</button>`;
+}
+
+async function open2FAModal() {
+  const overlay = el("div");
+  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:60; padding:20px;";
+  document.body.appendChild(overlay);
+
+  let me;
+  try {
+    me = await apiFetch("/api/auth/me");
+  } catch (err) {
+    overlay.remove();
+    return;
+  }
+
+  if (me.totp_enabled) {
+    renderDisable2FA(overlay);
+  } else {
+    renderEnable2FAStart(overlay);
+  }
+}
+
+function renderEnable2FAStart(overlay) {
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Enable Two-Factor Auth</h3>
+      <div class="hint" style="margin-bottom:14px;">
+        Adds a second step to signing in - after your password, you'll also need a 6-digit
+        code from an authenticator app (Google Authenticator, Authy, 1Password, etc.).
+      </div>
+      <button class="btn" id="start2FASetupBtn" style="width:100%;">Get started</button>
+      <button class="btn secondary" id="cancel2FABtn" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  overlay.querySelector("#cancel2FABtn").onclick = () => closeModal(overlay);
+  overlay.querySelector("#start2FASetupBtn").onclick = async () => {
+    try {
+      const data = await apiFetch("/api/auth/2fa/setup", { method: "POST" });
+      renderEnable2FAConfirm(overlay, data);
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  };
+}
+
+function renderEnable2FAConfirm(overlay, data) {
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Scan this code</h3>
+      <div class="hint" style="margin-bottom:12px;">
+        Scan with your authenticator app, or enter this key manually if you can't scan:
+      </div>
+      <div style="text-align:center; margin-bottom:12px;">
+        <img src="data:image/png;base64,${data.qr_code_base64}" style="width:180px; height:180px; border-radius:8px;" alt="2FA QR code">
+      </div>
+      <div class="field">
+        <label>Manual entry key</label>
+        <input type="text" readonly value="${escapeHtml(data.secret)}" style="text-align:center; letter-spacing:1px;">
+      </div>
+      <div class="field">
+        <label>Enter the 6-digit code it's showing now, to confirm</label>
+        <input type="text" id="confirm2FACode" inputmode="numeric" maxlength="6" placeholder="123456">
+      </div>
+      <div class="status-line error" id="confirm2FAStatus"></div>
+      <button class="btn" id="confirm2FABtn" style="width:100%;">Confirm &amp; enable</button>
+      <button class="btn secondary" id="cancel2FABtn2" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  overlay.querySelector("#cancel2FABtn2").onclick = () => closeModal(overlay);
+  overlay.querySelector("#confirm2FABtn").onclick = async () => {
+    const code = overlay.querySelector("#confirm2FACode").value.trim();
+    const statusEl = overlay.querySelector("#confirm2FAStatus");
+    try {
+      await apiFetch("/api/auth/2fa/confirm", { method: "POST", body: JSON.stringify({ code }) });
+      overlay.innerHTML = `<div class="card" style="width:380px; text-align:center;"><h3>✅ Enabled</h3><div class="hint">Two-factor authentication is now on for your account.</div><button class="btn" id="done2FABtn" style="width:100%; margin-top:14px;">Done</button></div>`;
+      overlay.querySelector("#done2FABtn").onclick = () => closeModal(overlay);
+    } catch (err) {
+      statusEl.textContent = err.message || "Incorrect code.";
+    }
+  };
+}
+
+function renderDisable2FA(overlay) {
+  overlay.innerHTML = `
+    <div class="card" style="width:380px;">
+      <h3>Disable Two-Factor Auth</h3>
+      <div class="hint" style="margin-bottom:14px;">Enter your password to confirm.</div>
+      <div class="field"><label>Password</label><input type="password" id="disable2FAPassword"></div>
+      <div class="status-line error" id="disable2FAStatus"></div>
+      <button class="btn" id="confirmDisable2FABtn" style="width:100%;">Disable</button>
+      <button class="btn secondary" id="cancelDisable2FABtn" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>`;
+  overlay.querySelector("#cancelDisable2FABtn").onclick = () => closeModal(overlay);
+  overlay.querySelector("#confirmDisable2FABtn").onclick = async () => {
+    const password = overlay.querySelector("#disable2FAPassword").value;
+    const statusEl = overlay.querySelector("#disable2FAStatus");
+    try {
+      await apiFetch("/api/auth/2fa/disable", { method: "POST", body: JSON.stringify({ password }) });
+      closeModal(overlay);
+    } catch (err) {
+      statusEl.textContent = err.message || "Incorrect password.";
+    }
+  };
+}
+
+function enterApp() {
+  document.getElementById("whoamiLabel").textContent = `${state.currentUser.username} (${state.currentUser.role})`;
+  // Sections are built HERE, not at page load, because several of them
+  // check isAdmin() while rendering (to show/hide add/delete controls) -
+  // and we don't know the role until login/session-check completes.
+  // Rebuilding fresh on every entry also correctly handles logging out
+  // and back in as a different user.
+  const contentEl = document.getElementById("content");
+  contentEl.innerHTML = "";
+  renderLinkTraceSection();
+  renderCaseWatchlistSection();
+  renderKnownEntitiesSection();
+  renderDepositMapSection();
+  renderSwapCorrelationSection();
+  renderTxDateSearchSection();
+  if (isAdmin()) renderUsersSection();
+
+  buildNav();
+  const currentMeta = SECTIONS.find(s => s.id === state.section);
+  if (!currentMeta || (currentMeta.adminOnly && !isAdmin())) state.section = "link-trace";
+  switchSection(state.section);
+  refreshStyleToggle();
+  showView("appShell");
+}
+
+async function checkExistingSession() {
+  // A password-reset link takes priority over everything else, even an
+  // existing logged-in session - someone clicking the emailed link
+  // wants to set a new password, not land back in the app they may
+  // already be logged into on this device.
+  const resetToken = new URLSearchParams(window.location.search).get("reset_token");
+  if (resetToken) {
+    document.getElementById("resetStatus").textContent = "";
+    document.getElementById("resetStatus").className = "status-line";
+    document.getElementById("resetNewPassword").value = "";
+    showView("resetView");
+    return;
+  }
+
+  try {
+    const user = await apiFetch("/api/auth/me");
+    state.currentUser = user;
+    enterApp();
+  } catch (err) {
+    showView("landingView");
+  }
+}
+
+// ============================================================
+// SHARED: alias-building (mirrors link_tracer.py's build_friendly_aliases)
+// ============================================================
+function buildAliases(hopsFlat, rootWallet) {
+  const aliases = {};
+  aliases[rootWallet.toLowerCase()] = "Wallet Under Investigation";
+  let letterIndex = 0;
+  function nextLetter() {
+    let index = letterIndex++ + 1;
+    let letters = "";
+    while (index > 0) {
+      const remainder = (index - 1) % 26;
+      letters = String.fromCharCode(65 + remainder) + letters;
+      index = Math.floor((index - 1) / 26);
+    }
+    return letters;
+  }
+  for (const hop of hopsFlat) {
+    for (const side of [["from_address", "from_known_entity"], ["to_address", "to_known_entity"]]) {
+      const addr = hop[side[0]];
+      const key = addr.toLowerCase();
+      if (key in aliases) continue;
+      const entity = hop[side[1]];
+      aliases[key] = entity ? `${entity.name} (${entity.type})` : `Wallet ${nextLetter()}`;
+    }
+  }
+  return aliases;
+}
+
+function flattenHops(paths) {
+  const hops = [];
+  for (const path of paths) for (const hop of path.hops) hops.push(hop);
+  return hops;
+}
+
+// ============================================================
+// LINK TRACER
+// ============================================================
+function renderLinkTraceSection() {
+  const section = el("div", "section", "");
+  section.id = "section-link-trace";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Trace parameters</h3>
+      <div class="field"><label>Wallet</label><input type="text" id="ltWallet" placeholder="Victim wallet (forward) or wallet under investigation (backward)"></div>
+      <div class="field"><label>Direction</label>
+        <div class="radio-row">
+          <label><input type="radio" name="ltDirection" value="forward" checked> Forward (follow money OUT)</label>
+          <label><input type="radio" name="ltDirection" value="backward"> Backward (trace money IN)</label>
+        </div>
+      </div>
+      <div class="field"><label>Extra target wallet(s) (optional, comma separated)</label><input type="text" id="ltTargets"></div>
+      <div class="field"><label>Starting amount for amount-filtering (optional)</label><input type="text" id="ltAmount"></div>
+      <div class="field"><label><input type="checkbox" id="ltIncludeWatchlist" checked style="width:auto; margin-right:6px;"> Include shared case watchlist as targets</label></div>
+      <button class="btn" id="ltRun">Run trace</button>
+    </div>
+    <div class="status-line" id="ltStatus"></div>
+    <div id="ltResults" class="result-box"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("ltRun").onclick = async () => {
+    const wallet = document.getElementById("ltWallet").value.trim();
+    const direction = document.querySelector('input[name="ltDirection"]:checked').value;
+    const targetsRaw = document.getElementById("ltTargets").value.trim();
+    const amountRaw = document.getElementById("ltAmount").value.trim();
+    const includeWatchlist = document.getElementById("ltIncludeWatchlist").checked;
+    const statusEl = document.getElementById("ltStatus");
+    const resultsEl = document.getElementById("ltResults");
+    if (!wallet) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
+
+    const body = { wallet, direction, include_case_watchlist: includeWatchlist };
+    if (targetsRaw) body.target_wallets = targetsRaw.split(",").map(s => s.trim()).filter(Boolean);
+    if (amountRaw) body.starting_amount = parseFloat(amountRaw);
+
+    statusEl.textContent = "Tracing... this can take a while.";
+    statusEl.className = "status-line";
+    resultsEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+      lastResults.linkTrace = data;
+      lastResults.linkTraceMeta = { wallet, direction };
+      statusEl.textContent = `${data.addresses_visited} wallet(s) visited. ${data.matched_paths.length} direct link(s) found.`;
+      renderLinkTraceResults(data, lastResults.linkTraceMeta);
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+function renderLinkTraceResults(data, meta) {
+  const container = document.getElementById("ltResults");
+  container.innerHTML = "";
+  const simple = state.reportStyle === "simple";
+
+  const allPaths = [...data.matched_paths, ...data.flagged_end_paths.map(p => p), ...data.amount_filtered_paths.map(p => p)];
+  if (!allPaths.length) {
+    container.innerHTML = `<div class="empty-state">No on-chain activity found within the hop limit. This does not rule out a link - see the tool's documented limitations (exchanges, mixers, and cross-chain bridges all break a simple on-chain trail).</div>`;
+    return;
+  }
+
+  const targetSet = new Set(); // we don't get the raw target list back, so flagged/matched styling below relies on server-provided known_entity + the fact matched_paths ARE the target hits
+
+  let aliases = {};
+  if (simple) aliases = buildAliases(flattenHops(allPaths), meta.wallet);
+
+  function renderSwapLeads(path) {
+    const candidates = path.swap_correlation_candidates;
+    if (candidates === undefined) return; // not applicable to this path (not an instant_swap entity)
+
+    if (!candidates.length) {
+      container.appendChild(el("div", "trail-reason",
+        "🔄 No plausible correlated deposit/payout found for this service within the configured time window and value tolerance."));
+      return;
+    }
+
+    const best = candidates[0];
+    const row = el("div", "trail-row");
+    const pctMatch = Math.round(best.usd_match_ratio * 100);
+    const timingWord = best.minutes_diff >= 0 ? "later" : "earlier";
+    row.appendChild(el("div", "trail-reason",
+      `🔄 POSSIBLE LEAD (not confirmed) - HEURISTIC, verify before relying on it: ` +
+      `${pctMatch}% USD value match, ${Math.abs(best.minutes_diff).toFixed(1)} min ${timingWord}, on ${best.chain}.`));
+    const flow = el("div", "trail-flow");
+    flow.appendChild(makeBox("(swap service)", "entity"));
+    flow.appendChild(makeArrow(best.amount, formatFriendlyDate(best.tx_time_utc), true));
+    const destLabel = simple ? (aliases[best.counterparty.toLowerCase()] || best.counterparty) : best.counterparty;
+    flow.appendChild(makeBox(destLabel, "guess"));
+    row.appendChild(flow);
+    container.appendChild(row);
+    if (candidates.length > 1) {
+      container.appendChild(el("div", "footnote", `+${candidates.length - 1} more candidate(s) for this lead - see Technical View / raw API response for the full list.`));
+    }
+  }
+
+  function renderGroup(title, cls, paths) {
+    if (!paths.length) return;
+    container.appendChild(el("div", "diagram-section-title " + cls, title));
+    for (const path of paths) {
+      const row = el("div", "trail-row");
+      if (path.reason) row.appendChild(el("div", "trail-reason", path.reason));
+      const flow = el("div", "trail-flow");
+      const rootLabel = simple ? aliases[path.hops[0].from_address.toLowerCase()] : path.hops[0].from_address;
+      flow.appendChild(makeBox(rootLabel, "root"));
+      path.hops.forEach((hop, i) => {
+        const isLast = i === path.hops.length - 1;
+        const isMatchTarget = cls === "match" && isLast;
+        flow.appendChild(makeArrow(hop.amount, formatFriendlyDate(hop.tx_time_utc), false));
+        let label = simple ? (aliases[hop.to_address.toLowerCase()] || hop.to_address) : hop.to_address;
+        let boxCls = "";
+        if (isMatchTarget) { boxCls = "flagged"; label = "🚩 " + label; }
+        else if (hop.to_known_entity) { boxCls = "entity"; }
+        flow.appendChild(makeBox(label, boxCls));
+      });
+      row.appendChild(flow);
+      container.appendChild(row);
+      renderSwapLeads(path);
+    }
+  }
+
+  renderGroup("🚨 Direct link found", "match", data.matched_paths);
+  renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
+  renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
+
+  if (simple) {
+    const legendCard = el("div", "card");
+    legendCard.innerHTML = `<h3>Key</h3><table class="legend-table"></table>`;
+    const table = legendCard.querySelector("table");
+    for (const [addr, label] of Object.entries(aliases)) {
+      const row = el("tr"); row.innerHTML = `<td class="label">${escapeHtml(label)}</td><td>${escapeHtml(addr)}</td>`; table.appendChild(row);
+    }
+    container.appendChild(legendCard);
+    container.appendChild(el("div", "footnote", "Full technical detail - transaction references, exact addresses, raw timestamps - is available in Technical View."));
+  } else {
+    const summaryCard = el("div", "card");
+    summaryCard.innerHTML = `<h3>Clean summary</h3>`;
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>From</th><th>To</th><th>Amount</th><th>Time (UTC)</th><th>Verify</th></tr>` +
+      data.clean_summary.map(r => `<tr><td>${escapeHtml(r.from)}</td><td>${escapeHtml(r.to)}</td><td>${escapeHtml(r.amount)}</td><td>${escapeHtml(r.tx_time_utc)}</td><td><a href="${r.verify_url}" target="_blank">view</a></td></tr>`).join("");
+    summaryCard.appendChild(table);
+    container.appendChild(summaryCard);
+  }
+}
+
+function makeBox(label, cls) {
+  const box = el("div", "wbox" + (cls ? " " + cls : ""));
+  box.textContent = label;
+  return box;
+}
+function makeArrow(amount, dateLabel, heuristic) {
+  const wrap = el("div", "warrow");
+  wrap.innerHTML = `<div class="alabel">${escapeHtml(amount)}</div><div class="line${heuristic ? " heuristic" : ""}"></div><div class="adate">${escapeHtml(dateLabel)}</div>`;
+  return wrap;
+}
+
+// ============================================================
+// CASE WATCHLIST
+// ============================================================
+function renderCaseWatchlistSection() {
+  const section = el("div", "section", "");
+  section.id = "section-case-watchlist";
+  section.innerHTML = `
+    ${isAdmin() ? `<div class="card">
+      <h3>Add a wallet</h3>
+      <div class="field"><label>Address</label><input type="text" id="cwAddress"></div>
+      <div class="field"><label>Source (optional)</label><input type="text" id="cwSource"></div>
+      <div class="field"><label>Context (optional)</label><input type="text" id="cwContext"></div>
+      <button class="btn" id="cwAdd">Add to watchlist</button>
+    </div>
+    <div class="status-line" id="cwStatus"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
+    <div class="card"><h3>Shared case watchlist</h3><div id="cwList"></div></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  if (isAdmin()) {
+    document.getElementById("cwAdd").onclick = async () => {
+      const address = document.getElementById("cwAddress").value.trim();
+      const source = document.getElementById("cwSource").value.trim();
+      const context = document.getElementById("cwContext").value.trim();
+      const statusEl = document.getElementById("cwStatus");
+      if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+      try {
+        const r = await apiFetch("/api/case-watchlist", { method: "POST", body: JSON.stringify({ address, source, context }) });
+        statusEl.textContent = r.added ? "Added." : (r.message || "Already on the watchlist.");
+        statusEl.className = "status-line";
+        document.getElementById("cwAddress").value = "";
+        loadCaseWatchlist();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+  }
+}
+async function loadCaseWatchlist() {
+  const listEl = document.getElementById("cwList");
+  if (!listEl) return;
+  try {
+    const entries = await apiFetch("/api/case-watchlist");
+    listEl.innerHTML = "";
+    if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No addresses on the shared watchlist yet.</div>`; return; }
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>First seen</th><th>Source</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
+      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.chain)}</td><td>${escapeHtml(e.first_seen_utc)}</td><td>${escapeHtml(e.source || "")}</td>
+       ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCaseWatchlistEntry('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
+    ).join("");
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function deleteCaseWatchlistEntry(address) {
+  await apiFetch("/api/case-watchlist/" + encodeURIComponent(address), { method: "DELETE" });
+  loadCaseWatchlist();
+}
+
+// ============================================================
+// KNOWN ENTITIES
+// ============================================================
+function renderKnownEntitiesSection() {
+  const section = el("div", "section", "");
+  section.id = "section-known-entities";
+  section.innerHTML = `
+    ${isAdmin() ? `<div class="card">
+      <h3>Add a known entity</h3>
+      <div class="field"><label>Address</label><input type="text" id="keAddress"></div>
+      <div class="field"><label>Name</label><input type="text" id="keName" placeholder="e.g. ChangeNOW"></div>
+      <div class="field"><label>Type</label>
+        <select id="keType">
+          <option value="exchange">exchange</option>
+          <option value="mixer">mixer</option>
+          <option value="instant_swap">instant_swap (no-KYC swap service - enables swap correlation)</option>
+          <option value="bridge">bridge (cross-chain bridge - enables swap correlation)</option>
+        </select>
+      </div>
+      <button class="btn" id="keAdd">Add entity</button>
+      <button class="btn secondary" id="keBulkToggle" style="margin-left:8px;">Bulk add instead</button>
+    </div>
+    <div class="status-line" id="keStatus"></div>
+    <div class="card" id="keBulkCard" style="display:none;">
+      <h3>Bulk add (paste a list)</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        Paste many addresses at once - one per line (works with a pasted CSV column too). They'll all be added
+        under the SAME name and type below. Chain is auto-detected per address, so a batch can freely mix chains.
+      </div>
+      <div class="field"><label>Addresses (one per line)</label><textarea id="keBulkAddresses" rows="6" style="width:100%; font-family:var(--mono); font-size:12px;" placeholder="0x1234...&#10;bc1q...&#10;T...&#10;..."></textarea></div>
+      <div class="field"><label>Name</label><input type="text" id="keBulkName" placeholder="e.g. Binance"></div>
+      <div class="field"><label>Type</label>
+        <select id="keBulkType">
+          <option value="exchange">exchange</option>
+          <option value="mixer">mixer</option>
+          <option value="instant_swap">instant_swap</option>
+          <option value="bridge">bridge</option>
+        </select>
+      </div>
+      <button class="btn" id="keBulkAdd">Add all</button>
+    </div>
+    <div class="status-line" id="keBulkStatus"></div>
+    <div id="keBulkResults"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
+    <div class="card"><h3>Known entities</h3><div id="keList"></div></div>
+
+    ${isAdmin() ? `<div class="card" style="margin-top:24px;">
+      <h3>Known message patterns (Ethereum, Bitcoin, XRP)</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        For services that use a NEW receiving address every transaction (so the address list above
+        can never keep up), recognize the service by a consistent message it embeds in the
+        transaction instead - Bitcoin's OP_RETURN output, Ethereum's transaction input data, or XRP's
+        Memos field. E.g. a bridge that always writes something like "...to:USDT(TRON):&lt;destination&gt;"
+        regardless of which one-time address received the funds. Enter just the STABLE part of that
+        message (skip anything that changes per transaction, like a random prefix code or the
+        destination address itself).
+        <br><br>
+        <strong>Tron isn't covered here</strong> - standard USDT-TRC20 transfers are binary smart-contract
+        calls with no free-text field to check, unlike the other three chains.
+      </div>
+      <div class="field"><label>Pattern (a substring to match)</label><input type="text" id="opPattern" placeholder='e.g. to:USDT(TRON):'></div>
+      <div class="field"><label>Name</label><input type="text" id="opName" placeholder="e.g. Bridgers.xyz"></div>
+      <div class="field"><label>Type</label>
+        <select id="opType">
+          <option value="bridge">bridge</option>
+          <option value="instant_swap">instant_swap</option>
+        </select>
+      </div>
+      <button class="btn" id="opAdd">Add pattern</button>
+    </div>
+    <div class="status-line" id="opStatus"></div>
+    <div class="card"><h3>Registered patterns</h3><div id="opList"></div></div>` : ``}
+  `;
+  document.getElementById("content").appendChild(section);
+
+  if (isAdmin()) {
+    document.getElementById("opAdd").onclick = async () => {
+      const pattern = document.getElementById("opPattern").value.trim();
+      const name = document.getElementById("opName").value.trim();
+      const type = document.getElementById("opType").value;
+      const statusEl = document.getElementById("opStatus");
+      if (!pattern || !name) { statusEl.textContent = "Enter both a pattern and a name."; statusEl.className = "status-line error"; return; }
+      try {
+        await apiFetch("/api/op-return-patterns", { method: "POST", body: JSON.stringify({ pattern, name, type }) });
+        statusEl.textContent = "Added.";
+        statusEl.className = "status-line";
+        document.getElementById("opPattern").value = ""; document.getElementById("opName").value = "";
+        loadOpReturnPatterns();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+    loadOpReturnPatterns();
+
+    document.getElementById("keBulkToggle").onclick = () => {
+      const bulkCard = document.getElementById("keBulkCard");
+      const isHidden = bulkCard.style.display === "none";
+      bulkCard.style.display = isHidden ? "block" : "none";
+      document.getElementById("keBulkToggle").textContent = isHidden ? "Hide bulk add" : "Bulk add instead";
+    };
+
+    document.getElementById("keAdd").onclick = async () => {
+      const address = document.getElementById("keAddress").value.trim();
+      const name = document.getElementById("keName").value.trim();
+      const type = document.getElementById("keType").value;
+      const statusEl = document.getElementById("keStatus");
+      if (!address || !name) { statusEl.textContent = "Enter both an address and a name."; statusEl.className = "status-line error"; return; }
+      try {
+        await apiFetch("/api/known-entities", { method: "POST", body: JSON.stringify({ address, name, type }) });
+        statusEl.textContent = "Added.";
+        statusEl.className = "status-line";
+        document.getElementById("keAddress").value = ""; document.getElementById("keName").value = "";
+        loadKnownEntities();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+
+    document.getElementById("keBulkAdd").onclick = async () => {
+      const rawText = document.getElementById("keBulkAddresses").value;
+      const name = document.getElementById("keBulkName").value.trim();
+      const type = document.getElementById("keBulkType").value;
+      const statusEl = document.getElementById("keBulkStatus");
+      const resultsEl = document.getElementById("keBulkResults");
+      const addresses = rawText.split("\n").map(line => line.trim()).filter(line => line.length > 0);
+      if (!addresses.length || !name) { statusEl.textContent = "Paste at least one address and enter a name."; statusEl.className = "status-line error"; return; }
+      statusEl.textContent = `Adding ${addresses.length} address(es)...`;
+      statusEl.className = "status-line";
+      resultsEl.innerHTML = "";
+      try {
+        const data = await apiFetch("/api/known-entities/bulk", { method: "POST", body: JSON.stringify({ addresses, name, type }) });
+        statusEl.textContent = `Added ${data.added_count}, skipped ${data.skipped_duplicate_count} duplicate(s), ${data.skipped_invalid_count} unrecognized.`;
+        statusEl.className = "status-line";
+        if (data.skipped_invalid.length) {
+          const card = el("div", "card");
+          card.innerHTML = `<h3>Not recognized</h3><div class="hint">These didn't match any supported chain format - check for typos:</div>
+            <div style="font-family:var(--mono); font-size:12px; margin-top:8px;">${data.skipped_invalid.map(a => escapeHtml(a)).join("<br>")}</div>`;
+          resultsEl.appendChild(card);
+        }
+        document.getElementById("keBulkAddresses").value = "";
+        loadKnownEntities();
+      } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+    };
+  }
+}
+async function loadKnownEntities() {
+  const listEl = document.getElementById("keList");
+  if (!listEl) return;
+  try {
+    const entries = await apiFetch("/api/known-entities");
+    listEl.innerHTML = "";
+    if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No known entities yet.</div>`; return; }
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Address</th><th>Name</th><th>Chain</th><th>Type</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
+      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.chain || "?")}</td><td><span class="pill ${(e.type === 'instant_swap' || e.type === 'bridge') ? 'entity' : e.type === 'mixer' ? 'flag' : 'warn'}">${escapeHtml(e.type)}</span></td>
+       ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
+    ).join("");
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function deleteKnownEntity(address) {
+  await apiFetch("/api/known-entities/" + encodeURIComponent(address), { method: "DELETE" });
+  loadKnownEntities();
+}
+
+async function loadOpReturnPatterns() {
+  const listEl = document.getElementById("opList");
+  if (!listEl) return;
+  try {
+    const patterns = await apiFetch("/api/op-return-patterns");
+    listEl.innerHTML = "";
+    if (!patterns.length) { listEl.innerHTML = `<div class="empty-state">No message patterns registered yet.</div>`; return; }
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Pattern</th><th>Name</th><th>Type</th><th></th></tr>` + patterns.map((p, index) =>
+      `<tr><td style="font-family:var(--mono); font-size:12px;">${escapeHtml(p.pattern)}</td><td>${escapeHtml(p.name)}</td>
+       <td><span class="pill entity">${escapeHtml(p.type)}</span></td>
+       <td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteOpReturnPattern(${index})">Remove</button></td></tr>`
+    ).join("");
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function deleteOpReturnPattern(index) {
+  await apiFetch("/api/op-return-patterns/" + index, { method: "DELETE" });
+  loadOpReturnPatterns();
+}
+
+// ============================================================
+// DEPOSIT & CONSOLIDATION MAP
+// ============================================================
+function renderDepositMapSection() {
+  const section = el("div", "section", "");
+  section.id = "section-deposit-map";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Confirm a deposit address</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        Checks whether this address has swept funds into a KNOWN exchange wallet (from Known Entities) -
+        i.e. confirms it as a genuine deposit address for that exchange. On Bitcoin, a match also reveals
+        and maps every OTHER address swept in the same transaction.
+      </div>
+      <div class="field"><label>Address</label><input type="text" id="dmAddress" placeholder="Address to check"></div>
+      <button class="btn" id="dmCheck">Check address</button>
+    </div>
+    <div class="status-line" id="dmStatus"></div>
+    <div id="dmResult" class="result-box"></div>
+    <div class="card"><h3>Confirmed deposit addresses</h3><div id="dmList"></div></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("dmCheck").onclick = async () => {
+    const address = document.getElementById("dmAddress").value.trim();
+    const statusEl = document.getElementById("dmStatus");
+    const resultEl = document.getElementById("dmResult");
+    if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Checking...";
+    statusEl.className = "status-line";
+    resultEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/deposit-map/check", { method: "POST", body: JSON.stringify({ address }) });
+      statusEl.textContent = "";
+      const card = el("div", "card");
+      if (data.match) {
+        card.innerHTML = `
+          <h3>${data.already_known ? "Already known" : "🏦 Confirmed deposit address"}</h3>
+          <div class="status-line">${escapeHtml(data.message)}</div>
+          ${data.consolidation_tx_hash ? `<table class="legend-table" style="margin-top:10px;">
+            <tr><td class="label">Exchange</td><td>${escapeHtml(data.exchange_name)}</td></tr>
+            <tr><td class="label">Chain</td><td>${escapeHtml(data.chain)}</td></tr>
+            <tr><td class="label">Swept via tx</td><td>${escapeHtml(data.consolidation_tx_hash)}</td></tr>
+            <tr><td class="label">Time (UTC)</td><td>${escapeHtml(data.consolidation_time_utc)}</td></tr>
+            ${data.explorer_url ? `<tr><td class="label">Verify</td><td><a href="${data.explorer_url}" target="_blank">view transaction</a></td></tr>` : ""}
+          </table>` : ""}
+        `;
+      } else {
+        card.innerHTML = `<h3>No match found</h3><div class="status-line">${escapeHtml(data.message)}</div>`;
+      }
+      resultEl.appendChild(card);
+      loadDepositMap();
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+async function loadDepositMap() {
+  const listEl = document.getElementById("dmList");
+  if (!listEl) return;
+  try {
+    const entries = await apiFetch("/api/deposit-map");
+    listEl.innerHTML = "";
+    if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No deposit addresses confirmed yet.</div>`; return; }
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>Exchange</th><th>Discovered via</th><th>Swept</th></tr>` + entries.map(e =>
+      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.chain)}</td><td>${escapeHtml(e.exchange_name)}</td>
+       <td><span class="pill ${e.discovered_via === 'sibling_of_sweep' ? 'entity' : 'ok'}">${escapeHtml(e.discovered_via)}</span></td>
+       <td>${escapeHtml(e.consolidation_time_utc)}</td></tr>`
+    ).join("");
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ============================================================
+// SWAP / BRIDGE CORRELATION CHECK (standalone, single-wallet)
+// ============================================================
+function renderSwapCorrelationSection() {
+  const section = el("div", "section", "");
+  section.id = "section-swap-correlation";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Check a wallet</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        Checks whether this wallet deposited into (or received a payout from) a known
+        no-KYC instant-swap service or cross-chain bridge (from Known Entities) - and if so,
+        looks for the correlated other side, even on a different chain. This works standalone -
+        no need to run a full Link Tracer trace first.
+      </div>
+      <div class="field"><label>Wallet address</label><input type="text" id="scAddress" placeholder="Wallet to check"></div>
+      <div class="field"><label>Direction</label>
+        <div class="radio-row">
+          <label><input type="radio" name="scDirection" value="both" checked> Both</label>
+          <label><input type="radio" name="scDirection" value="outgoing"> Deposits only (did it pay INTO a service?)</label>
+          <label><input type="radio" name="scDirection" value="incoming"> Payouts only (did it receive FROM a service?)</label>
+        </div>
+      </div>
+      <button class="btn" id="scCheck">Check wallet</button>
+    </div>
+    <div class="status-line" id="scStatus"></div>
+    <div id="scResults" class="result-box"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("scCheck").onclick = async () => {
+    const address = document.getElementById("scAddress").value.trim();
+    const direction = document.querySelector('input[name="scDirection"]:checked').value;
+    const statusEl = document.getElementById("scStatus");
+    const resultsEl = document.getElementById("scResults");
+    if (!address) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Checking...";
+    statusEl.className = "status-line";
+    resultsEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/swap-correlation/check", { method: "POST", body: JSON.stringify({ address, direction }) });
+      statusEl.textContent = data.message;
+      renderSwapCorrelationResults(data, resultsEl);
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+function renderSwapCorrelationResults(data, container) {
+  container.innerHTML = "";
+  if (!data.deposits_found?.length && !data.payouts_found?.length) return;
+
+  function renderEntry(entry, kind) {
+    const card = el("div", "card");
+    const label = kind === "deposit" ? "🔄 Deposit into" : "🔄 Payout from";
+    const amount = kind === "deposit" ? entry.deposit_amount : entry.payout_amount;
+    const txHash = kind === "deposit" ? entry.deposit_tx_hash : entry.payout_tx_hash;
+    const txTime = kind === "deposit" ? entry.deposit_time_utc : entry.payout_time_utc;
+    let html = `<h3>${label} ${escapeHtml(entry.service_name)} (${escapeHtml(entry.service_type)})</h3>
+      <table class="legend-table">
+        <tr><td class="label">Amount</td><td>${escapeHtml(amount)}</td></tr>
+        <tr><td class="label">Time (UTC)</td><td>${escapeHtml(txTime)}</td></tr>
+        <tr><td class="label">Tx hash</td><td>${escapeHtml(txHash)}</td></tr>
+        <tr><td class="label">Verify</td><td><a href="${entry.explorer_url}" target="_blank">view transaction</a></td></tr>
+      </table>`;
+
+    if (entry.candidates.length) {
+      html += `<div class="footnote" style="margin-top:12px; color:var(--warn);">
+        HEURISTIC LEAD(S) - not confirmed, verify each one manually:</div>`;
+      html += `<table class="data-table" style="margin-top:8px;">
+        <tr><th>Chain</th><th>Counterparty</th><th>Amount</th><th>Time (UTC)</th><th>Match</th><th></th></tr>` +
+        entry.candidates.map(c => `<tr><td>${escapeHtml(c.chain)}</td><td>${escapeHtml(c.counterparty)}${saveEntityButtonHtml(c.counterparty)}</td>
+          <td>${escapeHtml(c.amount)}</td><td>${escapeHtml(c.tx_time_utc)}</td>
+          <td>${Math.round(c.usd_match_ratio * 100)}%</td>
+          <td><a href="${c.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
+        `</table>`;
+    } else {
+      html += `<div class="footnote" style="margin-top:10px;">No plausible correlated ${kind === "deposit" ? "payout" : "deposit"} found within the correlation window - this doesn't rule one out.</div>`;
+    }
+    card.innerHTML = html;
+    container.appendChild(card);
+  }
+
+  for (const entry of data.deposits_found || []) renderEntry(entry, "deposit");
+  for (const entry of data.payouts_found || []) renderEntry(entry, "payout");
+}
+
+// ============================================================
+// TX HASH LOOKUP + DATE-ANCHORED WALLET SEARCH
+// ============================================================
+function renderTxDateSearchSection() {
+  const section = el("div", "section", "");
+  section.id = "section-tx-date-search";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Look up a transaction hash</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        If you already know the exact transaction (from another tool, a screenshot, a colleague),
+        get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
+        are unambiguous. Bitcoin/XRP/Tron hashes look identical (64 hex characters, no prefix) - this
+        tries each of those three in turn until one recognizes it.
+      </div>
+      <div class="field"><label>Transaction hash</label><input type="text" id="txhAddress" placeholder="0x... or a bare 64-character hash"></div>
+      <button class="btn" id="txhSearch">Look up</button>
+    </div>
+    <div class="status-line" id="txhStatus"></div>
+    <div id="txhResults" class="result-box"></div>
+
+    <div class="card" style="margin-top:24px;">
+      <h3>Search a wallet around a specific date</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        The automatic trace only checks a wallet's MOST RECENT activity - for a very high-volume
+        wallet (a major exchange's hot wallet, say), an old transaction can be buried behind
+        millions of newer ones and never get reached that way. If you already know roughly WHEN
+        it happened, search directly around that date instead.
+        <br><br>
+        <strong>Honest limitation:</strong> Ethereum and Tron support this well (direct date-range
+        queries). Bitcoin and XRP don't have that in their public APIs - this pages backward from
+        "now" with a high safety cap, and will say so plainly if a wallet is too busy to reach
+        your target date within that cap.
+      </div>
+      <div class="field"><label>Wallet address</label><input type="text" id="dsAddress" placeholder="Wallet to search"></div>
+      <div class="field"><label>Target date and time (UTC)</label><input type="datetime-local" id="dsDatetime"></div>
+      <div class="field"><label>Search window (hours either side of that time)</label><input type="number" id="dsWindow" value="24" min="1" max="720"></div>
+      <button class="btn" id="dsSearch">Search</button>
+    </div>
+    <div class="status-line" id="dsStatus"></div>
+    <div id="dsResults" class="result-box"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("txhSearch").onclick = async () => {
+    const txHash = document.getElementById("txhAddress").value.trim();
+    const statusEl = document.getElementById("txhStatus");
+    const resultsEl = document.getElementById("txhResults");
+    if (!txHash) { statusEl.textContent = "Enter a transaction hash first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Checking Ethereum, Bitcoin, XRP, and Tron...";
+    statusEl.className = "status-line";
+    resultsEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/tx-lookup", { method: "POST", body: JSON.stringify({ tx_hash: txHash }) });
+      if (!data.found) {
+        statusEl.textContent = data.message;
+        statusEl.className = "status-line error";
+        return;
+      }
+      statusEl.textContent = `Found on ${data.chain}.`;
+      const card = el("div", "card");
+      let rows = `
+        <tr><td class="label">Chain</td><td>${escapeHtml(data.chain)}</td></tr>
+        <tr><td class="label">Confirmed</td><td>${data.confirmed ? "Yes" : "No / pending"}</td></tr>
+        <tr><td class="label">Time (UTC)</td><td>${escapeHtml(data.tx_time_utc || "unknown")}</td></tr>
+        <tr><td class="label">Amount</td><td>${escapeHtml(data.total_amount || "-")}</td></tr>`;
+      if (data.from) rows += `<tr><td class="label">From</td><td>${escapeHtml(data.from)}${saveEntityButtonHtml(data.from)}</td></tr>`;
+      if (data.to) rows += `<tr><td class="label">To</td><td>${escapeHtml(data.to)}${saveEntityButtonHtml(data.to)}</td></tr>`;
+      rows += `<tr><td class="label">Verify</td><td><a href="${data.explorer_url}" target="_blank">view on block explorer</a></td></tr>`;
+      let html = `<h3>Transaction found</h3><table class="legend-table">${rows}</table>`;
+
+      if (data.inputs && data.outputs) {
+        html += `<div class="footnote" style="margin-top:12px;">Inputs (${data.inputs.length}):</div>
+          <table class="data-table" style="margin-top:6px;"><tr><th>Address</th><th>Amount</th></tr>` +
+          data.inputs.map(i => `<tr><td>${escapeHtml(i.address || "(none)")}${i.address ? saveEntityButtonHtml(i.address) : ""}</td><td>${escapeHtml(i.amount)}</td></tr>`).join("") +
+          `</table>
+          <div class="footnote" style="margin-top:12px;">Outputs (${data.outputs.length}):</div>
+          <table class="data-table" style="margin-top:6px;"><tr><th>Address</th><th>Amount</th></tr>` +
+          data.outputs.map(o => `<tr><td>${escapeHtml(o.address || "(none)")}${o.address ? saveEntityButtonHtml(o.address) : ""}</td><td>${escapeHtml(o.amount)}</td></tr>`).join("") +
+          `</table>`;
+      }
+      card.innerHTML = html;
+      resultsEl.appendChild(card);
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+
+  document.getElementById("dsSearch").onclick = async () => {
+    const address = document.getElementById("dsAddress").value.trim();
+    const datetimeLocal = document.getElementById("dsDatetime").value;
+    const windowHours = parseFloat(document.getElementById("dsWindow").value) || 24;
+    const statusEl = document.getElementById("dsStatus");
+    const resultsEl = document.getElementById("dsResults");
+    if (!address || !datetimeLocal) { statusEl.textContent = "Enter both a wallet address and a target date/time."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Searching...";
+    statusEl.className = "status-line";
+    resultsEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/wallet-date-search", {
+        method: "POST",
+        body: JSON.stringify({ address, target_datetime: datetimeLocal, window_hours: windowHours }),
+      });
+      statusEl.textContent = data.found_any
+        ? `Found ${data.matches.length} matching transaction(s) near ${data.target_datetime_utc} UTC.`
+        : "No matching activity found in that window.";
+      statusEl.className = "status-line";
+
+      if (data.message) {
+        const warnCard = el("div", "card");
+        warnCard.innerHTML = `<div class="footnote" style="color:var(--warn);">⚠️ ${escapeHtml(data.message)}</div>`;
+        resultsEl.appendChild(warnCard);
+      }
+      if (data.matches && data.matches.length) {
+        const card = el("div", "card");
+        card.innerHTML = `<h3>Matches</h3><table class="data-table">
+          <tr><th>Time (UTC)</th><th>Amount</th>${data.matches[0].from ? "<th>From</th><th>To</th>" : ""}<th>Tx hash</th><th></th></tr>` +
+          data.matches.map(m => `<tr><td>${escapeHtml(m.tx_time_utc)}</td><td>${escapeHtml(m.amount)}</td>
+            ${m.from ? `<td>${escapeHtml(m.from)}${saveEntityButtonHtml(m.from)}</td><td>${escapeHtml(m.to)}${saveEntityButtonHtml(m.to)}</td>` : ""}
+            <td>${escapeHtml((m.tx_hash || "").slice(0, 16))}...</td>
+            <td><a href="${m.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
+          `</table>`;
+        resultsEl.appendChild(card);
+      }
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+// ============================================================
+// INIT
+// ============================================================
+// ============================================================
+// USERS (admin only)
+// ============================================================
+function renderUsersSection() {
+  const section = el("div", "section", "");
+  section.id = "section-users";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Add a user</h3>
+      <div class="field"><label>Username</label><input type="text" id="userUsername"></div>
+      <div class="field"><label>Password (min. 8 characters)</label><input type="password" id="userPassword"></div>
+      <div class="field"><label>Email (optional - needed for that user to use "forgot password")</label><input type="text" id="userEmail"></div>
+      <div class="field"><label>Role</label>
+        <select id="userRole">
+          <option value="read_only">read_only - can run checks/traces, view all lists</option>
+          <option value="admin">admin - full read/write access</option>
+        </select>
+      </div>
+      <button class="btn" id="userAdd">Add user</button>
+    </div>
+    <div class="status-line" id="userStatus"></div>
+    <div class="card"><h3>Users</h3><div id="userList"></div></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("userAdd").onclick = async () => {
+    const username = document.getElementById("userUsername").value.trim();
+    const password = document.getElementById("userPassword").value;
+    const email = document.getElementById("userEmail").value.trim();
+    const role = document.getElementById("userRole").value;
+    const statusEl = document.getElementById("userStatus");
+    if (!username || !password) { statusEl.textContent = "Enter both a username and password."; statusEl.className = "status-line error"; return; }
+    try {
+      await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ username, password, role, email }) });
+      statusEl.textContent = "Added.";
+      statusEl.className = "status-line";
+      document.getElementById("userUsername").value = ""; document.getElementById("userPassword").value = ""; document.getElementById("userEmail").value = "";
+      loadUsers();
+    } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+  };
+}
+async function loadUsers() {
+  const listEl = document.getElementById("userList");
+  if (!listEl) return;
+  try {
+    const users = await apiFetch("/api/users");
+    listEl.innerHTML = "";
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Username</th><th>Role</th><th>Email</th><th>2FA</th><th>Created</th><th></th></tr>` + users.map(u =>
+      `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td>
+       <td>${escapeHtml(u.email || "-")}</td><td>${u.totp_enabled ? '<span class="pill ok">on</span>' : '<span class="hint">off</span>'}</td>
+       <td>${escapeHtml(u.created_utc || "")}</td>
+       <td>${u.username === state.currentUser.username ? "" : `<button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>`}</td></tr>`
+    ).join("");
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function deleteUserAccount(username) {
+  try {
+    await apiFetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" });
+    loadUsers();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+  checkExistingSession();
+}
+init();
+</script>
+</body>
+</html>
