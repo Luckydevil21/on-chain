@@ -102,55 +102,80 @@ COOKIE_SECURE = os.environ.get("TOOLKIT_COOKIE_SECURE", "true").strip().lower() 
 # USER STORAGE
 # ====================================================================
 
+def _row_to_user_dict(row):
+    """Converts a DB row into the same dict shape the rest of the file expects."""
+    return {
+        "username": row["username"],
+        "password_hash": row["password_hash"],
+        "role": row["role"],
+        "email": row["email"] or "",
+        "totp_secret": row["totp_secret"],
+        "totp_enabled": bool(row["totp_enabled"]),
+        "reset_token": row["reset_token"],
+        "reset_token_expires": row["reset_token_expires"].isoformat() if row["reset_token_expires"] else None,
+        "created_utc": row["created_at"].strftime("%Y-%m-%d %H:%M:%S") if row["created_at"] else None,
+    }
+
+
 def _load_users():
-    if not os.path.isfile(USERS_FILE):
-        return []
-    try:
-        with open(USERS_FILE, "r", encoding="utf-8") as file_handle:
-            return json.load(file_handle)
-    except (json.JSONDecodeError, OSError):
-        return []
+    with _get_db_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users;")
+            rows = cur.fetchall()
+            return [_row_to_user_dict(row) for row in rows]
 
 
 def _save_users(users):
-    with open(USERS_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(users, file_handle, indent=2)
-
-
-def _hash_password(password):
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def _verify_password(password, password_hash):
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-    except (ValueError, TypeError):
-        return False
+    """
+    Kept for compatibility with any code that still calls it directly,
+    but the DB versions below (create_user, _update_user_record, delete_user)
+    now write directly to Postgres instead of rewriting the whole file/table.
+    This function is intentionally a no-op now - if you see it being called
+    somewhere unexpected, that call site needs to move to a targeted
+    INSERT/UPDATE instead.
+    """
+    pass
 
 
 def _get_user_record(username):
-    """Internal use only - returns the FULL record (password hash, TOTP
-    secret, reset token, everything) or None. Never expose this
-    directly to the frontend - use list_users() for that."""
-    for user in _load_users():
-        if user["username"].lower() == username.lower():
-            return user
-    return None
+    with _get_db_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM users WHERE lower(username) = lower(%s);",
+                (username,)
+            )
+            row = cur.fetchone()
+            return _row_to_user_dict(row) if row else None
 
 
 def _update_user_record(username, **fields):
-    """Internal use only - merges the given fields into a user's stored
-    record. Returns True if the user was found and updated."""
-    users = _load_users()
-    updated = False
-    for user in users:
-        if user["username"].lower() == username.lower():
-            user.update(fields)
-            updated = True
-            break
-    if updated:
-        _save_users(users)
-    return updated
+    if not fields:
+        return False
+
+    # Map dict keys -> actual column names (they already match here, but
+    # being explicit protects against typos becoming silent no-ops)
+    allowed_columns = {
+        "password_hash", "role", "email", "totp_secret",
+        "totp_enabled", "reset_token", "reset_token_expires",
+    }
+    set_clauses = []
+    values = []
+    for key, value in fields.items():
+        if key not in allowed_columns:
+            raise ValueError(f"_update_user_record: unexpected field '{key}'")
+        set_clauses.append(f"{key} = %s")
+        values.append(value)
+
+    values.append(username)
+
+    with _get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE users SET {', '.join(set_clauses)} WHERE lower(username) = lower(%s);",
+                values
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
 
 def bootstrap_admin_from_env():
@@ -193,31 +218,30 @@ def create_user(username, password, role, email=""):
     if email and ("@" not in email or "." not in email.split("@")[-1]):
         raise ValueError("that doesn't look like a valid email address")
 
-    users = _load_users()
-    if any(user["username"].lower() == username.lower() for user in users):
+    if _get_user_record(username):
         raise ValueError("a user with that username already exists")
 
-    users.append({
-        "username": username,
-        "password_hash": _hash_password(password),
-        "role": role,
-        "email": email,
-        "totp_secret": None,
-        "totp_enabled": False,
-        "reset_token": None,
-        "reset_token_expires": None,
-        "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    })
-    _save_users(users)
+    with _get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO users (username, password_hash, role, email, totp_enabled, created_at)
+                VALUES (%s, %s, %s, %s, false, now());
+                """,
+                (username, _hash_password(password), role, email)
+            )
+            conn.commit()
 
 
 def delete_user(username):
-    users = _load_users()
-    remaining = [user for user in users if user["username"].lower() != username.lower()]
-    if len(remaining) == len(users):
-        return False
-    _save_users(remaining)
-    return True
+    with _get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM users WHERE lower(username) = lower(%s);",
+                (username,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
 
 def list_users():
