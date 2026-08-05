@@ -416,6 +416,13 @@ def disable_2fa(req: Disable2FARequest, current_user=Depends(require_read)):
         raise HTTPException(401, "Incorrect password.")
     return {"disabled": True}
 
+@app.get("/api/audit-log")
+def get_audit_log_endpoint(current_user=Depends(require_read)):
+    """Admins see everyone's activity. Everyone else sees only their own."""
+    username = None if current_user["role"] == "admin" else current_user["username"]
+    return auth.get_audit_log(username=username)
+
+
 
 # ---- Forgot / reset password ----
 
@@ -465,11 +472,15 @@ def add_user(req: CreateUserRequest, _admin=Depends(require_write)):
         auth.create_user(req.username, req.password, req.role, email=req.email)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+     auth.log_action(_admin["username"], "user_created", target=req.username, detail=f"role={req.role}")
     return {"added": True}
+    
 
 
 @app.delete("/api/users/{username}")
 def remove_user(username: str, current_user=Depends(require_write)):
+ auth.log_action(current_user["username"], "user_deleted", target=username)
+    return {"deleted": True}
     if username.lower() == current_user["username"].lower():
         raise HTTPException(status_code=400, detail="You can't delete your own account while logged in as it.")
     if not auth.delete_user(username):
@@ -565,6 +576,8 @@ def _swap_candidates_for_flagged_path(path, search_direction):
 @app.post("/api/link-trace")
 def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     """
+    auth.log_action(_auth["username"], "link_trace", target=req.wallet, detail=f"direction={req.direction}")
+    return {...}
     Traces forward (who did this wallet send to, hop by hop) or backward
     (who funded this wallet, hop by hop) looking for a link to a flagged
     wallet. Every branch is reported, not just matches - see
@@ -719,6 +732,8 @@ def get_case_watchlist(_auth=Depends(require_read)):
 
 @app.post("/api/case-watchlist")
 def add_case_watchlist_entry(entry: CaseWatchlistEntryIn, _auth=Depends(require_write)):
+ auth.log_action(_auth["username"], "case_watchlist_add", target=entry.address)
+    return {"added": True}
     chain = entry.chain or lt.detect_chain(entry.address)
     if chain is None:
         raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
@@ -744,6 +759,8 @@ def add_case_watchlist_entry(entry: CaseWatchlistEntryIn, _auth=Depends(require_
 
 @app.delete("/api/case-watchlist/{address}")
 def delete_case_watchlist_entry(address: str, _auth=Depends(require_write)):
+ auth.log_action(_auth["username"], "case_watchlist_delete", target=address)
+    return {"deleted": True}
     with _file_lock:
         with auth._get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -917,6 +934,8 @@ class TxLookupRequest(BaseModel):
 @app.post("/api/tx-lookup")
 def tx_lookup(req: TxLookupRequest, _auth=Depends(require_read)):
     """
+    auth.log_action(_auth["username"], "tx_lookup", target=req.tx_hash)
+    return result
     Given a transaction hash from anywhere (another tool, a
     screenshot, a colleague), fetches its full details directly.
     Ethereum hashes are unambiguous (0x prefix). Bitcoin/XRP/Tron
@@ -961,6 +980,8 @@ class SwapCorrelationCheckRequest(BaseModel):
 @app.post("/api/swap-correlation/check")
 def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(require_read)):
     """
+    auth.log_action(_auth["username"], "swap_correlation_check", target=req.address)
+    return result
     Checks whether a SPECIFIC wallet went through a known no-KYC
     instant-swap service or cross-chain bridge - without needing to
     run a full multi-hop link-trace first. Read-only (doesn't persist
@@ -1055,6 +1076,8 @@ def get_deposit_map(_auth=Depends(require_read)):
 @app.post("/api/deposit-map/check")
 def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_write)):
     """
+    auth.log_action(_auth["username"], "deposit_map_check", target=req.address)
+    return result
     Checks whether a SPECIFIC address has swept funds into a known
     exchange wallet - i.e. confirms/denies it as a deposit address for
     that exchange. On Bitcoin, a confirmed match also reveals and
