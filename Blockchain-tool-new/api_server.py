@@ -472,7 +472,7 @@ def add_user(req: CreateUserRequest, _admin=Depends(require_write)):
         auth.create_user(req.username, req.password, req.role, email=req.email)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
-     auth.log_action(_admin["username"], "user_created", target=req.username, detail=f"role={req.role}")
+    auth.log_action(_admin["username"], "user_created", target=req.username, detail=f"role={req.role}")
     return {"added": True}
     
 
