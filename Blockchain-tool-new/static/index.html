@@ -167,6 +167,10 @@
   table.data-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
   table.data-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
   table.data-table tr:last-child td { border-bottom: none; }
+  table.data-table { table-layout: fixed; width: 100%; }
+  table.data-table th, table.data-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .addr-cell { cursor: pointer; }
+  .addr-cell:hover { color: var(--accent); }
 
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; font-family: var(--sans); }
   .pill.flag { background: var(--flag-bg); color: var(--flag); }
@@ -1260,7 +1264,7 @@ function renderLinkTraceResults(data, meta) {
     summaryCard.innerHTML = `<h3>Clean summary</h3>`;
     const table = el("table", "data-table");
     table.innerHTML = `<tr><th>From</th><th>To</th><th>Amount</th><th>Time (UTC)</th><th>Verify</th></tr>` +
-      data.clean_summary.map(r => `<tr><td>${escapeHtml(r.from)}</td><td>${escapeHtml(r.to)}</td><td>${escapeHtml(r.amount)}</td><td>${escapeHtml(r.tx_time_utc)}</td><td><a href="${r.verify_url}" target="_blank">view</a></td></tr>`).join("");
+  data.clean_summary.map(r => `<tr><td>${addressCellHtml(r.from)}</td><td>${addressCellHtml(r.to)}</td><td>${escapeHtml(r.amount)}</td><td>${escapeHtml(r.tx_time_utc)}</td><td><a href="${r.verify_url}" target="_blank">view</a></td></tr>`).join("");
     summaryCard.appendChild(table);
     container.appendChild(summaryCard);
   }
@@ -1286,6 +1290,11 @@ function makeBox(label, cls) {
     });
   };
   return box;
+}
+function addressCellHtml(address) {
+  if (!address) return "";
+  const short = truncateAddress(address);
+  return `<span class="addr-cell mono" title="${escapeHtml(address)} (click to copy)" onclick="navigator.clipboard.writeText('${escapeHtml(address)}'); this.textContent='Copied'; setTimeout(()=>{this.textContent='${escapeHtml(short)}';}, 900);">${escapeHtml(short)}</span>`;
 }
 function makeArrow(amount, dateLabel, heuristic) {
   const wrap = el("div", "warrow");
