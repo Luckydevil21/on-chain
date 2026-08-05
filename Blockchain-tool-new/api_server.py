@@ -479,12 +479,11 @@ def add_user(req: CreateUserRequest, _admin=Depends(require_write)):
 
 @app.delete("/api/users/{username}")
 def remove_user(username: str, current_user=Depends(require_write)):
- auth.log_action(current_user["username"], "user_deleted", target=username)
-    return {"deleted": True}
     if username.lower() == current_user["username"].lower():
         raise HTTPException(status_code=400, detail="You can't delete your own account while logged in as it.")
     if not auth.delete_user(username):
         raise HTTPException(status_code=404, detail="No user with that username.")
+    auth.log_action(current_user["username"], "user_deleted", target=username)
     return {"deleted": True}
 
 
