@@ -179,15 +179,17 @@ def _update_user_record(username, **fields):
 
 
 def bootstrap_admin_from_env():
-    """Creates the first admin account from TOOLKIT_ADMIN_USERNAME/PASSWORD
-    (and optionally TOOLKIT_ADMIN_EMAIL, needed if you want password-reset
-    emails to work for this account), if set and that username doesn't
-    already exist. See module docstring."""
     username = os.environ.get("TOOLKIT_ADMIN_USERNAME")
     password = os.environ.get("TOOLKIT_ADMIN_PASSWORD")
     email = os.environ.get("TOOLKIT_ADMIN_EMAIL", "")
     if not username or not password:
         return
+
+    if _get_user_record(username):
+        return
+
+    create_user(username, password, role="admin", email=email)
+    print(f"👤 Bootstrapped admin account '{username}' from TOOLKIT_ADMIN_USERNAME/PASSWORD.")
 
     users = _load_users()
     if any(user["username"].lower() == username.lower() for user in users):
