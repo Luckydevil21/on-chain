@@ -56,7 +56,19 @@ import bcrypt
 import jwt
 import pyotp
 import qrcode
+import psycopg2
+import psycopg2.extras
+from contextlib import contextmanager
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+@contextmanager
+def _get_db_connection():
+    conn = psycopg2.connect(DATABASE_URL)
+    try:
+        yield conn
+    finally:
+        conn.close()
 TOOLKIT_DATA_DIR = os.environ.get(
     "TOOLKIT_DATA_DIR", os.path.dirname(os.path.abspath(__file__))
 )
