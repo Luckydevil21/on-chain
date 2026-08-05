@@ -469,6 +469,8 @@ def is_valid_tron_address(address):
     allowed = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     return all(character in allowed for character in address)
 
+_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
 def _base58_decode(s):
     num = 0
     for char in s:
