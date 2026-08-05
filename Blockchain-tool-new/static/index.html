@@ -180,25 +180,28 @@
   .diagram-section-title.flagged { color: var(--warn); }
   .trail-reason { font-size: 11.5px; color: var(--text-dim); font-style: italic; margin-bottom: 6px; }
   .trail-row { margin-bottom: 20px; }
-  .trail-flow { display: flex; align-items: center; flex-wrap: wrap; }
-  .wbox {
-    font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 9px 13px; border-radius: 8px;
-    border: 1.5px solid #3d5a78; background: var(--panel-alt); text-align: center; min-width: 84px;
-    position: relative;
-  }
-  .wbox::before {
-    content: ""; position: absolute; top: -3px; left: -3px; width: 6px; height: 6px;
-    border-radius: 1px; background: #3d5a78;
-  }
-  .wbox.root { border-color: var(--accent); background: var(--accent-bg); }
-  .wbox.root::before { background: var(--accent); }
-  .wbox.entity { border-color: var(--entity); background: var(--entity-bg); }
-  .wbox.entity::before { background: var(--entity); }
-  .wbox.flagged { border-color: var(--flag); background: var(--flag-bg); color: var(--flag); }
-  .wbox.flagged::before { background: var(--flag); }
-  .wbox.guess { border-style: dashed; border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
-  .wbox.guess::before { background: var(--warn); }
-  .warrow { display: flex; flex-direction: column; align-items: center; margin: 0 8px; min-width: 90px; }
+  .trail-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 0; }
+.wbox {
+  font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 9px 13px; border-radius: 8px;
+  border: 1.5px solid #3d5a78; background: var(--panel-alt); text-align: center;
+  min-width: 96px; max-width: 172px; flex-shrink: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  position: relative; cursor: pointer;
+}
+.wbox:hover { border-color: var(--accent); }
+.wbox::before {
+  content: ""; position: absolute; top: -3px; left: -3px; width: 6px; height: 6px;
+  border-radius: 1px; background: #3d5a78;
+}
+.wbox.root { border-color: var(--accent); background: var(--accent-bg); }
+.wbox.root::before { background: var(--accent); }
+.wbox.entity { border-color: var(--entity); background: var(--entity-bg); }
+.wbox.entity::before { background: var(--entity); }
+.wbox.flagged { border-color: var(--flag); background: var(--flag-bg); color: var(--flag); }
+.wbox.flagged::before { background: var(--flag); }
+.wbox.guess { border-style: dashed; border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.wbox.guess::before { background: var(--warn); }
+.warrow { display: flex; flex-direction: column; align-items: center; margin: 0 8px; min-width: 90px; flex-shrink: 0; }
   .warrow .line { width: 100%; height: 0; border-top: 2px solid var(--text-dim); position: relative; margin: 4px 0; }
   .warrow .line.heuristic { border-top: 2px dashed var(--warn); }
   .warrow .line::after {
@@ -1263,9 +1266,25 @@ function renderLinkTraceResults(data, meta) {
   }
 }
 
+function truncateAddress(address) {
+  if (!address || address.length <= 20) return address;
+  return address.slice(0, 10) + "…" + address.slice(-6);
+}
+
 function makeBox(label, cls) {
   const box = el("div", "wbox" + (cls ? " " + cls : ""));
-  box.textContent = label;
+  // Only truncate genuine addresses - short labels like "(swap service)"
+  // or an already-friendly Simple View name should show in full.
+  const looksLikeAddress = /^(0x[a-fA-F0-9]+|[13bc][a-km-zA-HJ-NP-Z0-9]{20,}|r[a-km-zA-HJ-NP-Z0-9]{20,}|T[a-km-zA-HJ-NP-Z0-9]{20,})/.test(label.replace("🚩 ", ""));
+  box.textContent = looksLikeAddress ? label.replace(label.replace("🚩 ", ""), truncateAddress(label.replace("🚩 ", ""))) : label;
+  box.title = label + " (click to copy)";
+  box.onclick = () => {
+    navigator.clipboard.writeText(label.replace("🚩 ", "")).then(() => {
+      const original = box.textContent;
+      box.textContent = "Copied";
+      setTimeout(() => { box.textContent = original; }, 900);
+    });
+  };
   return box;
 }
 function makeArrow(amount, dateLabel, heuristic) {
