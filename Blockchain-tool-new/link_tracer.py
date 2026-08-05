@@ -1509,16 +1509,19 @@ def find_group_entity_addresses(entity_name):
     sharing this entity's name (case-insensitive) - i.e. every wallet
     you've identified as belonging to the SAME service, potentially on
     different chains. This is how a service's wallets get "grouped"
-    for swap correlation: add one known_entities.json entry per chain
-    the service uses, all with the same "name".
+    for swap correlation: add one known_entities entry per chain the
+    service uses, all with the same "name".
     """
     all_entries = list(BUILT_IN_KNOWN_ENTITIES)
-    if os.path.isfile(KNOWN_ENTITIES_FILE):
-        try:
-            with open(KNOWN_ENTITIES_FILE, "r", encoding="utf-8") as file_handle:
-                all_entries.extend(json.load(file_handle))
-        except (json.JSONDecodeError, OSError):
-            pass
+
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT address, name, type, chain FROM known_entities;")
+                for address, name, entity_type, chain in cur.fetchall():
+                    all_entries.append({"address": address, "name": name, "type": entity_type, "chain": chain})
+    except Exception as error:
+        print(f"⚠️  Could not read known_entities from the database: {error}")
 
     target_name_lower = entity_name.strip().lower()
     matches = []
