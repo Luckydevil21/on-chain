@@ -144,8 +144,9 @@ TRON_API_KEY = os.environ.get("TRON_API_KEY", "")  # optional - raises TronGrid'
 # a token account rather than the wallet's main address.
 # --------------------------------------------------------------
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
-SOLANA_TRACE_MAX_SIGNATURES = 60  # per wallet, per hop - public RPC is rate-limited, keep this modest
-
+SOLANA_TRACE_MAX_SIGNATURES = 25  # per wallet, per hop - public RPC is rate-limited, keep this modest
+SOLANA_SECONDS_BETWEEN_REQUESTS = 2.0  # public RPC rate-limits getSignaturesForAddress/getTransaction hard - far stricter than the other chains' APIs
+SOLANA_MAX_RETRIES = 3
 USDC_SPL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDT_SPL_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 SOLANA_STABLECOIN_MINTS = {USDC_SPL_MINT: "USDC", USDT_SPL_MINT: "USDT"}
@@ -810,16 +811,26 @@ def get_outgoing_tron(address):
     return results, len(unique_counterparties)
 
 def _solana_rpc_call(method, params):
-    try:
-        response = requests.post(SOLANA_RPC_URL, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=15)
-        data = response.json()
-    except (requests.exceptions.RequestException, ValueError) as error:
-        print(f"    ⚠️  Could not reach the Solana RPC: {error}")
-        return None
-    if "error" in data:
-        print(f"    ⚠️  Solana RPC error: {data['error'].get('message', data['error'])}")
-        return None
-    return data.get("result")
+    for attempt in range(SOLANA_MAX_RETRIES):
+        try:
+            response = requests.post(SOLANA_RPC_URL, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=15)
+            data = response.json()
+        except (requests.exceptions.RequestException, ValueError) as error:
+            print(f"    ⚠️  Could not reach the Solana RPC: {error}")
+            return None
+
+        if "error" in data:
+            message = data["error"].get("message", str(data["error"]))
+            if "Too many requests" in message and attempt < SOLANA_MAX_RETRIES - 1:
+                wait = SOLANA_SECONDS_BETWEEN_REQUESTS * (attempt + 2)  # back off progressively harder
+                print(f"    ⏳ Solana RPC rate-limited - waiting {wait:.1f}s and retrying...")
+                time.sleep(wait)
+                continue
+            print(f"    ⚠️  Solana RPC error: {message}")
+            return None
+
+        return data.get("result")
+    return None
 
 
 def _get_solana_signatures(address, limit):
@@ -836,7 +847,7 @@ def _get_solana_signatures(address, limit):
         if len(result) < params_options["limit"]:
             break
         before = result[-1]["signature"]
-        time.sleep(SECONDS_BETWEEN_REQUESTS)
+        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
     return all_signatures[:limit]
 
 
@@ -907,7 +918,7 @@ def _get_solana_hops(address, want_direction):
         if not signature or sig_entry.get("err"):
             continue  # skip failed transactions
         tx = _solana_rpc_call("getTransaction", [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
-        time.sleep(SECONDS_BETWEEN_REQUESTS)
+        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
         for hop in _parse_solana_tx_hops(tx, signature, address, want_direction):
             unique_counterparties.add(hop["counterparty"].lower())
             if len(results) < MAX_FANOUT_PER_HOP:
