@@ -234,12 +234,12 @@ def create_user(username, password, role, email=""):
     with _get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO users (username, password_hash, role, email, totp_enabled, created_at)
-                VALUES (%s, %s, %s, %s, false, now());
-                """,
-                (username, _hash_password(password), role, email)
-            )
+    """
+    INSERT INTO users (username, password_hash, role, email, totp_enabled, created_at)
+    VALUES (%s, %s, %s, %s, false, now());
+    """,
+    (username, _hash_password(password), role, email if email else None)
+)
             conn.commit()
 
 
