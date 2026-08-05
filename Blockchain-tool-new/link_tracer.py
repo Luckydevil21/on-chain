@@ -113,6 +113,7 @@ import csv
 import json
 import time
 import requests
+import auth  # only for _get_db_connection - reuses the same DB connection setup as auth.py
 from datetime import datetime, timezone, timedelta
 
 
@@ -2525,7 +2526,8 @@ def search_wallet_near_date(address, target_datetime_iso, window_hours=24):
 
 def load_known_entities():
     """Returns a dict of {address_lowercase: {"name":..., "type":...}}
-    combining BUILT_IN_KNOWN_ENTITIES with KNOWN_ENTITIES_FILE (if present)."""
+    combining BUILT_IN_KNOWN_ENTITIES with the known_entities table in
+    Postgres, then folding in the deposit map file on top (unchanged)."""
     entities = {}
     for entry in BUILT_IN_KNOWN_ENTITIES:
         if entry.get("address"):
@@ -2534,22 +2536,17 @@ def load_known_entities():
                 "type": entry.get("type", "exchange"),
             }
 
-    if os.path.isfile(KNOWN_ENTITIES_FILE):
-        try:
-            with open(KNOWN_ENTITIES_FILE, "r", encoding="utf-8") as file_handle:
-                file_entries = json.load(file_handle)
-            for entry in file_entries:
-                if entry.get("address"):
-                    entities[entry["address"].lower()] = {
-                        "name": entry.get("name", "Known entity"),
-                        "type": entry.get("type", "exchange"),
-                    }
-        except (json.JSONDecodeError, OSError, KeyError) as error:
-            print(f"⚠️  Could not read known-entities file: {error}")
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT address, name, type FROM known_entities;")
+                for address, name, entity_type in cur.fetchall():
+                    entities[address.lower()] = {"name": name, "type": entity_type}
+    except Exception as error:
+        print(f"⚠️  Could not read known_entities from the database: {error}")
 
     # Fold in every exchange deposit address confirmed by a past
-    # consolidation-mapping discovery (SECTION 3C) - once confirmed,
-    # it should be recognized immediately in every future run.
+    # consolidation-mapping discovery (SECTION 3C) - unchanged, still file-based.
     if os.path.isfile(DEPOSIT_MAP_FILE):
         try:
             with open(DEPOSIT_MAP_FILE, "r", encoding="utf-8") as file_handle:
@@ -2596,14 +2593,13 @@ def check_known_entity(address):
 
 
 def load_case_watchlist_addresses():
-    if not os.path.isfile(CASE_WATCHLIST_FILE):
-        return []
     try:
-        with open(CASE_WATCHLIST_FILE, "r", encoding="utf-8") as file_handle:
-            entries = json.load(file_handle)
-        return [entry["address"] for entry in entries if entry.get("address")]
-    except (json.JSONDecodeError, OSError, KeyError) as error:
-        print(f"⚠️  Could not read shared case watchlist: {error}")
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT address FROM case_watchlist;")
+                return [row[0] for row in cur.fetchall()]
+    except Exception as error:
+        print(f"⚠️  Could not read shared case watchlist from the database: {error}")
         return []
 
 
