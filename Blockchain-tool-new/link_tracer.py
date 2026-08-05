@@ -469,6 +469,33 @@ def is_valid_tron_address(address):
     allowed = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     return all(character in allowed for character in address)
 
+def _base58_decode(s):
+    num = 0
+    for char in s:
+        digit = _BASE58_ALPHABET.find(char)
+        if digit == -1:
+            raise ValueError("invalid base58 character")
+        num = num * 58 + digit
+    combined = num.to_bytes((num.bit_length() + 7) // 8, "big") if num else b""
+    leading_zeros = len(s) - len(s.lstrip("1"))
+    return b"\x00" * leading_zeros + combined
+
+
+def is_valid_solana_address(address):
+    """Solana addresses have no distinguishing prefix (unlike Bitcoin's
+    bc1/1/3, XRP's r, Tron's T) - the only real check is that it's valid
+    base58 decoding to exactly 32 bytes (a public key). Checked LAST in
+    detect_chain(), after every other chain's format check, since a
+    plausible-looking base58 string could otherwise be mistaken for a
+    Solana address."""
+    if not (32 <= len(address) <= 44):
+        return False
+    if not all(c in _BASE58_ALPHABET for c in address):
+        return False
+    try:
+        return len(_base58_decode(address)) == 32
+    except ValueError:
+        return False
 
 def detect_chain(address):
     if is_valid_ethereum_address(address):
