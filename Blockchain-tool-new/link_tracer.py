@@ -137,6 +137,20 @@ USDT_TRC20_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"  # official Tether co
 TRON_API_KEY = os.environ.get("TRON_API_KEY", "")  # optional - raises TronGrid's rate limit
 
 # --------------------------------------------------------------
+# SOLANA. Public RPC only (no key needed, but rate-limited) - covers
+# native SOL transfers plus USDT/USDC (SPL token transfers). See the
+# module notes near is_valid_solana_address() for two honest
+# limitations: address case-sensitivity, and SPL transfers reporting
+# a token account rather than the wallet's main address.
+# --------------------------------------------------------------
+SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
+SOLANA_TRACE_MAX_SIGNATURES = 60  # per wallet, per hop - public RPC is rate-limited, keep this modest
+
+USDC_SPL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+USDT_SPL_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+SOLANA_STABLECOIN_MINTS = {USDC_SPL_MINT: "USDC", USDT_SPL_MINT: "USDT"}
+
+# --------------------------------------------------------------
 # "technical" (default) prints full detail: raw addresses, tx
 # hashes, exact UTC timestamps - everything you need to verify each
 # hop yourself. "simple" prints a jury/solicitor-friendly version
@@ -465,6 +479,19 @@ def detect_chain(address):
         return "xrp"
     if is_valid_tron_address(address):
         return "tron"
+    return None
+
+def detect_chain(address):
+    if is_valid_ethereum_address(address):
+        return "ethereum"
+    if is_valid_bitcoin_address(address):
+        return "bitcoin"
+    if is_valid_xrp_address(address):
+        return "xrp"
+    if is_valid_tron_address(address):
+        return "tron"
+    if is_valid_solana_address(address):
+        return "solana"
     return None
 
 
