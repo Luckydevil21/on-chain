@@ -508,3 +508,53 @@ def reset_password_with_token(token, new_password):
         reset_token_expires=None,
     )
     return True
+
+# ====================================================================
+# AUDIT LOG
+# ====================================================================
+
+def log_action(username, action, target=None, detail=None):
+    """Records one audit entry. Called from api_server.py after a
+    sensitive action succeeds - never blocks the actual request if
+    logging itself fails (a broken audit log shouldn't take down the
+    tool), just prints a warning instead."""
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO audit_log (username, action, target, detail) VALUES (%s, %s, %s, %s);",
+                    (username, action, target, detail)
+                )
+                conn.commit()
+    except Exception as error:
+        print(f"⚠️  Could not write audit log entry: {error}")
+
+
+def get_audit_log(username=None, limit=200):
+    """Returns recent audit entries, newest first. If username is
+    given, only that user's entries - otherwise everyone's (callers
+    must enforce who's allowed to ask for 'everyone's' - see
+    /api/audit-log in api_server.py)."""
+    with _get_db_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if username:
+                cur.execute(
+                    "SELECT username, action, target, detail, created_at FROM audit_log WHERE username = %s ORDER BY created_at DESC LIMIT %s;",
+                    (username, limit)
+                )
+            else:
+                cur.execute(
+                    "SELECT username, action, target, detail, created_at FROM audit_log ORDER BY created_at DESC LIMIT %s;",
+                    (limit,)
+                )
+            rows = cur.fetchall()
+            return [
+                {
+                    "username": row["username"],
+                    "action": row["action"],
+                    "target": row["target"],
+                    "detail": row["detail"],
+                    "created_at": row["created_at"].strftime("%Y-%m-%d %H:%M:%S") if row["created_at"] else None,
+                }
+                for row in rows
+            ]
