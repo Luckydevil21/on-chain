@@ -786,6 +786,10 @@ def get_known_entities(_auth=Depends(require_read)):
     with _file_lock:
         return _read_known_entities()
 
+class BulkKnownEntityIn(BaseModel):
+    addresses: List[str] = Field(..., description="One address per entry - e.g. pasted lines from a CSV or list.")
+    name: str
+    type: str = Field(default="exchange", description='e.g. "exchange", "mixer", "instant_swap", "bridge"')
 
 @app.post("/api/known-entities")
 def add_known_entity(entry: KnownEntityIn, _auth=Depends(require_write)):
