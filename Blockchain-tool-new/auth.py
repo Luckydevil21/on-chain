@@ -135,7 +135,15 @@ def _save_users(users):
     INSERT/UPDATE instead.
     """
     pass
+def _hash_password(password):
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
+
+def _verify_password(password, password_hash):
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 def _get_user_record(username):
     with _get_db_connection() as conn:
