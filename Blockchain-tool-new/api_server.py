@@ -949,6 +949,27 @@ def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(requi
     return lt.manual_check_swap_correlation(req.address, req.direction)
 
 
+class UnifiedSwapCheckRequest(BaseModel):
+    address: str = Field(..., description="Wallet to check.")
+    direction: str = Field(default="both", description='"outgoing", "incoming", or "both".')
+    timing_window_hours: float = Field(default=4, description="Window (hours) for the automatic timing correlation, +/- half this on each side.")
+
+
+@app.post("/api/swap-correlation/unified-check")
+def unified_swap_correlation_check(req: UnifiedSwapCheckRequest, _auth=Depends(require_read)):
+    """
+    The consolidated one-input version: checks the wallet, and for
+    every deposit/payout found, automatically also pulls in the
+    service's own recent activity and runs a timing-window
+    correlation - all in one response.
+    """
+    if req.direction not in ("outgoing", "incoming", "both"):
+        raise HTTPException(400, 'direction must be "outgoing", "incoming", or "both".')
+    if req.timing_window_hours <= 0 or req.timing_window_hours > 24 * 7:
+        raise HTTPException(400, "timing_window_hours must be a positive number, capped at 168 (7 days).")
+    return lt.unified_swap_check(req.address, req.direction, req.timing_window_hours)
+
+
 class WalletActivityRequest(BaseModel):
     address: str = Field(..., description="A KNOWN service's own address (or any address) to view activity for.")
     direction: str = Field(default="outgoing", description='"outgoing" or "incoming".')
@@ -1082,4 +1103,3 @@ def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_
     """
     with _file_lock:
         return lt.manual_check_deposit_consolidation(req.address)
-
