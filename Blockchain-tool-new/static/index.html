@@ -902,12 +902,12 @@ function renderLinkTraceSection() {
     <div class="card">
       <h3>Search by</h3>
       <div class="radio-row" style="margin-bottom:14px;">
-        <label><input type="radio" name="searchMode" value="wallet" checked> Wallet address (full trace)</label>
-        <label><input type="radio" name="searchMode" value="txhash"> Transaction hash</label>
+        <label><input type="radio" name="searchMode" value="wallet"> Wallet address (full trace)</label>
+        <label><input type="radio" name="searchMode" value="txhash" checked> Transaction hash</label>
         <label><input type="radio" name="searchMode" value="walletdate"> Wallet + date</label>
       </div>
 
-      <div id="modeFieldsWallet">
+      <div id="modeFieldsWallet" style="display:none;">
         <div class="field"><label>Wallet</label><input type="text" id="ltWallet" placeholder="Victim wallet (forward) or wallet under investigation (backward)"></div>
         <div class="field"><label>Direction</label>
           <div class="radio-row">
@@ -922,7 +922,7 @@ function renderLinkTraceSection() {
         <div class="field"><label><input type="checkbox" id="ltContinuePastMatch" style="width:auto; margin-right:6px;"> Continue tracing past a matched target (see what that wallet did next, instead of stopping there)</label></div>
       </div>
 
-      <div id="modeFieldsTxHash" style="display:none;">
+      <div id="modeFieldsTxHash">
         <div class="field hint" style="margin-bottom:14px;">
           If you already know the exact transaction (from another tool, a screenshot, a colleague),
           get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
