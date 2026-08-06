@@ -518,7 +518,8 @@ class LinkTraceRequest(BaseModel):
 
 
 def _hop_out(hop):
-    return {
+    pattern_match = hop.get("pattern_match")
+    output = {
         "from_address": hop["from"],
         "to_address": hop["to"],
         "amount": hop["amount_label"],
@@ -528,6 +529,20 @@ def _hop_out(hop):
         "from_known_entity": lt.check_known_entity(hop["from"]),
         "to_known_entity": lt.check_known_entity(hop["to"]),
     }
+    if pattern_match:
+        output["matched_pattern"] = {
+            "name": pattern_match.get("name"),
+            "type": pattern_match.get("type"),
+        }
+        # If the memo itself stated a destination address (not a timing/
+        # amount HEURISTIC guess - the service's own stated destination),
+        # surface it directly so the person can continue tracing there.
+        if pattern_match.get("embedded_destination_address"):
+            output["embedded_destination"] = {
+                "address": pattern_match["embedded_destination_address"],
+                "chain": pattern_match.get("embedded_destination_chain"),
+            }
+    return output
 
 
 def _path_out(path, reason=None, swap_candidates=None):
