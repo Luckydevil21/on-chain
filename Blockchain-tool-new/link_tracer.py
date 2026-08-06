@@ -136,6 +136,22 @@ USDT_TRC20_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"  # official Tether co
 TRON_API_KEY = os.environ.get("TRON_API_KEY", "")  # optional - raises TronGrid's rate limit
 
 # --------------------------------------------------------------
+# SOLANA. Public RPC only (no key needed, but rate-limited) - covers
+# native SOL transfers plus USDT/USDC (SPL token transfers). See the
+# module notes near is_valid_solana_address() for two honest
+# limitations: address case-sensitivity, and SPL transfers reporting
+# a token account rather than the wallet's main address.
+# --------------------------------------------------------------
+SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
+SOLANA_TRACE_MAX_SIGNATURES = 25  # lowered from 60 - public RPC is slow/rate-limited, keep traces reasonable
+SOLANA_SECONDS_BETWEEN_REQUESTS = 2.0  # public RPC rate-limits getSignaturesForAddress/getTransaction hard - far stricter than the other chains' APIs
+SOLANA_MAX_RETRIES = 3
+
+USDC_SPL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+USDT_SPL_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+SOLANA_STABLECOIN_MINTS = {USDC_SPL_MINT: "USDC", USDT_SPL_MINT: "USDT"}
+
+# --------------------------------------------------------------
 # "technical" (default) prints full detail: raw addresses, tx
 # hashes, exact UTC timestamps - everything you need to verify each
 # hop yourself. "simple" prints a jury/solicitor-friendly version
@@ -197,7 +213,7 @@ TARGET_ILLICIT_WALLETS = [
 # MAX_FANOUT_PER_HOP below), so keep this modest - 3 is a reasonable
 # default. 4+ can take a long time and hit free-tier rate limits.
 # --------------------------------------------------------------
-MAX_HOPS = 4
+MAX_HOPS = 10
 
 # --------------------------------------------------------------
 # At each wallet, only follow its MOST RECENT N outgoing
@@ -393,7 +409,7 @@ SWAP_CORRELATION_MAX_RATIO = 1.05
 # granularity is available for free, which is fine here since the
 # ratio tolerance above already allows room for normal price
 # movement within a day.
-COINGECKO_COIN_ID_BY_CHAIN = {"ethereum": "ethereum", "bitcoin": "bitcoin", "xrp": "ripple"}
+COINGECKO_COIN_ID_BY_CHAIN = {"ethereum": "ethereum", "bitcoin": "bitcoin", "xrp": "ripple", "solana": "solana"}
 
 # Stablecoins are priced at $1 directly rather than looked up - this is
 # what lets swap/bridge correlation work for a USDT leg (e.g. an ETH
@@ -454,6 +470,37 @@ def is_valid_tron_address(address):
     allowed = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     return all(character in allowed for character in address)
 
+_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _base58_decode(s):
+    num = 0
+    for char in s:
+        digit = _BASE58_ALPHABET.find(char)
+        if digit == -1:
+            raise ValueError("invalid base58 character")
+        num = num * 58 + digit
+    combined = num.to_bytes((num.bit_length() + 7) // 8, "big") if num else b""
+    leading_zeros = len(s) - len(s.lstrip("1"))
+    return b"\x00" * leading_zeros + combined
+
+
+def is_valid_solana_address(address):
+    """Solana addresses have no distinguishing prefix (unlike Bitcoin's
+    bc1/1/3, XRP's r, Tron's T) - the only real check is that it's valid
+    base58 decoding to exactly 32 bytes (a public key). Checked LAST in
+    detect_chain(), after every other chain's format check, since a
+    plausible-looking base58 string could otherwise be mistaken for a
+    Solana address."""
+    if not (32 <= len(address) <= 44):
+        return False
+    if not all(c in _BASE58_ALPHABET for c in address):
+        return False
+    try:
+        return len(_base58_decode(address)) == 32
+    except ValueError:
+        return False
+
 
 def detect_chain(address):
     if is_valid_ethereum_address(address):
@@ -464,6 +511,8 @@ def detect_chain(address):
         return "xrp"
     if is_valid_tron_address(address):
         return "tron"
+    if is_valid_solana_address(address):
+        return "solana"
     return None
 
 
@@ -752,6 +801,129 @@ def get_outgoing_tron(address):
         })
     return results, len(unique_counterparties)
 
+def _solana_rpc_call(method, params):
+    for attempt in range(SOLANA_MAX_RETRIES):
+        try:
+            response = requests.post(SOLANA_RPC_URL, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=15)
+            data = response.json()
+        except (requests.exceptions.RequestException, ValueError) as error:
+            print(f"    ⚠️  Could not reach the Solana RPC: {error}")
+            return None
+
+        if "error" in data:
+            message = data["error"].get("message", str(data["error"]))
+            if "Too many requests" in message and attempt < SOLANA_MAX_RETRIES - 1:
+                wait = SOLANA_SECONDS_BETWEEN_REQUESTS * (attempt + 2)  # back off progressively harder
+                print(f"    ⏳ Solana RPC rate-limited - waiting {wait:.1f}s and retrying...")
+                time.sleep(wait)
+                continue
+            print(f"    ⚠️  Solana RPC error: {message}")
+            return None
+
+        return data.get("result")
+    return None
+
+
+def _get_solana_signatures(address, limit):
+    all_signatures = []
+    before = None
+    while len(all_signatures) < limit:
+        params_options = {"limit": min(50, limit - len(all_signatures))}
+        if before:
+            params_options["before"] = before
+        result = _solana_rpc_call("getSignaturesForAddress", [address, params_options])
+        if not result:
+            break
+        all_signatures.extend(result)
+        if len(result) < params_options["limit"]:
+            break
+        before = result[-1]["signature"]
+        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
+    return all_signatures[:limit]
+
+
+def _parse_solana_tx_hops(tx, signature, address, want_direction):
+    """Returns hop dicts for this ONE transaction, native SOL (via
+    instructions) and SPL USDT/USDC (via pre/post token balance diff -
+    more reliable than instruction parsing, since it correctly resolves
+    to the wallet OWNER rather than the intermediate token account)."""
+    hops = []
+    if not tx or not tx.get("blockTime"):
+        return hops
+    tx_time = datetime.fromtimestamp(tx["blockTime"], tz=timezone.utc)
+    explorer_url = f"https://solscan.io/tx/{signature}"
+    meta = tx.get("meta") or {}
+
+    # ---- Native SOL, via top-level + inner "system transfer" instructions ----
+    message = (tx.get("transaction") or {}).get("message") or {}
+    inner = meta.get("innerInstructions", []) or []
+    all_instructions = list(message.get("instructions", [])) + [ix for group in inner for ix in group.get("instructions", [])]
+    for ix in all_instructions:
+        parsed = ix.get("parsed")
+        if not isinstance(parsed, dict) or parsed.get("type") != "transfer" or ix.get("program") != "system":
+            continue
+        info = parsed.get("info", {})
+        source, destination, lamports = info.get("source"), info.get("destination"), info.get("lamports", 0)
+        if want_direction == "outgoing" and source == address and destination:
+            hops.append({"counterparty": destination, "tx_hash": signature, "tx_time": tx_time,
+                         "amount_label": f"{lamports / 1_000_000_000:.9f} SOL", "explorer_url": explorer_url})
+        elif want_direction == "incoming" and destination == address and source:
+            hops.append({"counterparty": source, "tx_hash": signature, "tx_time": tx_time,
+                         "amount_label": f"{lamports / 1_000_000_000:.9f} SOL", "explorer_url": explorer_url})
+
+    # ---- USDT/USDC (SPL), via pre/post token balance diff per owner ----
+    pre_balances = {(b["owner"], b["mint"]): b for b in meta.get("preTokenBalances", []) if b.get("mint") in SOLANA_STABLECOIN_MINTS}
+    post_balances = {(b["owner"], b["mint"]): b for b in meta.get("postTokenBalances", []) if b.get("mint") in SOLANA_STABLECOIN_MINTS}
+
+    for (owner, mint), post_entry in post_balances.items():
+        if owner != address:
+            continue
+        pre_entry = pre_balances.get((owner, mint))
+        pre_amount = float((pre_entry or {}).get("uiTokenAmount", {}).get("uiAmount") or 0)
+        post_amount = float(post_entry.get("uiTokenAmount", {}).get("uiAmount") or 0)
+        delta = post_amount - pre_amount
+        if abs(delta) < 1e-9:
+            continue
+        symbol = SOLANA_STABLECOIN_MINTS[mint]
+
+        if want_direction == "outgoing" and delta < 0:
+            counterparty = next((o for (o, m) in post_balances if m == mint and o != address), None)
+            if counterparty:
+                hops.append({"counterparty": counterparty, "tx_hash": signature, "tx_time": tx_time,
+                             "amount_label": f"{abs(delta):.6f} {symbol}", "explorer_url": explorer_url})
+        elif want_direction == "incoming" and delta > 0:
+            counterparty = next((o for (o, m) in post_balances if m == mint and o != address), None)
+            if counterparty:
+                hops.append({"counterparty": counterparty, "tx_hash": signature, "tx_time": tx_time,
+                             "amount_label": f"{delta:.6f} {symbol}", "explorer_url": explorer_url})
+
+    return hops
+
+
+def _get_solana_hops(address, want_direction):
+    signatures = _get_solana_signatures(address, SOLANA_TRACE_MAX_SIGNATURES)
+    results = []
+    unique_counterparties = set()
+    for sig_entry in signatures:
+        signature = sig_entry.get("signature")
+        if not signature or sig_entry.get("err"):
+            continue  # skip failed transactions
+        tx = _solana_rpc_call("getTransaction", [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
+        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
+        for hop in _parse_solana_tx_hops(tx, signature, address, want_direction):
+            unique_counterparties.add(hop["counterparty"].lower())
+            if len(results) < MAX_FANOUT_PER_HOP:
+                results.append(hop)
+    return results, len(unique_counterparties)
+
+
+def get_outgoing_solana(address):
+    return _get_solana_hops(address, "outgoing")
+
+
+def get_incoming_solana(address):
+    return _get_solana_hops(address, "incoming")
+
 
 def get_outgoing_counterparties(chain, address):
     if chain == "ethereum":
@@ -762,6 +934,8 @@ def get_outgoing_counterparties(chain, address):
         return get_outgoing_xrp(address)
     if chain == "tron":
         return get_outgoing_tron(address)
+    if chain == "solana":
+        return get_outgoing_solana(address)
     return [], 0
 
 
@@ -1247,6 +1421,8 @@ def get_incoming_counterparties(chain, address):
         return get_incoming_xrp(address)
     if chain == "tron":
         return get_incoming_tron(address)
+    if chain == "solana":
+        return get_incoming_solana(address)
     return [], 0
 
 
