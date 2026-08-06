@@ -267,7 +267,7 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <h1>On-Chain Investigations</h1>
     <p class="landing-lede">
-      A blockchain forensics toolkit for tracing crypto and building court-ready
+      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
       evidence - built for investigators working with law enforcement.
     </p>
     <div class="landing-grid">
@@ -895,12 +895,22 @@ function renderLinkTraceSection() {
     <div class="card">
       <h3>Search by</h3>
       <div class="radio-row" style="margin-bottom:14px;">
-        <label><input type="radio" name="searchMode" value="wallet" checked> Wallet address (full trace)</label>
-        <label><input type="radio" name="searchMode" value="txhash"> Transaction hash</label>
+        <label><input type="radio" name="searchMode" value="txhash" checked> Transaction hash</label>
+        <label><input type="radio" name="searchMode" value="wallet"> Wallet address (full trace)</label>
         <label><input type="radio" name="searchMode" value="walletdate"> Wallet + date</label>
       </div>
 
-      <div id="modeFieldsWallet">
+      <div id="modeFieldsTxHash">
+        <div class="field hint" style="margin-bottom:14px;">
+          If you already know the exact transaction (from another tool, a screenshot, a colleague),
+          get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
+          are unambiguous. Bitcoin/XRP/Tron hashes look identical (64 hex characters, no prefix) - this
+          tries each of those three in turn until one recognizes it.
+        </div>
+        <div class="field"><label>Transaction hash</label><input type="text" id="txhAddress" placeholder="0x... or a bare 64-character hash"></div>
+      </div>
+
+      <div id="modeFieldsWallet" style="display:none;">
         <div class="field"><label>Wallet</label><input type="text" id="ltWallet" placeholder="Victim wallet (forward) or wallet under investigation (backward)"></div>
         <div class="field"><label>Direction</label>
           <div class="radio-row">
@@ -913,16 +923,6 @@ function renderLinkTraceSection() {
         <div class="field"><label><input type="checkbox" id="ltExactAmount" style="width:auto; margin-right:6px;"> Exact amount only (no 10%-105% fuzzy band - only follows an almost-exact match, e.g. if you know the specific stolen sum)</label></div>
         <div class="field"><label><input type="checkbox" id="ltIncludeWatchlist" checked style="width:auto; margin-right:6px;"> Include shared case watchlist as targets</label></div>
         <div class="field"><label><input type="checkbox" id="ltContinuePastMatch" style="width:auto; margin-right:6px;"> Continue tracing past a matched target (see what that wallet did next, instead of stopping there)</label></div>
-      </div>
-
-      <div id="modeFieldsTxHash" style="display:none;">
-        <div class="field hint" style="margin-bottom:14px;">
-          If you already know the exact transaction (from another tool, a screenshot, a colleague),
-          get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
-          are unambiguous. Bitcoin/XRP/Tron hashes look identical (64 hex characters, no prefix) - this
-          tries each of those three in turn until one recognizes it.
-        </div>
-        <div class="field"><label>Transaction hash</label><input type="text" id="txhAddress" placeholder="0x... or a bare 64-character hash"></div>
       </div>
 
       <div id="modeFieldsWalletDate" style="display:none;">
@@ -1657,10 +1657,11 @@ function renderSwapCorrelationSection() {
     <div class="card">
       <h3>Check a wallet</h3>
       <div class="field hint" style="margin-bottom:14px;">
-        Checks whether this wallet deposited into (or received a payout from) a known
-        no-KYC instant-swap service or cross-chain bridge (from Known Entities) - and if so,
-        looks for the correlated other side, even on a different chain. This works standalone -
-        no need to run a full Link Tracer trace first.
+        Checks whether this wallet deposited into (or received a payout from) a known no-KYC
+        instant-swap service or cross-chain bridge (from Known Entities). If confirmed, this
+        automatically ALSO pulls in that service's own recent activity and runs a timing-window
+        correlation across every known address for that service - everything together in one
+        result below, not three separate manual lookups.
       </div>
       <div class="field"><label>Wallet address</label><input type="text" id="scAddress" placeholder="Wallet to check"></div>
       <div class="field"><label>Direction</label>
@@ -1670,156 +1671,32 @@ function renderSwapCorrelationSection() {
           <label><input type="radio" name="scDirection" value="incoming"> Payouts only (did it receive FROM a service?)</label>
         </div>
       </div>
+      <div class="field"><label>Timing correlation window (hours either side, e.g. 2 = &plusmn;2h)</label><input type="number" id="scWindow" value="2" min="0.5" max="168" step="0.5"></div>
       <button class="btn" id="scCheck">Check wallet</button>
     </div>
     <div class="status-line" id="scStatus"></div>
     <div id="scResults" class="result-box"></div>
-
-    <div class="card" style="margin-top:24px;">
-      <h3>View a known service's own activity</h3>
-      <div class="field hint" style="margin-bottom:14px;">
-        Different from the check above - THIS is for when you already know the non-KYC exchange's
-        or bridge's own address (from Known Entities) and want to see what actually came OUT of it -
-        a flat list of its own recent transactions, amount and date/time for each. Link Tracer would
-        just flag a service's own busy wallet as a trail-end and stop, showing nothing useful - this
-        skips that and lists the activity directly. Shows a SAMPLE of recent activity for a
-        high-volume address, not necessarily its complete history.
-      </div>
-      <div class="field"><label>Known address</label><input type="text" id="waAddress" placeholder="The service's own wallet address"></div>
-      <div class="field"><label>Direction</label>
-        <div class="radio-row">
-          <label><input type="radio" name="waDirection" value="outgoing" checked> Outgoing (what it sent out)</label>
-          <label><input type="radio" name="waDirection" value="incoming"> Incoming (what it received)</label>
-        </div>
-      </div>
-      <button class="btn" id="waCheck">Show activity</button>
-    </div>
-    <div class="status-line" id="waStatus"></div>
-    <div id="waResults" class="result-box"></div>
-
-    <div class="card" style="margin-top:24px;">
-      <h3>Timing window correlation</h3>
-      <div class="field hint" style="margin-bottom:14px;">
-        Given a service's name and a time you already know about (e.g. when an output/payout was
-        observed), pulls EVERY inbound transaction to EVERY known address tagged with that service -
-        across every chain it has an address on - within a window around that moment. No amount
-        filtering at all - this is the full candidate pool to review by eye, not narrowed down to one
-        specific reference amount. A typical instant-swap service processes within minutes to about an
-        hour, so start with a wide window (e.g. ±2 hours) and tighten it once you see the typical
-        latency for that service. Ethereum and Tron get a clean inbound-only filter; Bitcoin and XRP
-        results include anything touching the address in the window (direction isn't isolated for
-        those two chains - flagged per result below).
-      </div>
-      <div class="field"><label>Service name (must match Known Entities exactly)</label><input type="text" id="twEntityName" placeholder="e.g. ChangeNOW"></div>
-      <div class="field"><label>Target date and time (UTC) - e.g. when the output was observed</label><input type="datetime-local" id="twDatetime"></div>
-      <div class="field"><label>Search window (hours either side of that time)</label><input type="number" id="twWindow" value="4" min="0.5" max="168" step="0.5"></div>
-      <button class="btn" id="twCheck">Find inbound activity</button>
-    </div>
-    <div class="status-line" id="twStatus"></div>
-    <div id="twResults" class="result-box"></div>
   `;
   document.getElementById("content").appendChild(section);
 
   document.getElementById("scCheck").onclick = async () => {
     const address = document.getElementById("scAddress").value.trim();
     const direction = document.querySelector('input[name="scDirection"]:checked').value;
+    const windowHours = (parseFloat(document.getElementById("scWindow").value) || 2) * 2;
     const statusEl = document.getElementById("scStatus");
     const resultsEl = document.getElementById("scResults");
     if (!address) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
-    statusEl.textContent = "Checking...";
+    statusEl.textContent = "Checking - this also pulls the service's activity and timing correlation automatically, may take a moment...";
     statusEl.className = "status-line";
     resultsEl.innerHTML = "";
     try {
-      const data = await apiFetch("/api/swap-correlation/check", { method: "POST", body: JSON.stringify({ address, direction }) });
-      statusEl.textContent = data.message;
-      renderSwapCorrelationResults(data, resultsEl);
-    } catch (err) {
-      statusEl.textContent = "Error: " + err.message;
-      statusEl.className = "status-line error";
-    }
-  };
-
-  document.getElementById("waCheck").onclick = async () => {
-    const address = document.getElementById("waAddress").value.trim();
-    const direction = document.querySelector('input[name="waDirection"]:checked').value;
-    const statusEl = document.getElementById("waStatus");
-    const resultsEl = document.getElementById("waResults");
-    if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
-    statusEl.textContent = "Fetching...";
-    statusEl.className = "status-line";
-    resultsEl.innerHTML = "";
-    try {
-      const data = await apiFetch("/api/wallet-activity", { method: "POST", body: JSON.stringify({ address, direction }) });
-      statusEl.textContent = data.message;
-      statusEl.className = "status-line";
-      if (data.sample_note) {
-        const warnCard = el("div", "card");
-        warnCard.innerHTML = `<div class="footnote" style="color:var(--warn);">⚠️ ${escapeHtml(data.sample_note)}</div>`;
-        resultsEl.appendChild(warnCard);
-      }
-      if (data.activity && data.activity.length) {
-        const card = el("div", "card");
-        card.innerHTML = `<h3>Activity</h3><table class="data-table">
-          <tr><th>Time (UTC)</th><th>Amount</th><th>Counterparty</th><th></th><th>Tx hash</th><th></th></tr>` +
-          data.activity.map(entry => `<tr>
-            <td>${escapeHtml(entry.tx_time_utc)}</td>
-            <td>${escapeHtml(entry.amount)}</td>
-            <td>${escapeHtml(entry.counterparty)}${saveEntityButtonHtml(entry.counterparty)}</td>
-            <td>${entry.counterparty_known_entity ? `<span class="pill entity">${escapeHtml(entry.counterparty_known_entity)}</span>` : ""}</td>
-            <td>${escapeHtml((entry.tx_hash || "").slice(0, 14))}...</td>
-            <td><a href="${entry.explorer_url}" target="_blank">verify</a></td>
-          </tr>`).join("") +
-          `</table>`;
-        resultsEl.appendChild(card);
-      }
-    } catch (err) {
-      statusEl.textContent = "Error: " + err.message;
-      statusEl.className = "status-line error";
-    }
-  };
-
-  document.getElementById("twCheck").onclick = async () => {
-    const entityName = document.getElementById("twEntityName").value.trim();
-    const datetimeLocal = document.getElementById("twDatetime").value;
-    const windowHours = parseFloat(document.getElementById("twWindow").value) || 4;
-    const statusEl = document.getElementById("twStatus");
-    const resultsEl = document.getElementById("twResults");
-    if (!entityName || !datetimeLocal) { statusEl.textContent = "Enter both a service name and a target date/time."; statusEl.className = "status-line error"; return; }
-    statusEl.textContent = "Searching every known address for this service...";
-    statusEl.className = "status-line";
-    resultsEl.innerHTML = "";
-    try {
-      const data = await apiFetch("/api/timing-window-correlation", {
+      const data = await apiFetch("/api/swap-correlation/unified-check", {
         method: "POST",
-        body: JSON.stringify({ entity_name: entityName, target_datetime: datetimeLocal, window_hours: windowHours }),
+        body: JSON.stringify({ address, direction, timing_window_hours: windowHours }),
       });
       statusEl.textContent = data.message;
       statusEl.className = "status-line";
-
-      const addressesCard = el("div", "card");
-      addressesCard.innerHTML = `<div class="footnote">Addresses checked: ${data.addresses_checked.map(a =>
-        `${escapeHtml(a.address)} (${escapeHtml(a.chain || "?")})`).join(", ")}</div>`;
-      resultsEl.appendChild(addressesCard);
-
-      if (data.matches && data.matches.length) {
-        const card = el("div", "card");
-        card.style.marginTop = "10px";
-        card.innerHTML = `<h3>Inbound activity in window</h3>
-          <div class="footnote" style="color:var(--warn); margin-bottom:8px;">HEURISTIC - a timing match alone is not proof. Verify each one manually.</div>
-          <table class="data-table">
-          <tr><th>Time (UTC)</th><th>Amount</th><th>From</th><th>Matched address</th><th>Note</th><th>Tx hash</th><th></th></tr>` +
-          data.matches.map(m => `<tr>
-            <td>${escapeHtml(m.tx_time_utc)}</td>
-            <td>${escapeHtml(m.amount)}</td>
-            <td>${escapeHtml(m.from || "-")}${m.from ? saveEntityButtonHtml(m.from) : ""}</td>
-            <td>${escapeHtml(m.matched_address)}</td>
-            <td>${escapeHtml(m.direction_note)}</td>
-            <td>${escapeHtml((m.tx_hash || "").slice(0, 14))}...</td>
-            <td><a href="${m.explorer_url}" target="_blank">verify</a></td>
-          </tr>`).join("") +
-          `</table>`;
-        resultsEl.appendChild(card);
-      }
+      renderUnifiedSwapResults(data, resultsEl);
     } catch (err) {
       statusEl.textContent = "Error: " + err.message;
       statusEl.className = "status-line error";
@@ -1827,16 +1704,21 @@ function renderSwapCorrelationSection() {
   };
 }
 
-function renderSwapCorrelationResults(data, container) {
+function renderUnifiedSwapResults(data, container) {
   container.innerHTML = "";
-  if (!data.deposits_found?.length && !data.payouts_found?.length) return;
+  const allEntries = [
+    ...(data.deposits_found || []).map(e => ({ ...e, kind: "deposit" })),
+    ...(data.payouts_found || []).map(e => ({ ...e, kind: "payout" })),
+  ];
+  if (!allEntries.length) return;
 
-  function renderEntry(entry, kind) {
+  for (const entry of allEntries) {
+    const label = entry.kind === "deposit" ? "\uD83D\uDD04 Deposit into" : "\uD83D\uDD04 Payout from";
+    const amount = entry.kind === "deposit" ? entry.deposit_amount : entry.payout_amount;
+    const txHash = entry.kind === "deposit" ? entry.deposit_tx_hash : entry.payout_tx_hash;
+    const txTime = entry.kind === "deposit" ? entry.deposit_time_utc : entry.payout_time_utc;
+
     const card = el("div", "card");
-    const label = kind === "deposit" ? "🔄 Deposit into" : "🔄 Payout from";
-    const amount = kind === "deposit" ? entry.deposit_amount : entry.payout_amount;
-    const txHash = kind === "deposit" ? entry.deposit_tx_hash : entry.payout_tx_hash;
-    const txTime = kind === "deposit" ? entry.deposit_time_utc : entry.payout_time_utc;
     let html = `<h3>${label} ${escapeHtml(entry.service_name)} (${escapeHtml(entry.service_type)})</h3>
       <table class="legend-table">
         <tr><td class="label">Amount</td><td>${escapeHtml(amount)}</td></tr>
@@ -1845,32 +1727,59 @@ function renderSwapCorrelationResults(data, container) {
         <tr><td class="label">Verify</td><td><a href="${entry.explorer_url}" target="_blank">view transaction</a></td></tr>
       </table>`;
 
-    if (entry.candidates.length) {
+    if (entry.candidates && entry.candidates.length) {
       html += `<div class="footnote" style="margin-top:12px; color:var(--warn);">
-        HEURISTIC LEAD(S) - not confirmed, verify each one manually:</div>`;
-      html += `<table class="data-table" style="margin-top:8px;">
-        <tr><th>Chain</th><th>Counterparty</th><th>Amount</th><th>Time (UTC)</th><th>Match</th><th></th></tr>` +
-        entry.candidates.map(c => `<tr><td>${escapeHtml(c.chain)}</td><td>${escapeHtml(c.counterparty)}${saveEntityButtonHtml(c.counterparty)}</td>
-          <td>${escapeHtml(c.amount)}</td><td>${escapeHtml(c.tx_time_utc)}</td>
-          <td>${Math.round(c.usd_match_ratio * 100)}%</td>
-          <td><a href="${c.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
-        `</table>`;
-    } else {
-      html += `<div class="footnote" style="margin-top:10px;">No plausible correlated ${kind === "deposit" ? "payout" : "deposit"} found within the correlation window - this doesn't rule one out.</div>`;
+        \uD83D\uDD04 Correlated ${entry.kind === "deposit" ? "output" : "input"} candidate(s) (amount+time match) - HEURISTIC, not confirmed:</div>
+        <table class="data-table" style="margin-top:8px;">
+          <tr><th>Chain</th><th>Counterparty</th><th>Amount</th><th>Time (UTC)</th><th>Match</th><th></th></tr>` +
+          entry.candidates.map(c => `<tr><td>${escapeHtml(c.chain)}</td><td>${escapeHtml(c.counterparty)}${saveEntityButtonHtml(c.counterparty)}</td>
+            <td>${escapeHtml(c.amount)}</td><td>${escapeHtml(c.tx_time_utc)}</td>
+            <td>${Math.round(c.usd_match_ratio * 100)}%</td>
+            <td><a href="${c.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
+          `</table>`;
+    } else if (entry.candidates) {
+      html += `<div class="footnote" style="margin-top:10px;">No amount-matched correlation candidate found within the window - this doesn't rule one out.</div>`;
     }
+
+    if (entry.service_activity && entry.service_activity.length) {
+      html += `<div class="footnote" style="margin-top:16px; font-weight:600;">\uD83D\uDCCB ${escapeHtml(entry.service_name)}'s own recent activity (auto-fetched):</div>`;
+      for (const svc of entry.service_activity) {
+        if (svc.activity && svc.activity.length) {
+          html += `<div class="footnote" style="margin-top:6px;">${escapeHtml(svc.address)} (${escapeHtml(svc.chain || "?")}):</div>
+            <table class="data-table" style="margin-top:4px;">
+              <tr><th>Time (UTC)</th><th>Amount</th><th>Counterparty</th><th></th></tr>` +
+              svc.activity.map(a => `<tr><td>${escapeHtml(a.tx_time_utc)}</td><td>${escapeHtml(a.amount)}</td>
+                <td>${escapeHtml(a.counterparty)}${saveEntityButtonHtml(a.counterparty)}</td>
+                <td><a href="${a.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
+              `</table>`;
+        } else {
+          html += `<div class="footnote" style="margin-top:6px;">${escapeHtml(svc.address)} (${escapeHtml(svc.chain || "?")}): ${escapeHtml(svc.message || "no activity found")}</div>`;
+        }
+      }
+    }
+
+    const twc = entry.timing_window_correlation;
+    if (twc) {
+      html += `<div class="footnote" style="margin-top:16px; font-weight:600;">\uD83D\uDD50 Timing window correlation across all known addresses (auto-run):</div>`;
+      if (twc.matches && twc.matches.length) {
+        html += `<div class="footnote" style="color:var(--warn); margin-top:4px;">HEURISTIC - a timing match alone is not proof:</div>
+          <table class="data-table" style="margin-top:4px;">
+            <tr><th>Time (UTC)</th><th>Amount</th><th>From</th><th>Note</th><th></th></tr>` +
+            twc.matches.map(m => `<tr><td>${escapeHtml(m.tx_time_utc)}</td><td>${escapeHtml(m.amount)}</td>
+              <td>${escapeHtml(m.from || "-")}${m.from ? saveEntityButtonHtml(m.from) : ""}</td>
+              <td>${escapeHtml(m.direction_note)}</td>
+              <td><a href="${m.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
+            `</table>`;
+      } else {
+        html += `<div class="footnote" style="margin-top:4px;">${escapeHtml(twc.message || "No inbound activity found across known addresses within the window.")}</div>`;
+      }
+    }
+
     card.innerHTML = html;
     container.appendChild(card);
   }
-
-  for (const entry of data.deposits_found || []) renderEntry(entry, "deposit");
-  for (const entry of data.payouts_found || []) renderEntry(entry, "payout");
 }
 
-// INIT
-// ============================================================
-// ============================================================
-// USERS (admin only)
-// ============================================================
 function renderUsersSection() {
   const section = el("div", "section", "");
   section.id = "section-users";
