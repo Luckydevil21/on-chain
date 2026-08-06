@@ -2296,7 +2296,7 @@ def get_bitcoin_transaction_by_hash(tx_hash):
     ]
     total_btc = sum(output.get("value", 0) for output in tx.get("vout", [])) / 100_000_000
 
-    return {
+    output_dict = {
         "chain": "bitcoin", "found": True, "tx_hash": tx_hash,
         "confirmed": status.get("confirmed", False),
         "tx_time_utc": tx_time.strftime("%Y-%m-%d %H:%M:%S") if tx_time else None,
@@ -2304,6 +2304,10 @@ def get_bitcoin_transaction_by_hash(tx_hash):
         "inputs": inputs, "outputs": outputs,
         "explorer_url": f"https://mempool.space/tx/{tx_hash}",
     }
+    pattern_match = find_op_return_pattern_match_in_tx(tx)
+    if pattern_match:
+        output_dict["pattern_match"] = pattern_match
+    return output_dict
 
 
 def get_ethereum_transaction_by_hash(tx_hash):
@@ -2343,7 +2347,7 @@ def get_ethereum_transaction_by_hash(tx_hash):
     except (TypeError, ValueError):
         eth_value = 0.0
 
-    return {
+    output_dict = {
         "chain": "ethereum", "found": True, "tx_hash": tx_hash,
         "confirmed": confirmed,
         "tx_time_utc": tx_time_utc,
@@ -2351,6 +2355,10 @@ def get_ethereum_transaction_by_hash(tx_hash):
         "total_amount": f"{eth_value:.6f} ETH",
         "explorer_url": f"https://etherscan.io/tx/{tx_hash}",
     }
+    pattern_match = find_message_pattern_match_in_eth_tx(tx)
+    if pattern_match:
+        output_dict["pattern_match"] = pattern_match
+    return output_dict
 
 
 def get_xrp_transaction_by_hash(tx_hash):
@@ -2379,7 +2387,7 @@ def get_xrp_transaction_by_hash(tx_hash):
     if ripple_ts is not None:
         tx_time_utc = datetime.fromtimestamp(ripple_ts + RIPPLE_EPOCH_OFFSET_SECONDS, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-    return {
+    output = {
         "chain": "xrp", "found": True, "tx_hash": tx_hash,
         "confirmed": bool(result.get("validated", False)),
         "tx_time_utc": tx_time_utc,
@@ -2387,6 +2395,14 @@ def get_xrp_transaction_by_hash(tx_hash):
         "total_amount": amount_label,
         "explorer_url": f"https://bithomp.com/explorer/{tx_hash}",
     }
+    # A direct hash lookup should recognize a known service's memo just as
+    # readily as the automatic trace does - otherwise a transaction found
+    # this way (e.g. an old one buried past the trace's normal lookback
+    # window) would silently lose its entity/pattern recognition entirely.
+    pattern_match = find_message_pattern_match_in_xrp_tx(result)
+    if pattern_match:
+        output["pattern_match"] = pattern_match
+    return output
 
 
 def get_tron_transaction_by_hash(tx_hash):
@@ -2930,7 +2946,50 @@ def build_target_set(include_case_watchlist=True):
 # SECTION 5: THE FORWARD TRACE (breadth-first search)
 # ====================================================================
 
-def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False):
+def build_seed_hop_from_tx_hash(tx_hash):
+    """
+    PLAIN ENGLISH: Converts an already-known transaction (looked up by
+    hash) into a hop dict trace_forward can use as its starting point
+    (see trace_forward's seed_hop parameter) - guaranteeing hop 1 is
+    exactly this transaction, regardless of how far back it sits in the
+    sender's history. Returns (hop_dict, chain, None) on success, or
+    (None, None, error_message) if the hash isn't found or isn't a
+    single-sender/single-recipient transaction this can seed from
+    (Bitcoin's multi-input transactions aren't supported here - use the
+    regular wallet trace or Deposit Map for those instead).
+    """
+    result = lookup_transaction_across_chains(tx_hash)
+    if not result.get("found"):
+        return None, None, result.get("message", "Transaction not found.")
+
+    chain = result["chain"]
+    from_address, to_address = result.get("from"), result.get("to")
+    if not from_address or not to_address:
+        return None, None, (
+            f"This {chain} transaction doesn't have a single clear sender/recipient to seed a "
+            f"trace from (Bitcoin transactions especially can have multiple inputs) - use the "
+            f"regular wallet trace instead."
+        )
+
+    try:
+        tx_time = datetime.strptime(result["tx_time_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        tx_time = datetime.now(timezone.utc)
+
+    hop = {
+        "from": from_address,
+        "to": to_address,
+        "tx_hash": result["tx_hash"],
+        "tx_time": tx_time,
+        "amount_label": result.get("total_amount", "unknown"),
+        "explorer_url": result["explorer_url"],
+    }
+    if result.get("pattern_match"):
+        hop["pattern_match"] = result["pattern_match"]
+    return hop, chain, None
+
+
+def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, seed_hop=None):
     """
     PLAIN ENGLISH: Starting from victim_wallet, follows outgoing
     transactions hop by hop (breadth-first - checking every wallet at
@@ -2952,6 +3011,15 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
     actually carried by each hop taken IS expanded is what gets
     checked against on the NEXT hop, so a legitimate split into two
     large pieces is still followed down both branches.
+
+    seed_hop (optional): a pre-known hop dict (from a direct tx-hash
+    lookup - see build_seed_hop_from_tx_hash) to use as hop 1 instead
+    of fetching victim_wallet's RECENT outgoing activity and hoping
+    this specific transaction is still within that window. Without
+    this, an OLD transaction (buried past the automatic trace's normal
+    lookback) would silently never be found even though it's known to
+    exist - seeding guarantees hop 1 is exactly that transaction, then
+    continues the normal multi-hop trace forward from there.
 
     Returns:
       found_paths          - paths that reached a target illicit wallet
@@ -2975,13 +3043,25 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
     found_paths = []
     flagged_end_paths = []
     amount_filtered_paths = []
-    visited = {victim_wallet.lower()}
-    # Each frontier entry: (address, path_so_far, tracked_amount, is_post_match).
-    # tracked_amount is None whenever amount filtering is off.
-    # is_post_match is True once a lineage has already passed through a
-    # confirmed target match (continue_past_match mode) - see below for
-    # why that needs its own tracking.
-    frontier = [(victim_wallet, [], starting_amount, False)]
+
+    if seed_hop:
+        seed_to = seed_hop["to"]
+        visited = {victim_wallet.lower(), seed_to.lower()}
+        seed_amount = parse_amount_from_label(seed_hop["amount_label"]) if starting_amount is not None else None
+        if seed_to.lower() in target_lowercase_set:
+            print(f"    🚨 MATCH: the seeded transaction itself reaches flagged wallet {seed_to}!")
+            found_paths.append([seed_hop])
+            frontier = [(seed_to, [seed_hop], seed_amount, True)] if continue_past_match else []
+        else:
+            frontier = [(seed_to, [seed_hop], seed_amount, False)]
+    else:
+        visited = {victim_wallet.lower()}
+        # Each frontier entry: (address, path_so_far, tracked_amount, is_post_match).
+        # tracked_amount is None whenever amount filtering is off.
+        # is_post_match is True once a lineage has already passed through a
+        # confirmed target match (continue_past_match mode) - see below for
+        # why that needs its own tracking.
+        frontier = [(victim_wallet, [], starting_amount, False)]
 
     for hop_number in range(1, max_hops + 1):
         print(f"\n--- Hop {hop_number}: checking {len(frontier)} wallet(s) ---")
