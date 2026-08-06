@@ -1109,10 +1109,11 @@ function renderLinkTraceSection() {
           `</table>`;
       }
       card.innerHTML = html;
-      if (data.to) {
+      if (data.from) {
         const traceBtn = el("button", "btn secondary", "⇢ Trace forward from this transaction");
         traceBtn.style.cssText = "margin-top:12px; font-size:12px; padding:7px 14px;";
-        traceBtn.onclick = () => runForwardTraceFrom(data.to);
+        traceBtn.title = "Starts the trace from the SENDER, so this exact transaction becomes hop 1 - that way any memo/entity pattern on it still gets evaluated correctly.";
+        traceBtn.onclick = () => runForwardTraceFrom(data.from);
         card.appendChild(traceBtn);
       }
       resultsEl.appendChild(card);
