@@ -1971,15 +1971,47 @@ def decode_op_return_data(scriptpubkey_hex):
         return payload.decode("utf-8", errors="replace")
 
 
+def _extract_embedded_destination(decoded_text):
+    """
+    PLAIN ENGLISH: Some services (Bridgers.xyz, and likely others) embed
+    the ACTUAL destination address directly in their routing memo, as
+    JSON - e.g. {"destination": "TMbPCvv5c..."}. Unlike swap correlation
+    (a timing/amount HEURISTIC guess), this is the service's OWN stated
+    destination - real evidence, not a probability match. Returns
+    {"address", "chain"} if the memo is JSON with a "destination" field
+    that's a recognizable address on any supported chain, else None.
+    """
+    try:
+        parsed = json.loads(decoded_text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    destination = parsed.get("destination")
+    if not destination or not isinstance(destination, str):
+        return None
+    chain = detect_chain(destination)
+    if not chain:
+        return None
+    return {"address": destination, "chain": chain}
+
+
 def check_op_return_patterns(decoded_text):
-    """Returns {"name", "type"} for the first known pattern found as a
-    substring of decoded_text, or None if nothing matches."""
+    """Returns {"name", "type"} (plus "embedded_destination_address"/
+    "embedded_destination_chain" if the memo itself states one - see
+    _extract_embedded_destination) for the first known pattern found as
+    a substring of decoded_text, or None if nothing matches."""
     if not decoded_text:
         return None
     for entry in load_known_op_return_patterns():
         pattern = entry.get("pattern", "")
         if pattern and pattern in decoded_text:
-            return {"name": entry.get("name", "Known service"), "type": entry.get("type", "bridge")}
+            match = {"name": entry.get("name", "Known service"), "type": entry.get("type", "bridge")}
+            embedded = _extract_embedded_destination(decoded_text)
+            if embedded:
+                match["embedded_destination_address"] = embedded["address"]
+                match["embedded_destination_chain"] = embedded["chain"]
+            return match
     return None
 
 
