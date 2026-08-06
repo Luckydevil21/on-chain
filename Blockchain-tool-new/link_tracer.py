@@ -665,6 +665,114 @@ def get_outgoing_bitcoin(address):
 
 RIPPLE_EPOCH_OFFSET_SECONDS = 946684800
 
+# Safety valve on how many pages get_xrp_hops_near_time() will fetch while
+# hunting for a specific historical window on a busy known-entity wallet
+# (e.g. a bridge like Near Intents) - each page is one XRPL RPC call.
+XRP_TIME_ANCHORED_PAGE_CAP = 20
+
+
+def _fetch_xrp_tx_entries_near_time(address, since_time, until_time, page_cap=XRP_TIME_ANCHORED_PAGE_CAP):
+    """
+    PLAIN ENGLISH: Like the fixed XRP_TRACE_MAX_PAGES lookups below (fine
+    for general tracing), but pages backward from "now" specifically
+    until it's covered back through since_time - for correlating against
+    a busy known-entity wallet (bridge/instant-swap hot address) where
+    the relevant transaction may be well past XRP_TRACE_MAX_PAGES worth
+    of recent history. Returns raw account_tx entries whose own
+    timestamp falls in [since_time, until_time].
+    """
+    matched = []
+    marker = None
+    pages_fetched = 0
+    while pages_fetched < page_cap:
+        params = {"account": address, "ledger_index_min": -1, "ledger_index_max": -1, "limit": 50, "forward": False}
+        if marker:
+            params["marker"] = marker
+        try:
+            response = requests.post(XRPL_RPC_URL, json={"method": "account_tx", "params": [params]}, timeout=15)
+            data = response.json()
+        except (requests.exceptions.RequestException, ValueError) as error:
+            print(f"    ⚠️  Could not reach the XRP Ledger node: {error}")
+            break
+
+        result = data.get("result", {})
+        if result.get("status") != "success":
+            print(f"    ⚠️  XRP Ledger error: {result.get('error_message') or result.get('error')}")
+            break
+
+        page = result.get("transactions", [])
+        pages_fetched += 1
+        oldest_time_in_page = None
+        for tx_entry in page:
+            ripple_ts = tx_entry.get("tx", {}).get("date")
+            if ripple_ts is None:
+                continue
+            entry_time = datetime.fromtimestamp(ripple_ts + RIPPLE_EPOCH_OFFSET_SECONDS, tz=timezone.utc)
+            if oldest_time_in_page is None or entry_time < oldest_time_in_page:
+                oldest_time_in_page = entry_time
+            if since_time <= entry_time <= until_time:
+                matched.append(tx_entry)
+
+        marker = result.get("marker")
+        if oldest_time_in_page is not None and oldest_time_in_page < since_time:
+            break  # paged back far enough - everything older is outside the window
+        if not marker:
+            break
+        time.sleep(SECONDS_BETWEEN_REQUESTS)
+    return matched
+
+
+def _parse_xrp_payment_hops(tx_entries, address, want_direction):
+    """Shared Payment-hop parsing for XRP account_tx entries, either
+    direction - used by get_xrp_hops_near_time()."""
+    results = []
+    unique_counterparties = set()
+    for tx_entry in tx_entries:
+        if not tx_entry.get("validated", False):
+            continue
+        tx = tx_entry.get("tx", {})
+        meta = tx_entry.get("meta", {})
+        if tx.get("TransactionType") != "Payment" or meta.get("TransactionResult") != "tesSUCCESS":
+            continue
+
+        if want_direction == "outgoing":
+            if tx.get("Account", "").lower() != address.lower():
+                continue
+            counterparty = tx.get("Destination")
+        else:
+            if tx.get("Destination", "").lower() != address.lower():
+                continue
+            counterparty = tx.get("Account")
+        if not counterparty:
+            continue
+
+        unique_counterparties.add(counterparty.lower())
+        if len(results) < MAX_FANOUT_PER_HOP:
+            delivered = meta.get("delivered_amount", tx.get("Amount"))
+            amount_label = f"{int(delivered) / 1_000_000:.6f} XRP" if isinstance(delivered, str) else "token payment"
+            ripple_ts = tx.get("date")
+            tx_time = (
+                datetime.fromtimestamp(ripple_ts + RIPPLE_EPOCH_OFFSET_SECONDS, tz=timezone.utc)
+                if ripple_ts is not None else datetime.now(timezone.utc)
+            )
+            hop_info = {
+                "counterparty": counterparty, "tx_hash": tx.get("hash"), "tx_time": tx_time,
+                "amount_label": amount_label,
+                "explorer_url": f"https://livenet.xrpl.org/transactions/{tx.get('hash')}",
+            }
+            pattern_match = find_message_pattern_match_in_xrp_tx(tx)
+            if pattern_match:
+                hop_info["pattern_match"] = pattern_match
+            results.append(hop_info)
+    return results, len(unique_counterparties)
+
+
+def get_xrp_hops_near_time(address, want_direction, since_time, until_time, page_cap=XRP_TIME_ANCHORED_PAGE_CAP):
+    """Time-anchored XRP hop lookup for swap/bridge correlation - see
+    _fetch_xrp_tx_entries_near_time()."""
+    tx_entries = _fetch_xrp_tx_entries_near_time(address, since_time, until_time, page_cap)
+    return _parse_xrp_payment_hops(tx_entries, address, want_direction)
+
 
 def get_outgoing_xrp(address):
     all_txs = []
@@ -740,6 +848,107 @@ def get_outgoing_xrp(address):
 
     fanout_count = len(unique_counterparties) + (HIGH_FANOUT_THRESHOLD if has_more_pages else 0)
     return results, fanout_count
+
+
+# Safety valve on how many pages get_tron_hops_near_time() will fetch
+# while hunting for a specific historical window on a busy known-entity
+# wallet (e.g. a bridge) - each page is one TronGrid RPC call.
+TRON_TIME_ANCHORED_PAGE_CAP = 20
+
+
+def _fetch_tron_trc20_txs_near_time(address, since_time, until_time, page_cap=TRON_TIME_ANCHORED_PAGE_CAP):
+    """
+    PLAIN ENGLISH: Like the fixed TRON_TRACE_MAX_PAGES lookups below
+    (fine for general tracing), but pages backward specifically until
+    it's covered back through since_time - for correlating against a
+    busy known-entity wallet (bridge/instant-swap hot address) where the
+    relevant transfer may be well past TRON_TRACE_MAX_PAGES worth of
+    recent history. Returns raw TRC-20 transfer entries whose own
+    block_timestamp falls in [since_time, until_time].
+    """
+    matched = []
+    fingerprint = None
+    pages_fetched = 0
+    while pages_fetched < page_cap:
+        url = f"{TRONGRID_BASE_URL}/v1/accounts/{address}/transactions/trc20"
+        params = {"contract_address": USDT_TRC20_CONTRACT, "limit": 50, "only_confirmed": "true"}
+        if fingerprint:
+            params["fingerprint"] = fingerprint
+        headers = {"TRON-PRO-API-KEY": TRON_API_KEY} if TRON_API_KEY else {}
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=15)
+            data = response.json()
+        except (requests.exceptions.RequestException, ValueError) as error:
+            print(f"    ⚠️  Could not reach TronGrid: {error}")
+            break
+
+        if data.get("success") is False:
+            print(f"    ⚠️  TronGrid error: {data.get('error', 'unknown error')}")
+            break
+
+        page = data.get("data", [])
+        pages_fetched += 1
+        oldest_time_in_page = None
+        for tx in page:
+            block_timestamp = tx.get("block_timestamp")
+            if block_timestamp is None:
+                continue
+            entry_time = datetime.fromtimestamp(block_timestamp / 1000, tz=timezone.utc)
+            if oldest_time_in_page is None or entry_time < oldest_time_in_page:
+                oldest_time_in_page = entry_time
+            if since_time <= entry_time <= until_time:
+                matched.append(tx)
+
+        fingerprint = (data.get("meta") or {}).get("fingerprint")
+        if oldest_time_in_page is not None and oldest_time_in_page < since_time:
+            break  # paged back far enough - everything older is outside the window
+        if not fingerprint or not page:
+            break
+        time.sleep(SECONDS_BETWEEN_REQUESTS)
+    return matched
+
+
+def _parse_tron_trc20_hops(txs, address, want_direction):
+    """Shared TRC-20 hop parsing, either direction - used by
+    get_tron_hops_near_time()."""
+    results = []
+    unique_counterparties = set()
+    for tx in txs:
+        if want_direction == "outgoing":
+            if tx.get("from", "").lower() != address.lower():
+                continue
+            counterparty = tx.get("to")
+        else:
+            if tx.get("to", "").lower() != address.lower():
+                continue
+            counterparty = tx.get("from")
+        if not counterparty:
+            continue
+
+        unique_counterparties.add(counterparty.lower())
+        if len(results) >= MAX_FANOUT_PER_HOP:
+            continue
+
+        decimals = (tx.get("token_info") or {}).get("decimals", 6)
+        try:
+            amount = int(tx.get("value", 0)) / (10 ** decimals)
+        except (TypeError, ValueError):
+            amount = 0.0
+        tx_time = datetime.fromtimestamp(tx.get("block_timestamp", 0) / 1000, tz=timezone.utc)
+
+        results.append({
+            "counterparty": counterparty, "tx_hash": tx.get("transaction_id"), "tx_time": tx_time,
+            "amount_label": f"{amount:.6f} USDT",
+            "explorer_url": f"https://tronscan.org/#/transaction/{tx.get('transaction_id')}",
+        })
+    return results, len(unique_counterparties)
+
+
+def get_tron_hops_near_time(address, want_direction, since_time, until_time, page_cap=TRON_TIME_ANCHORED_PAGE_CAP):
+    """Time-anchored Tron TRC-20 hop lookup for swap/bridge correlation -
+    see _fetch_tron_trc20_txs_near_time()."""
+    txs = _fetch_tron_trc20_txs_near_time(address, since_time, until_time, page_cap)
+    return _parse_tron_trc20_hops(txs, address, want_direction)
 
 
 def get_outgoing_tron(address):
@@ -1703,14 +1912,20 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
         return []
 
     candidates = []
+    time_anchored_lookup_by_chain = {
+        "solana": _get_solana_hops_near_time,
+        "xrp": get_xrp_hops_near_time,
+        "tron": get_tron_hops_near_time,
+    }
     for address, chain, _entity_type in find_group_entity_addresses(entity_name):
-        if chain == "solana":
-            # A known-entity wallet (e.g. an instant-swap service's hot
-            # wallet) can be busy enough that the transaction we're
-            # actually looking for is long gone from "most recent N" -
-            # so anchor the search to the actual expected time window
-            # instead. Small buffer on each side absorbs clock/block-time
-            # imprecision right at the edges.
+        near_time_lookup = time_anchored_lookup_by_chain.get(chain)
+        if near_time_lookup:
+            # A known-entity wallet (e.g. an instant-swap service or
+            # bridge's hot wallet) can be busy enough that the
+            # transaction we're actually looking for is long gone from
+            # "most recent N" - so anchor the search to the actual
+            # expected time window instead. Small buffer on each side
+            # absorbs clock/block-time imprecision right at the edges.
             buffer_minutes = 1
             if search_direction == "outgoing":
                 since_time = reference_time + timedelta(minutes=SWAP_CORRELATION_MIN_MINUTES - buffer_minutes)
@@ -1719,7 +1934,7 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
                 since_time = reference_time - timedelta(minutes=SWAP_CORRELATION_MAX_MINUTES + buffer_minutes)
                 until_time = reference_time - timedelta(minutes=SWAP_CORRELATION_MIN_MINUTES - buffer_minutes)
             want_direction = "outgoing" if search_direction == "outgoing" else "incoming"
-            hops, _fanout = _get_solana_hops_near_time(address, want_direction, since_time, until_time)
+            hops, _fanout = near_time_lookup(address, want_direction, since_time, until_time)
         elif search_direction == "outgoing":
             hops, _fanout = get_outgoing_counterparties(chain, address)
         else:
