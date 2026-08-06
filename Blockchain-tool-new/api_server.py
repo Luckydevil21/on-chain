@@ -470,14 +470,13 @@ def add_user(req: CreateUserRequest, _admin=Depends(require_write)):
 
 @app.delete("/api/users/{username}")
 def remove_user(username: str, current_user=Depends(require_write)):
-    ...
-    auth.log_action(current_user["username"], "user_deleted", target=username)
-    return {"deleted": True}
     if username.lower() == current_user["username"].lower():
         raise HTTPException(status_code=400, detail="You can't delete your own account while logged in as it.")
     if not auth.delete_user(username):
         raise HTTPException(status_code=404, detail="No user with that username.")
+    auth.log_action(current_user["username"], "user_deleted", target=username)
     return {"deleted": True}
+
 
 @app.get("/api/audit-log")
 def get_audit_log_endpoint(current_user=Depends(require_read)):
@@ -582,7 +581,6 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     """
     if req.direction not in ("forward", "backward"):
         raise HTTPException(400, 'direction must be "forward" or "backward".')
-    ...
 
     chain = lt.detect_chain(req.wallet)
     if chain is None:
@@ -714,9 +712,6 @@ def _write_case_watchlist(entries):
     no-op in case any other call site references it.
     """
     pass
-
-
-
 
 
 @app.get("/api/case-watchlist")
@@ -925,15 +920,15 @@ class TxLookupRequest(BaseModel):
 
 @app.post("/api/tx-lookup")
 def tx_lookup(req: TxLookupRequest, _auth=Depends(require_read)):
-    result = lt.lookup_transaction_across_chains(req.tx_hash)
-    auth.log_action(_auth["username"], "tx_lookup", target=req.tx_hash)
-    return result
+    """
     Given a transaction hash from anywhere (another tool, a
     screenshot, a colleague), fetches its full details directly.
     Ethereum hashes are unambiguous (0x prefix). Bitcoin/XRP/Tron
     hashes are format-identical - tried in turn until one matches.
     """
-    return lt.lookup_transaction_across_chains(req.tx_hash)
+    result = lt.lookup_transaction_across_chains(req.tx_hash)
+    auth.log_action(_auth["username"], "tx_lookup", target=req.tx_hash)
+    return result
 
 
 class WalletDateSearchRequest(BaseModel):
@@ -971,10 +966,7 @@ class SwapCorrelationCheckRequest(BaseModel):
 
 @app.post("/api/swap-correlation/check")
 def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(require_read)):
-    ...
-    result = lt.manual_check_swap_correlation(req.address, req.direction)
-    auth.log_action(_auth["username"], "swap_correlation_check", target=req.address)
-    return result
+    """
     Checks whether a SPECIFIC wallet went through a known no-KYC
     instant-swap service or cross-chain bridge - without needing to
     run a full multi-hop link-trace first. Read-only (doesn't persist
@@ -983,7 +975,9 @@ def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(requi
     """
     if req.direction not in ("outgoing", "incoming", "both"):
         raise HTTPException(400, 'direction must be "outgoing", "incoming", or "both".')
-    return lt.manual_check_swap_correlation(req.address, req.direction)
+    result = lt.manual_check_swap_correlation(req.address, req.direction)
+    auth.log_action(_auth["username"], "swap_correlation_check", target=req.address)
+    return result
 
 
 class UnifiedSwapCheckRequest(BaseModel):
@@ -1129,10 +1123,7 @@ def get_deposit_map(_auth=Depends(require_read)):
 
 @app.post("/api/deposit-map/check")
 def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_write)):
-    with _file_lock:
-        result = lt.manual_check_deposit_consolidation(req.address)
-    auth.log_action(_auth["username"], "deposit_map_check", target=req.address)
-    return result
+    """
     Checks whether a SPECIFIC address has swept funds into a known
     exchange wallet - i.e. confirms/denies it as a deposit address for
     that exchange. On Bitcoin, a confirmed match also reveals and
@@ -1142,4 +1133,6 @@ def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_
     files, since this can write to it).
     """
     with _file_lock:
-        return lt.manual_check_deposit_consolidation(req.address)
+        result = lt.manual_check_deposit_consolidation(req.address)
+    auth.log_action(_auth["username"], "deposit_map_check", target=req.address)
+    return result
