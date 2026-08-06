@@ -213,7 +213,7 @@ TARGET_ILLICIT_WALLETS = [
 # MAX_FANOUT_PER_HOP below), so keep this modest - 3 is a reasonable
 # default. 4+ can take a long time and hit free-tier rate limits.
 # --------------------------------------------------------------
-MAX_HOPS = 4
+MAX_HOPS = 10
 
 # --------------------------------------------------------------
 # At each wallet, only follow its MOST RECENT N outgoing
