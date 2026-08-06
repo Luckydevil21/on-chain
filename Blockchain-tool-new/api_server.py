@@ -491,8 +491,15 @@ def remove_user(username: str, current_user=Depends(require_write)):
 # ====================================================================
 
 class LinkTraceRequest(BaseModel):
-    wallet: str = Field(..., description="Wallet to trace from (forward) or trace back from (backward).")
+    wallet: str = Field(..., description="Wallet to trace from (forward) or trace back from (backward). Ignored if seed_tx_hash is given - the transaction's own sender is used instead.")
     direction: str = Field(default="forward", description='"forward" or "backward"')
+    seed_tx_hash: Optional[str] = Field(
+        default=None,
+        description="Optional - a known transaction hash to use as hop 1, instead of relying on the "
+                    "sender's RECENT activity to rediscover it (which can miss an old transaction "
+                    "buried past the normal lookback window). Only supported with direction=forward, "
+                    "and only for single-sender/single-recipient transactions (not Bitcoin's multi-input case).",
+    )
     target_wallets: Optional[List[str]] = Field(
         default=None, description="Extra wallets to check for a link, beyond the shared case watchlist."
     )
@@ -598,8 +605,18 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     """
     if req.direction not in ("forward", "backward"):
         raise HTTPException(400, 'direction must be "forward" or "backward".')
+    if req.seed_tx_hash and req.direction != "forward":
+        raise HTTPException(400, "seed_tx_hash is only supported with direction=forward.")
 
-    chain = lt.detect_chain(req.wallet)
+    seed_hop = None
+    actual_wallet = req.wallet
+    if req.seed_tx_hash:
+        seed_hop, seed_chain, error_message = lt.build_seed_hop_from_tx_hash(req.seed_tx_hash)
+        if error_message:
+            raise HTTPException(400, error_message)
+        actual_wallet = seed_hop["from"]  # the trace's real root is this transaction's sender
+
+    chain = lt.detect_chain(actual_wallet)
     if chain is None:
         raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
 
@@ -616,11 +633,12 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
 
     if req.direction == "backward":
         matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths = lt.trace_backward(
-            req.wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match
+            actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match
         )
     else:
         matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths = lt.trace_forward(
-            req.wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match
+            actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match,
+            seed_hop=seed_hop,
         )
 
     all_paths_for_summary = (
@@ -629,7 +647,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
         + [path for path, _reason in amount_filtered_paths]
     )
     clean_summary = (
-        lt.dedupe_clean_rows(lt.build_clean_rows(all_paths_for_summary, req.wallet))
+        lt.dedupe_clean_rows(lt.build_clean_rows(all_paths_for_summary, actual_wallet))
         if all_paths_for_summary else []
     )
 
@@ -676,9 +694,9 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     flagged_end_paths.sort(key=lambda item: _first_hop_time(item[0]))
     amount_filtered_paths.sort(key=lambda item: _first_hop_time(item[0]))
 
-    auth.log_action(_auth["username"], "link_trace", target=req.wallet, detail=f"direction={req.direction}")
+    auth.log_action(_auth["username"], "link_trace", target=actual_wallet, detail=f"direction={req.direction}" + (f", seeded_from_tx={req.seed_tx_hash}" if req.seed_tx_hash else ""))
     return {
-        "wallet": req.wallet,
+        "wallet": actual_wallet,
         "direction": req.direction,
         "chain": chain,
         "targets_checked": len(targets),
