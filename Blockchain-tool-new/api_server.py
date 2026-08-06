@@ -86,7 +86,8 @@ to migrate these two files into a real database (SQLite to start).
 
 import sys
 import os
-
+import psycopg2
+import psycopg2.extras
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import json
@@ -689,15 +690,34 @@ class CaseWatchlistEntryIn(BaseModel):
 
 
 def _read_case_watchlist():
-    if not os.path.isfile(lt.CASE_WATCHLIST_FILE):
-        return []
-    with open(lt.CASE_WATCHLIST_FILE, "r", encoding="utf-8") as file_handle:
-        return json.load(file_handle)
+    with auth._get_db_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT address, chain, coin_type, first_seen_utc, discovered_via, source, context FROM case_watchlist;")
+            rows = cur.fetchall()
+            return [
+                {
+                    "address": row["address"],
+                    "chain": row["chain"],
+                    "coin_type": row["coin_type"],
+                    "first_seen_utc": row["first_seen_utc"].strftime("%Y-%m-%d %H:%M:%S") if row["first_seen_utc"] else None,
+                    "discovered_via": row["discovered_via"],
+                    "source": row["source"] or "",
+                    "context": row["context"] or "",
+                }
+                for row in rows
+            ]
 
 
 def _write_case_watchlist(entries):
-    with open(lt.CASE_WATCHLIST_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(entries, file_handle, indent=2)
+    """
+    Kept for signature compatibility - no longer used directly, since
+    add/delete now write straight to Postgres (see below). Left as a
+    no-op in case any other call site references it.
+    """
+    pass
+
+
+
 
 
 @app.get("/api/case-watchlist")
@@ -708,43 +728,38 @@ def get_case_watchlist(_auth=Depends(require_read)):
 
 @app.post("/api/case-watchlist")
 def add_case_watchlist_entry(entry: CaseWatchlistEntryIn, _auth=Depends(require_write)):
-    ...
-    auth.log_action(_auth["username"], "case_watchlist_add", target=entry.address)
-    return {"added": True}
     chain = entry.chain or lt.detect_chain(entry.address)
     if chain is None:
         raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
 
     with _file_lock:
-        entries = _read_case_watchlist()
-        if any(e["address"].lower() == entry.address.lower() for e in entries):
-            return {"added": False, "message": "Already on the shared case watchlist."}
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM case_watchlist WHERE lower(address) = lower(%s);", (entry.address,))
+                if cur.fetchone():
+                    return {"added": False, "message": "Already on the shared case watchlist."}
 
-        entries.append({
-            "address": entry.address,
-            "chain": chain,
-            "coin_type": chain,
-            "first_seen_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            "discovered_via": "api_server.py (manual/API entry)",
-            "source": entry.source or "",
-            "context": entry.context or "",
-        })
-        _write_case_watchlist(entries)
+                cur.execute(
+                    """
+                    INSERT INTO case_watchlist (address, chain, coin_type, first_seen_utc, discovered_via, source, context)
+                    VALUES (%s, %s, %s, now(), %s, %s, %s);
+                    """,
+                    (entry.address, chain, chain, "api_server.py (manual/API entry)", entry.source or "", entry.context or "")
+                )
+                conn.commit()
 
     return {"added": True}
 
 
 @app.delete("/api/case-watchlist/{address}")
 def delete_case_watchlist_entry(address: str, _auth=Depends(require_write)):
-    ...
-    auth.log_action(_auth["username"], "case_watchlist_delete", target=address)
-    return {"deleted": True}
     with _file_lock:
-        entries = _read_case_watchlist()
-        remaining = [e for e in entries if e["address"].lower() != address.lower()]
-        if len(remaining) == len(entries):
-            raise HTTPException(404, "That address isn't on the shared case watchlist.")
-        _write_case_watchlist(remaining)
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM case_watchlist WHERE lower(address) = lower(%s);", (address,))
+                conn.commit()
+                if cur.rowcount == 0:
+                    raise HTTPException(404, "That address isn't on the shared case watchlist.")
     return {"deleted": True}
 
 
@@ -760,14 +775,10 @@ class KnownEntityIn(BaseModel):
 
 
 def _read_known_entities():
-    if not os.path.isfile(lt.KNOWN_ENTITIES_FILE):
-        return []
-    with open(lt.KNOWN_ENTITIES_FILE, "r", encoding="utf-8") as file_handle:
-        entries = json.load(file_handle)
-    # Backfill a computed "chain" for any entry that doesn't already have
-    # one stored (e.g. added by hand, or created before this field
-    # existed) - so the frontend always has something to display,
-    # without needing to duplicate address-format detection itself.
+    with auth._get_db_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT address, name, type, chain FROM known_entities;")
+            entries = [dict(row) for row in cur.fetchall()]
     for entry in entries:
         if not entry.get("chain") and entry.get("address"):
             entry["chain"] = lt.detect_chain(entry["address"])
@@ -775,11 +786,8 @@ def _read_known_entities():
 
 
 def _write_known_entities(entries):
-    with open(lt.KNOWN_ENTITIES_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(entries, file_handle, indent=2)
-    # Refresh link_tracer's in-memory cache so the change applies to the
-    # very next request, without needing a server restart.
-    lt.KNOWN_ENTITIES = lt.load_known_entities()
+    """No longer used directly - kept for signature compatibility only."""
+    pass
 
 
 @app.get("/api/known-entities")
@@ -795,50 +803,54 @@ def add_known_entity(entry: KnownEntityIn, _auth=Depends(require_write)):
         raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
 
     with _file_lock:
-        entries = [e for e in _read_known_entities() if e.get("address", "").lower() != entry.address.lower()]
-        entries.append({"address": entry.address, "name": entry.name, "type": entry.type, "chain": chain})
-        _write_known_entities(entries)
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM known_entities WHERE lower(address) = lower(%s);", (entry.address,))
+                cur.execute(
+                    "INSERT INTO known_entities (address, name, type, chain) VALUES (%s, %s, %s, %s);",
+                    (entry.address, entry.name, entry.type, chain)
+                )
+                conn.commit()
+        lt.KNOWN_ENTITIES = lt.load_known_entities()
     return {"added": True}
-
 
 class BulkKnownEntityIn(BaseModel):
     addresses: List[str] = Field(..., description="One address per entry - e.g. pasted lines from a CSV or list.")
     name: str
     type: str = Field(default="exchange", description='e.g. "exchange", "mixer", "instant_swap", "bridge"')
 
-
 @app.post("/api/known-entities/bulk")
 def add_known_entities_bulk(payload: BulkKnownEntityIn, _auth=Depends(require_write)):
-    """
-    Adds many addresses at once under the SAME name/type - e.g. a
-    batch of exchange cold-wallet addresses pasted from a CSV or a
-    community-maintained list. Each address gets its own chain
-    auto-detected individually (a batch can freely mix chains).
-    Skips blank lines and duplicates already on file; unrecognized
-    addresses are reported back, not silently dropped.
-    """
     with _file_lock:
-        entries = _read_known_entities()
-        existing_lower = {e.get("address", "").lower() for e in entries}
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT lower(address) FROM known_entities;")
+                existing_lower = {row[0] for row in cur.fetchall()}
 
-        added, skipped_duplicate, skipped_invalid = [], [], []
-        for raw_address in payload.addresses:
-            address = raw_address.strip()
-            if not address:
-                continue
-            if address.lower() in existing_lower:
-                skipped_duplicate.append(address)
-                continue
-            chain = lt.detect_chain(address)
-            if chain is None:
-                skipped_invalid.append(address)
-                continue
-            entries.append({"address": address, "name": payload.name, "type": payload.type, "chain": chain})
-            existing_lower.add(address.lower())
-            added.append(address)
+                added, skipped_duplicate, skipped_invalid = [], [], []
+                for raw_address in payload.addresses:
+                    address = raw_address.strip()
+                    if not address:
+                        continue
+                    if address.lower() in existing_lower:
+                        skipped_duplicate.append(address)
+                        continue
+                    chain = lt.detect_chain(address)
+                    if chain is None:
+                        skipped_invalid.append(address)
+                        continue
+                    cur.execute(
+                        "INSERT INTO known_entities (address, name, type, chain) VALUES (%s, %s, %s, %s);",
+                        (address, payload.name, payload.type, chain)
+                    )
+                    existing_lower.add(address.lower())
+                    added.append(address)
+
+                if added:
+                    conn.commit()
 
         if added:
-            _write_known_entities(entries)
+            lt.KNOWN_ENTITIES = lt.load_known_entities()
 
     return {
         "added_count": len(added), "added": added,
@@ -847,14 +859,17 @@ def add_known_entities_bulk(payload: BulkKnownEntityIn, _auth=Depends(require_wr
     }
 
 
+
 @app.delete("/api/known-entities/{address}")
 def delete_known_entity(address: str, _auth=Depends(require_write)):
     with _file_lock:
-        entries = _read_known_entities()
-        remaining = [e for e in entries if e.get("address", "").lower() != address.lower()]
-        if len(remaining) == len(entries):
-            raise HTTPException(404, "That address isn't in the known entities list.")
-        _write_known_entities(remaining)
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM known_entities WHERE lower(address) = lower(%s);", (address,))
+                conn.commit()
+                if cur.rowcount == 0:
+                    raise HTTPException(404, "That address isn't in the known entities list.")
+        lt.KNOWN_ENTITIES = lt.load_known_entities()
     return {"deleted": True}
 
 
