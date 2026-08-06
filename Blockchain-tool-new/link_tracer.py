@@ -847,6 +847,87 @@ def _get_solana_signatures(address, limit):
     return all_signatures[:limit]
 
 
+# How far back _get_solana_signatures_near_time() is willing to page (in
+# total signatures scanned) while hunting for a specific historical time
+# window on a wallet that may be doing dozens of transactions a minute -
+# e.g. a busy exchange/instant-swap hot wallet. Each page of 50 costs one
+# rate-limited RPC call, so this bounds worst-case time (~400/50 * a few
+# seconds - a couple of minutes) rather than paging back indefinitely on
+# an address that's simply always busy.
+SOLANA_TIME_ANCHORED_SCAN_CAP = 400
+
+
+def _get_solana_signatures_near_time(address, since_time, until_time, scan_cap=SOLANA_TIME_ANCHORED_SCAN_CAP):
+    """
+    PLAIN ENGLISH: Unlike _get_solana_signatures() (which always grabs the
+    MOST RECENT N signatures - fine for general tracing, but useless for
+    correlating against a busy known-entity wallet where the relevant
+    transaction may be long since buried under newer ones), this pages
+    backward from "now" and keeps going specifically until it has covered
+    back through since_time, returning only the signature entries whose
+    own blockTime falls in [since_time, until_time].
+
+    getSignaturesForAddress conveniently includes blockTime on each
+    result entry, so this filters using that directly - no need to fetch
+    the full transaction for every signature just to check its timing.
+
+    Bounded by scan_cap total signatures scanned (not matched) as a
+    safety valve, since an extremely busy wallet could otherwise take a
+    very long time to page back to an older since_time.
+    """
+    matched = []
+    before = None
+    total_scanned = 0
+    while total_scanned < scan_cap:
+        params_options = {"limit": 50}
+        if before:
+            params_options["before"] = before
+        result = _solana_rpc_call("getSignaturesForAddress", [address, params_options])
+        if not result:
+            break
+        total_scanned += len(result)
+
+        oldest_time_in_page = None
+        for entry in result:
+            block_time = entry.get("blockTime")
+            if block_time is None:
+                continue
+            entry_time = datetime.fromtimestamp(block_time, tz=timezone.utc)
+            if oldest_time_in_page is None or entry_time < oldest_time_in_page:
+                oldest_time_in_page = entry_time
+            if since_time <= entry_time <= until_time:
+                matched.append(entry)
+
+        if oldest_time_in_page is not None and oldest_time_in_page < since_time:
+            break  # paged back far enough - everything older is outside the window
+        if len(result) < params_options["limit"]:
+            break  # no more history on this address
+        before = result[-1]["signature"]
+        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
+
+    return matched
+
+
+def _get_solana_hops_near_time(address, want_direction, since_time, until_time, scan_cap=SOLANA_TIME_ANCHORED_SCAN_CAP):
+    """Same hop-parsing as _get_solana_hops(), but sourced from
+    _get_solana_signatures_near_time() - for correlating a specific
+    historical window on a wallet rather than just its latest activity."""
+    signatures = _get_solana_signatures_near_time(address, since_time, until_time, scan_cap)
+    results = []
+    unique_counterparties = set()
+    for sig_entry in signatures:
+        signature = sig_entry.get("signature")
+        if not signature or sig_entry.get("err"):
+            continue  # skip failed transactions
+        tx = _solana_rpc_call("getTransaction", [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
+        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
+        for hop in _parse_solana_tx_hops(tx, signature, address, want_direction):
+            unique_counterparties.add(hop["counterparty"].lower())
+            if len(results) < MAX_FANOUT_PER_HOP:
+                results.append(hop)
+    return results, len(unique_counterparties)
+
+
 def _parse_solana_tx_hops(tx, signature, address, want_direction):
     """Returns hop dicts for this ONE transaction, native SOL (via
     instructions) and SPL USDT/USDC (via pre/post token balance diff -
@@ -1623,7 +1704,23 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
 
     candidates = []
     for address, chain, _entity_type in find_group_entity_addresses(entity_name):
-        if search_direction == "outgoing":
+        if chain == "solana":
+            # A known-entity wallet (e.g. an instant-swap service's hot
+            # wallet) can be busy enough that the transaction we're
+            # actually looking for is long gone from "most recent N" -
+            # so anchor the search to the actual expected time window
+            # instead. Small buffer on each side absorbs clock/block-time
+            # imprecision right at the edges.
+            buffer_minutes = 1
+            if search_direction == "outgoing":
+                since_time = reference_time + timedelta(minutes=SWAP_CORRELATION_MIN_MINUTES - buffer_minutes)
+                until_time = reference_time + timedelta(minutes=SWAP_CORRELATION_MAX_MINUTES + buffer_minutes)
+            else:
+                since_time = reference_time - timedelta(minutes=SWAP_CORRELATION_MAX_MINUTES + buffer_minutes)
+                until_time = reference_time - timedelta(minutes=SWAP_CORRELATION_MIN_MINUTES - buffer_minutes)
+            want_direction = "outgoing" if search_direction == "outgoing" else "incoming"
+            hops, _fanout = _get_solana_hops_near_time(address, want_direction, since_time, until_time)
+        elif search_direction == "outgoing":
             hops, _fanout = get_outgoing_counterparties(chain, address)
         else:
             hops, _fanout = get_incoming_counterparties(chain, address)
