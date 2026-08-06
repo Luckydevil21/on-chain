@@ -1906,18 +1906,23 @@ def register_deposit_address(address, chain, exchange_name, exchange_type,
 # ====================================================================
 
 def load_known_op_return_patterns():
-    if not os.path.isfile(KNOWN_OP_RETURN_PATTERNS_FILE):
-        return []
     try:
-        with open(KNOWN_OP_RETURN_PATTERNS_FILE, "r", encoding="utf-8") as file_handle:
-            return json.load(file_handle)
-    except (json.JSONDecodeError, OSError):
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pattern, name, type FROM known_op_return_patterns ORDER BY created_at;")
+                return [{"pattern": row[0], "name": row[1], "type": row[2]} for row in cur.fetchall()]
+    except Exception as error:
+        print(f"⚠️  Could not read known_op_return_patterns from the database: {error}")
         return []
 
 
 def save_known_op_return_patterns(patterns):
-    with open(KNOWN_OP_RETURN_PATTERNS_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(patterns, file_handle, indent=2)
+    """
+    No longer used - add/delete now write directly to Postgres (see
+    api_server.py). Kept as a no-op in case any other call site
+    references it.
+    """
+    pass
 
 
 def decode_op_return_data(scriptpubkey_hex):
