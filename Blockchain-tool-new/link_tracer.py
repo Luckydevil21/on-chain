@@ -393,9 +393,13 @@ EXACT_AMOUNT_MATCH_MAX_RATIO = 1.001
 ENABLE_SWAP_CORRELATION = True
 
 # How long after a deposit (or before a payout) to search for a
-# plausible match. Instant swappers usually complete within minutes;
-# 60 gives some buffer for a busier swap queue.
-SWAP_CORRELATION_WINDOW_MINUTES = 60
+# plausible match. Instant swappers (changenow.io, swapuz.io,
+# fixedfloat.com, etc.) typically settle within a few minutes - a
+# candidate that shows up seconds later or an hour later is much less
+# likely to be the same swap, so the window is bounded on BOTH ends
+# rather than starting at zero.
+SWAP_CORRELATION_MIN_MINUTES = 2
+SWAP_CORRELATION_MAX_MINUTES = 6
 
 # A payout is usually SLIGHTLY less than the deposit (their fee/
 # spread) - rarely more. 0.85-1.05 allows for a ~15% fee/spread on
@@ -1592,8 +1596,9 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
     PLAIN ENGLISH: Searches every OTHER known wallet belonging to
     entity_name (potentially on a different chain) for a transaction
     that plausibly correlates with reference_amount_label/time, by
-    both TIMING (within SWAP_CORRELATION_WINDOW_MINUTES) and USD VALUE
-    (within SWAP_CORRELATION_MIN_RATIO-MAX_RATIO of each other).
+    both TIMING (between SWAP_CORRELATION_MIN_MINUTES and
+    SWAP_CORRELATION_MAX_MINUTES) and USD VALUE (within
+    SWAP_CORRELATION_MIN_RATIO-MAX_RATIO of each other).
 
     search_direction="outgoing": reference event is a DEPOSIT into the
       service - looks for a plausible PAYOUT shortly AFTER it.
@@ -1629,7 +1634,7 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
                 minutes_diff = (tx_time - reference_time).total_seconds() / 60
             else:
                 minutes_diff = (reference_time - tx_time).total_seconds() / 60
-            if not (0 <= minutes_diff <= SWAP_CORRELATION_WINDOW_MINUTES):
+            if not (SWAP_CORRELATION_MIN_MINUTES <= minutes_diff <= SWAP_CORRELATION_MAX_MINUTES):
                 continue
 
             candidate_amount, candidate_symbol = _parse_amount_and_symbol(hop_info["amount_label"])
@@ -1671,7 +1676,8 @@ def print_swap_correlation_leads(entity_name, candidates, search_direction):
 
     if not candidates:
         print(f"\n  🔄 No plausible {verb} found for {entity_name} within "
-              f"{SWAP_CORRELATION_WINDOW_MINUTES} minutes and a matching USD value.")
+              f"{SWAP_CORRELATION_MIN_MINUTES}-{SWAP_CORRELATION_MAX_MINUTES} minutes "
+              f"and a matching USD value.")
         print("     This does NOT rule one out - price data may be missing, funds may have been")
         print("     split across multiple transactions, or the service may have other wallets not")
         print("     yet on file in known_entities.json.")
