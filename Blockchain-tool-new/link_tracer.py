@@ -125,6 +125,22 @@ ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "DSYVYN6A6E1FKWNGIPZRYDU
 XRPL_RPC_URL = "https://s1.ripple.com:51234"
 
 # --------------------------------------------------------------
+# BITHOMP - optional. Used two ways: (1) XRP explorer links point to
+# bithomp.com instead of livenet.xrpl.org, no key needed for that.
+# (2) If BITHOMP_API_KEY is set, an XRP address NOT already in
+# known_entities gets a live lookup against Bithomp's account/service
+# database as a fallback - auto-recognizing labeled exchanges/services
+# your own known_entities list hasn't been told about yet. Free tier:
+# 10 requests/min, 2,000/day, no card required - get a key at
+# https://bithomp.com/developer. Leave BITHOMP_API_KEY unset to skip
+# this fallback entirely (known_entities/deposit-map-only detection,
+# same as before).
+# --------------------------------------------------------------
+BITHOMP_API_KEY = os.environ.get("BITHOMP_API_KEY", "")
+BITHOMP_API_BASE = "https://bithomp.com/api/v2"
+_bithomp_lookup_cache = {}  # {address_lower: result_dict_or_None} - avoids repeat calls within one run/trace
+
+# --------------------------------------------------------------
 # TRON / USDT-TRC20. This covers USDT specifically (by far the
 # dominant use of Tron for the kind of transfers this toolkit
 # traces) via TronGrid, Tron's standard public API - free, no key
@@ -144,10 +160,9 @@ TRON_API_KEY = os.environ.get("TRON_API_KEY", "")  # optional - raises TronGrid'
 # a token account rather than the wallet's main address.
 # --------------------------------------------------------------
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
-SOLANA_TRACE_MAX_SIGNATURES = 25  # lowered from 60 - public RPC is slow/rate-limited, keep traces reasonable
+SOLANA_TRACE_MAX_SIGNATURES = 25  # per wallet, per hop - public RPC is rate-limited, keep this modest
 SOLANA_SECONDS_BETWEEN_REQUESTS = 2.0  # public RPC rate-limits getSignaturesForAddress/getTransaction hard - far stricter than the other chains' APIs
 SOLANA_MAX_RETRIES = 3
-
 USDC_SPL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDT_SPL_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 SOLANA_STABLECOIN_MINTS = {USDC_SPL_MINT: "USDC", USDT_SPL_MINT: "USDT"}
@@ -214,7 +229,7 @@ TARGET_ILLICIT_WALLETS = [
 # MAX_FANOUT_PER_HOP below), so keep this modest - 3 is a reasonable
 # default. 4+ can take a long time and hit free-tier rate limits.
 # --------------------------------------------------------------
-MAX_HOPS = 10
+MAX_HOPS = 4
 
 # --------------------------------------------------------------
 # At each wallet, only follow its MOST RECENT N outgoing
@@ -393,13 +408,9 @@ EXACT_AMOUNT_MATCH_MAX_RATIO = 1.001
 ENABLE_SWAP_CORRELATION = True
 
 # How long after a deposit (or before a payout) to search for a
-# plausible match. Instant swappers (changenow.io, swapuz.io,
-# fixedfloat.com, etc.) typically settle within a few minutes - a
-# candidate that shows up seconds later or an hour later is much less
-# likely to be the same swap, so the window is bounded on BOTH ends
-# rather than starting at zero.
-SWAP_CORRELATION_MIN_MINUTES = 2
-SWAP_CORRELATION_MAX_MINUTES = 6
+# plausible match. Instant swappers usually complete within minutes;
+# 60 gives some buffer for a busier swap queue.
+SWAP_CORRELATION_WINDOW_MINUTES = 60
 
 # A payout is usually SLIGHTLY less than the deposit (their fee/
 # spread) - rarely more. 0.85-1.05 allows for a ~15% fee/spread on
@@ -477,7 +488,6 @@ def is_valid_tron_address(address):
 
 _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-
 def _base58_decode(s):
     num = 0
     for char in s:
@@ -506,6 +516,16 @@ def is_valid_solana_address(address):
     except ValueError:
         return False
 
+def detect_chain(address):
+    if is_valid_ethereum_address(address):
+        return "ethereum"
+    if is_valid_bitcoin_address(address):
+        return "bitcoin"
+    if is_valid_xrp_address(address):
+        return "xrp"
+    if is_valid_tron_address(address):
+        return "tron"
+    return None
 
 def detect_chain(address):
     if is_valid_ethereum_address(address):
@@ -665,114 +685,6 @@ def get_outgoing_bitcoin(address):
 
 RIPPLE_EPOCH_OFFSET_SECONDS = 946684800
 
-# Safety valve on how many pages get_xrp_hops_near_time() will fetch while
-# hunting for a specific historical window on a busy known-entity wallet
-# (e.g. a bridge like Near Intents) - each page is one XRPL RPC call.
-XRP_TIME_ANCHORED_PAGE_CAP = 20
-
-
-def _fetch_xrp_tx_entries_near_time(address, since_time, until_time, page_cap=XRP_TIME_ANCHORED_PAGE_CAP):
-    """
-    PLAIN ENGLISH: Like the fixed XRP_TRACE_MAX_PAGES lookups below (fine
-    for general tracing), but pages backward from "now" specifically
-    until it's covered back through since_time - for correlating against
-    a busy known-entity wallet (bridge/instant-swap hot address) where
-    the relevant transaction may be well past XRP_TRACE_MAX_PAGES worth
-    of recent history. Returns raw account_tx entries whose own
-    timestamp falls in [since_time, until_time].
-    """
-    matched = []
-    marker = None
-    pages_fetched = 0
-    while pages_fetched < page_cap:
-        params = {"account": address, "ledger_index_min": -1, "ledger_index_max": -1, "limit": 50, "forward": False}
-        if marker:
-            params["marker"] = marker
-        try:
-            response = requests.post(XRPL_RPC_URL, json={"method": "account_tx", "params": [params]}, timeout=15)
-            data = response.json()
-        except (requests.exceptions.RequestException, ValueError) as error:
-            print(f"    ⚠️  Could not reach the XRP Ledger node: {error}")
-            break
-
-        result = data.get("result", {})
-        if result.get("status") != "success":
-            print(f"    ⚠️  XRP Ledger error: {result.get('error_message') or result.get('error')}")
-            break
-
-        page = result.get("transactions", [])
-        pages_fetched += 1
-        oldest_time_in_page = None
-        for tx_entry in page:
-            ripple_ts = tx_entry.get("tx", {}).get("date")
-            if ripple_ts is None:
-                continue
-            entry_time = datetime.fromtimestamp(ripple_ts + RIPPLE_EPOCH_OFFSET_SECONDS, tz=timezone.utc)
-            if oldest_time_in_page is None or entry_time < oldest_time_in_page:
-                oldest_time_in_page = entry_time
-            if since_time <= entry_time <= until_time:
-                matched.append(tx_entry)
-
-        marker = result.get("marker")
-        if oldest_time_in_page is not None and oldest_time_in_page < since_time:
-            break  # paged back far enough - everything older is outside the window
-        if not marker:
-            break
-        time.sleep(SECONDS_BETWEEN_REQUESTS)
-    return matched
-
-
-def _parse_xrp_payment_hops(tx_entries, address, want_direction):
-    """Shared Payment-hop parsing for XRP account_tx entries, either
-    direction - used by get_xrp_hops_near_time()."""
-    results = []
-    unique_counterparties = set()
-    for tx_entry in tx_entries:
-        if not tx_entry.get("validated", False):
-            continue
-        tx = tx_entry.get("tx", {})
-        meta = tx_entry.get("meta", {})
-        if tx.get("TransactionType") != "Payment" or meta.get("TransactionResult") != "tesSUCCESS":
-            continue
-
-        if want_direction == "outgoing":
-            if tx.get("Account", "").lower() != address.lower():
-                continue
-            counterparty = tx.get("Destination")
-        else:
-            if tx.get("Destination", "").lower() != address.lower():
-                continue
-            counterparty = tx.get("Account")
-        if not counterparty:
-            continue
-
-        unique_counterparties.add(counterparty.lower())
-        if len(results) < MAX_FANOUT_PER_HOP:
-            delivered = meta.get("delivered_amount", tx.get("Amount"))
-            amount_label = f"{int(delivered) / 1_000_000:.6f} XRP" if isinstance(delivered, str) else "token payment"
-            ripple_ts = tx.get("date")
-            tx_time = (
-                datetime.fromtimestamp(ripple_ts + RIPPLE_EPOCH_OFFSET_SECONDS, tz=timezone.utc)
-                if ripple_ts is not None else datetime.now(timezone.utc)
-            )
-            hop_info = {
-                "counterparty": counterparty, "tx_hash": tx.get("hash"), "tx_time": tx_time,
-                "amount_label": amount_label,
-                "explorer_url": f"https://livenet.xrpl.org/transactions/{tx.get('hash')}",
-            }
-            pattern_match = find_message_pattern_match_in_xrp_tx(tx)
-            if pattern_match:
-                hop_info["pattern_match"] = pattern_match
-            results.append(hop_info)
-    return results, len(unique_counterparties)
-
-
-def get_xrp_hops_near_time(address, want_direction, since_time, until_time, page_cap=XRP_TIME_ANCHORED_PAGE_CAP):
-    """Time-anchored XRP hop lookup for swap/bridge correlation - see
-    _fetch_xrp_tx_entries_near_time()."""
-    tx_entries = _fetch_xrp_tx_entries_near_time(address, since_time, until_time, page_cap)
-    return _parse_xrp_payment_hops(tx_entries, address, want_direction)
-
 
 def get_outgoing_xrp(address):
     all_txs = []
@@ -839,7 +751,7 @@ def get_outgoing_xrp(address):
                 "tx_hash": tx.get("hash"),
                 "tx_time": tx_time,
                 "amount_label": amount_label,
-                "explorer_url": f"https://livenet.xrpl.org/transactions/{tx.get('hash')}",
+                "explorer_url": f"https://bithomp.com/explorer/{tx.get('hash')}",
             }
             pattern_match = find_message_pattern_match_in_xrp_tx(tx)
             if pattern_match:
@@ -848,107 +760,6 @@ def get_outgoing_xrp(address):
 
     fanout_count = len(unique_counterparties) + (HIGH_FANOUT_THRESHOLD if has_more_pages else 0)
     return results, fanout_count
-
-
-# Safety valve on how many pages get_tron_hops_near_time() will fetch
-# while hunting for a specific historical window on a busy known-entity
-# wallet (e.g. a bridge) - each page is one TronGrid RPC call.
-TRON_TIME_ANCHORED_PAGE_CAP = 20
-
-
-def _fetch_tron_trc20_txs_near_time(address, since_time, until_time, page_cap=TRON_TIME_ANCHORED_PAGE_CAP):
-    """
-    PLAIN ENGLISH: Like the fixed TRON_TRACE_MAX_PAGES lookups below
-    (fine for general tracing), but pages backward specifically until
-    it's covered back through since_time - for correlating against a
-    busy known-entity wallet (bridge/instant-swap hot address) where the
-    relevant transfer may be well past TRON_TRACE_MAX_PAGES worth of
-    recent history. Returns raw TRC-20 transfer entries whose own
-    block_timestamp falls in [since_time, until_time].
-    """
-    matched = []
-    fingerprint = None
-    pages_fetched = 0
-    while pages_fetched < page_cap:
-        url = f"{TRONGRID_BASE_URL}/v1/accounts/{address}/transactions/trc20"
-        params = {"contract_address": USDT_TRC20_CONTRACT, "limit": 50, "only_confirmed": "true"}
-        if fingerprint:
-            params["fingerprint"] = fingerprint
-        headers = {"TRON-PRO-API-KEY": TRON_API_KEY} if TRON_API_KEY else {}
-        try:
-            response = requests.get(url, params=params, headers=headers, timeout=15)
-            data = response.json()
-        except (requests.exceptions.RequestException, ValueError) as error:
-            print(f"    ⚠️  Could not reach TronGrid: {error}")
-            break
-
-        if data.get("success") is False:
-            print(f"    ⚠️  TronGrid error: {data.get('error', 'unknown error')}")
-            break
-
-        page = data.get("data", [])
-        pages_fetched += 1
-        oldest_time_in_page = None
-        for tx in page:
-            block_timestamp = tx.get("block_timestamp")
-            if block_timestamp is None:
-                continue
-            entry_time = datetime.fromtimestamp(block_timestamp / 1000, tz=timezone.utc)
-            if oldest_time_in_page is None or entry_time < oldest_time_in_page:
-                oldest_time_in_page = entry_time
-            if since_time <= entry_time <= until_time:
-                matched.append(tx)
-
-        fingerprint = (data.get("meta") or {}).get("fingerprint")
-        if oldest_time_in_page is not None and oldest_time_in_page < since_time:
-            break  # paged back far enough - everything older is outside the window
-        if not fingerprint or not page:
-            break
-        time.sleep(SECONDS_BETWEEN_REQUESTS)
-    return matched
-
-
-def _parse_tron_trc20_hops(txs, address, want_direction):
-    """Shared TRC-20 hop parsing, either direction - used by
-    get_tron_hops_near_time()."""
-    results = []
-    unique_counterparties = set()
-    for tx in txs:
-        if want_direction == "outgoing":
-            if tx.get("from", "").lower() != address.lower():
-                continue
-            counterparty = tx.get("to")
-        else:
-            if tx.get("to", "").lower() != address.lower():
-                continue
-            counterparty = tx.get("from")
-        if not counterparty:
-            continue
-
-        unique_counterparties.add(counterparty.lower())
-        if len(results) >= MAX_FANOUT_PER_HOP:
-            continue
-
-        decimals = (tx.get("token_info") or {}).get("decimals", 6)
-        try:
-            amount = int(tx.get("value", 0)) / (10 ** decimals)
-        except (TypeError, ValueError):
-            amount = 0.0
-        tx_time = datetime.fromtimestamp(tx.get("block_timestamp", 0) / 1000, tz=timezone.utc)
-
-        results.append({
-            "counterparty": counterparty, "tx_hash": tx.get("transaction_id"), "tx_time": tx_time,
-            "amount_label": f"{amount:.6f} USDT",
-            "explorer_url": f"https://tronscan.org/#/transaction/{tx.get('transaction_id')}",
-        })
-    return results, len(unique_counterparties)
-
-
-def get_tron_hops_near_time(address, want_direction, since_time, until_time, page_cap=TRON_TIME_ANCHORED_PAGE_CAP):
-    """Time-anchored Tron TRC-20 hop lookup for swap/bridge correlation -
-    see _fetch_tron_trc20_txs_near_time()."""
-    txs = _fetch_tron_trc20_txs_near_time(address, since_time, until_time, page_cap)
-    return _parse_tron_trc20_hops(txs, address, want_direction)
 
 
 def get_outgoing_tron(address):
@@ -1054,87 +865,6 @@ def _get_solana_signatures(address, limit):
         before = result[-1]["signature"]
         time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
     return all_signatures[:limit]
-
-
-# How far back _get_solana_signatures_near_time() is willing to page (in
-# total signatures scanned) while hunting for a specific historical time
-# window on a wallet that may be doing dozens of transactions a minute -
-# e.g. a busy exchange/instant-swap hot wallet. Each page of 50 costs one
-# rate-limited RPC call, so this bounds worst-case time (~400/50 * a few
-# seconds - a couple of minutes) rather than paging back indefinitely on
-# an address that's simply always busy.
-SOLANA_TIME_ANCHORED_SCAN_CAP = 400
-
-
-def _get_solana_signatures_near_time(address, since_time, until_time, scan_cap=SOLANA_TIME_ANCHORED_SCAN_CAP):
-    """
-    PLAIN ENGLISH: Unlike _get_solana_signatures() (which always grabs the
-    MOST RECENT N signatures - fine for general tracing, but useless for
-    correlating against a busy known-entity wallet where the relevant
-    transaction may be long since buried under newer ones), this pages
-    backward from "now" and keeps going specifically until it has covered
-    back through since_time, returning only the signature entries whose
-    own blockTime falls in [since_time, until_time].
-
-    getSignaturesForAddress conveniently includes blockTime on each
-    result entry, so this filters using that directly - no need to fetch
-    the full transaction for every signature just to check its timing.
-
-    Bounded by scan_cap total signatures scanned (not matched) as a
-    safety valve, since an extremely busy wallet could otherwise take a
-    very long time to page back to an older since_time.
-    """
-    matched = []
-    before = None
-    total_scanned = 0
-    while total_scanned < scan_cap:
-        params_options = {"limit": 50}
-        if before:
-            params_options["before"] = before
-        result = _solana_rpc_call("getSignaturesForAddress", [address, params_options])
-        if not result:
-            break
-        total_scanned += len(result)
-
-        oldest_time_in_page = None
-        for entry in result:
-            block_time = entry.get("blockTime")
-            if block_time is None:
-                continue
-            entry_time = datetime.fromtimestamp(block_time, tz=timezone.utc)
-            if oldest_time_in_page is None or entry_time < oldest_time_in_page:
-                oldest_time_in_page = entry_time
-            if since_time <= entry_time <= until_time:
-                matched.append(entry)
-
-        if oldest_time_in_page is not None and oldest_time_in_page < since_time:
-            break  # paged back far enough - everything older is outside the window
-        if len(result) < params_options["limit"]:
-            break  # no more history on this address
-        before = result[-1]["signature"]
-        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
-
-    return matched
-
-
-def _get_solana_hops_near_time(address, want_direction, since_time, until_time, scan_cap=SOLANA_TIME_ANCHORED_SCAN_CAP):
-    """Same hop-parsing as _get_solana_hops(), but sourced from
-    _get_solana_signatures_near_time() - for correlating a specific
-    historical window on a wallet rather than just its latest activity."""
-    signatures = _get_solana_signatures_near_time(address, since_time, until_time, scan_cap)
-    results = []
-    unique_counterparties = set()
-    for sig_entry in signatures:
-        signature = sig_entry.get("signature")
-        if not signature or sig_entry.get("err"):
-            continue  # skip failed transactions
-        tx = _solana_rpc_call("getTransaction", [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}])
-        time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
-        for hop in _parse_solana_tx_hops(tx, signature, address, want_direction):
-            unique_counterparties.add(hop["counterparty"].lower())
-            if len(results) < MAX_FANOUT_PER_HOP:
-                results.append(hop)
-    return results, len(unique_counterparties)
 
 
 def _parse_solana_tx_hops(tx, signature, address, want_direction):
@@ -1444,7 +1174,7 @@ def get_incoming_xrp(address):
                 "tx_hash": tx.get("hash"),
                 "tx_time": tx_time,
                 "amount_label": amount_label,
-                "explorer_url": f"https://livenet.xrpl.org/transactions/{tx.get('hash')}",
+                "explorer_url": f"https://bithomp.com/explorer/{tx.get('hash')}",
             }
             pattern_match = find_message_pattern_match_in_xrp_tx(tx)
             if pattern_match:
@@ -1514,6 +1244,21 @@ def get_incoming_tron(address):
             "explorer_url": f"https://tronscan.org/#/transaction/{tx.get('transaction_id')}",
         })
     return results, len(unique_counterparties)
+
+
+
+def get_incoming_counterparties(chain, address):
+    if chain == "ethereum":
+        return get_incoming_ethereum(address)
+    if chain == "bitcoin":
+        return get_incoming_bitcoin(address)
+    if chain == "xrp":
+        return get_incoming_xrp(address)
+    if chain == "tron":
+        return get_incoming_tron(address)
+    if chain == "solana":
+        return get_incoming_solana(address)
+    return [], 0
 
 
 # ====================================================================
@@ -1627,7 +1372,7 @@ def find_first_funding_transaction_xrp(address):
             "amount_label": f"{int(delivered) / 1_000_000:.6f} XRP",
             "tx_time": tx_time,
             "tx_hash": tx.get("hash"),
-            "explorer_url": f"https://livenet.xrpl.org/transactions/{tx.get('hash')}",
+            "explorer_url": f"https://bithomp.com/explorer/{tx.get('hash')}",
         }
     return None
 
@@ -1721,74 +1466,6 @@ def get_incoming_counterparties(chain, address):
     return [], 0
 
 
-def get_wallet_activity(address, direction="outgoing"):
-    """
-    PLAIN ENGLISH: Shows a wallet's own recent activity as a simple,
-    FLAT list - no hop-following, no target-matching, no stopping at
-    a flagged entity. Just "what did this address actually send (or
-    receive), and when."
-
-    This exists specifically for the case Link Tracer handles badly:
-    checking a KNOWN service's own address directly. Link Tracer is
-    built to find and follow SPECIFIC things (targets, flagged
-    entities, amount anomalies) - a known service's own high-volume
-    wallet would just immediately get flagged as a trail-end and stop,
-    showing nothing useful. This skips all of that and just lists
-    what actually happened.
-
-    IMPORTANT LIMITATION: this shows a SAMPLE of recent activity, not
-    a complete history - capped by the same per-hop/per-page limits
-    the rest of the tracer uses (MAX_FANOUT_PER_HOP results, up to
-    each chain's page-fetch limit). For a genuinely high-volume
-    address (a major exchange's hot wallet), this will only reach a
-    small recent slice of everything it's ever done - see Tx/Date
-    Search's "Wallet + date" mode if you need to reach further back
-    to a specific known date instead.
-    """
-    chain = detect_chain(address)
-    if chain is None:
-        return {
-            "address": address, "chain": None, "direction": direction, "activity": [],
-            "message": "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.",
-        }
-
-    fetch_function = get_incoming_counterparties if direction == "incoming" else get_outgoing_counterparties
-    raw_results, fanout_count = fetch_function(chain, address)
-
-    activity = []
-    for hop_info in raw_results:
-        entry = {
-            "counterparty": hop_info["counterparty"],
-            "amount": hop_info["amount_label"],
-            "tx_time_utc": hop_info["tx_time"].strftime("%Y-%m-%d %H:%M:%S"),
-            "tx_hash": hop_info["tx_hash"],
-            "explorer_url": hop_info["explorer_url"],
-        }
-        counterparty_entity = check_known_entity(hop_info["counterparty"])
-        if counterparty_entity:
-            entry["counterparty_known_entity"] = f"{counterparty_entity['name']} ({counterparty_entity['type']})"
-        activity.append(entry)
-
-    # Sort newest-first - this is a browsing list, not a trace, so
-    # "most recent activity at the top" is what someone scanning it expects.
-    activity.sort(key=lambda entry: entry["tx_time_utc"], reverse=True)
-
-    sample_note = None
-    if fanout_count > len(activity):
-        sample_note = (
-            f"This address has at least {fanout_count} distinct counterparties in its recent history - "
-            f"only the {len(activity)} shown here fit within this tool's per-request limit. This is a "
-            f"SAMPLE of recent activity, not the complete history."
-        )
-
-    return {
-        "address": address, "chain": chain, "direction": direction,
-        "activity": activity, "sample_note": sample_note,
-        "message": (f"Found {len(activity)} {direction} transaction(s)." if activity
-                   else f"No {direction} activity found in this address's recent history."),
-    }
-
-
 # ====================================================================
 # SECTION 3B: SWAP CORRELATION (tracing through instant-swap services)
 # ====================================================================
@@ -1848,19 +1525,16 @@ def find_group_entity_addresses(entity_name):
     sharing this entity's name (case-insensitive) - i.e. every wallet
     you've identified as belonging to the SAME service, potentially on
     different chains. This is how a service's wallets get "grouped"
-    for swap correlation: add one known_entities entry per chain the
-    service uses, all with the same "name".
+    for swap correlation: add one known_entities.json entry per chain
+    the service uses, all with the same "name".
     """
     all_entries = list(BUILT_IN_KNOWN_ENTITIES)
-
-    try:
-        with auth._get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT address, name, type, chain FROM known_entities;")
-                for address, name, entity_type, chain in cur.fetchall():
-                    all_entries.append({"address": address, "name": name, "type": entity_type, "chain": chain})
-    except Exception as error:
-        print(f"⚠️  Could not read known_entities from the database: {error}")
+    if os.path.isfile(KNOWN_ENTITIES_FILE):
+        try:
+            with open(KNOWN_ENTITIES_FILE, "r", encoding="utf-8") as file_handle:
+                all_entries.extend(json.load(file_handle))
+        except (json.JSONDecodeError, OSError):
+            pass
 
     target_name_lower = entity_name.strip().lower()
     matches = []
@@ -1886,9 +1560,8 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
     PLAIN ENGLISH: Searches every OTHER known wallet belonging to
     entity_name (potentially on a different chain) for a transaction
     that plausibly correlates with reference_amount_label/time, by
-    both TIMING (between SWAP_CORRELATION_MIN_MINUTES and
-    SWAP_CORRELATION_MAX_MINUTES) and USD VALUE (within
-    SWAP_CORRELATION_MIN_RATIO-MAX_RATIO of each other).
+    both TIMING (within SWAP_CORRELATION_WINDOW_MINUTES) and USD VALUE
+    (within SWAP_CORRELATION_MIN_RATIO-MAX_RATIO of each other).
 
     search_direction="outgoing": reference event is a DEPOSIT into the
       service - looks for a plausible PAYOUT shortly AFTER it.
@@ -1912,30 +1585,8 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
         return []
 
     candidates = []
-    time_anchored_lookup_by_chain = {
-        "solana": _get_solana_hops_near_time,
-        "xrp": get_xrp_hops_near_time,
-        "tron": get_tron_hops_near_time,
-    }
     for address, chain, _entity_type in find_group_entity_addresses(entity_name):
-        near_time_lookup = time_anchored_lookup_by_chain.get(chain)
-        if near_time_lookup:
-            # A known-entity wallet (e.g. an instant-swap service or
-            # bridge's hot wallet) can be busy enough that the
-            # transaction we're actually looking for is long gone from
-            # "most recent N" - so anchor the search to the actual
-            # expected time window instead. Small buffer on each side
-            # absorbs clock/block-time imprecision right at the edges.
-            buffer_minutes = 1
-            if search_direction == "outgoing":
-                since_time = reference_time + timedelta(minutes=SWAP_CORRELATION_MIN_MINUTES - buffer_minutes)
-                until_time = reference_time + timedelta(minutes=SWAP_CORRELATION_MAX_MINUTES + buffer_minutes)
-            else:
-                since_time = reference_time - timedelta(minutes=SWAP_CORRELATION_MAX_MINUTES + buffer_minutes)
-                until_time = reference_time - timedelta(minutes=SWAP_CORRELATION_MIN_MINUTES - buffer_minutes)
-            want_direction = "outgoing" if search_direction == "outgoing" else "incoming"
-            hops, _fanout = near_time_lookup(address, want_direction, since_time, until_time)
-        elif search_direction == "outgoing":
+        if search_direction == "outgoing":
             hops, _fanout = get_outgoing_counterparties(chain, address)
         else:
             hops, _fanout = get_incoming_counterparties(chain, address)
@@ -1946,7 +1597,7 @@ def find_correlated_counterpart(entity_name, reference_amount_label, reference_c
                 minutes_diff = (tx_time - reference_time).total_seconds() / 60
             else:
                 minutes_diff = (reference_time - tx_time).total_seconds() / 60
-            if not (SWAP_CORRELATION_MIN_MINUTES <= minutes_diff <= SWAP_CORRELATION_MAX_MINUTES):
+            if not (0 <= minutes_diff <= SWAP_CORRELATION_WINDOW_MINUTES):
                 continue
 
             candidate_amount, candidate_symbol = _parse_amount_and_symbol(hop_info["amount_label"])
@@ -1988,8 +1639,7 @@ def print_swap_correlation_leads(entity_name, candidates, search_direction):
 
     if not candidates:
         print(f"\n  🔄 No plausible {verb} found for {entity_name} within "
-              f"{SWAP_CORRELATION_MIN_MINUTES}-{SWAP_CORRELATION_MAX_MINUTES} minutes "
-              f"and a matching USD value.")
+              f"{SWAP_CORRELATION_WINDOW_MINUTES} minutes and a matching USD value.")
         print("     This does NOT rule one out - price data may be missing, funds may have been")
         print("     split across multiple transactions, or the service may have other wallets not")
         print("     yet on file in known_entities.json.")
@@ -2178,55 +1828,6 @@ def manual_check_swap_correlation(address, direction="both"):
             f"known instant-swap/bridge service(s)."
         ),
     }
-
-
-def unified_swap_check(address, direction="both", timing_window_hours=4):
-    """
-    PLAIN ENGLISH: The single, consolidated version of Swap/Bridge
-    Check. Input ONE wallet - if it's confirmed to have deposited into
-    (or received a payout from) a known non-KYC service,
-    automatically also pulls in that service's own recent activity
-    AND runs a timing-window correlation across every one of that
-    service's known addresses - all in ONE result, instead of three
-    separate manual lookups you'd otherwise have to chain by hand.
-
-    This wraps manual_check_swap_correlation unchanged (so anything
-    else that calls it directly is unaffected) and enriches each
-    match it finds with the extra context.
-    """
-    base_result = manual_check_swap_correlation(address, direction)
-    if base_result.get("chain") is None:
-        return base_result  # invalid address - nothing more to add
-
-    def _enrich(entry, time_field):
-        entity_name = entry["service_name"]
-        target_time_iso = entry[time_field].replace(" ", "T")  # "%Y-%m-%d %H:%M:%S" -> ISO
-
-        known_addresses = find_known_entity_addresses_by_name(entity_name)
-        entry["service_addresses"] = known_addresses
-
-        # Show the service's own recent OUTGOING activity (what it
-        # sent out generally) - capped to a few addresses so one
-        # check doesn't fire off an unbounded number of API calls.
-        entry["service_activity"] = []
-        for known_entry in known_addresses[:3]:
-            activity = get_wallet_activity(known_entry["address"], "outgoing")
-            entry["service_activity"].append({
-                "address": known_entry["address"], "chain": known_entry.get("chain"),
-                "activity": activity.get("activity", []), "message": activity.get("message"),
-            })
-
-        # Automatically run the timing-window correlation too, using
-        # the deposit/payout's own observed time as the anchor.
-        entry["timing_window_correlation"] = find_inbound_activity_in_time_window(
-            entity_name, target_time_iso, timing_window_hours,
-        )
-        return entry
-
-    base_result["deposits_found"] = [_enrich(entry, "deposit_time_utc") for entry in base_result.get("deposits_found", [])]
-    base_result["payouts_found"] = [_enrich(entry, "payout_time_utc") for entry in base_result.get("payouts_found", [])]
-    base_result["timing_window_hours"] = timing_window_hours
-    return base_result
 
 
 # ====================================================================
@@ -2747,7 +2348,7 @@ def get_xrp_transaction_by_hash(tx_hash):
         "tx_time_utc": tx_time_utc,
         "from": result.get("Account"), "to": result.get("Destination"),
         "total_amount": amount_label,
-        "explorer_url": f"https://livenet.xrpl.org/transactions/{tx_hash}",
+        "explorer_url": f"https://bithomp.com/explorer/{tx_hash}",
     }
 
 
@@ -3082,7 +2683,7 @@ def search_xrp_near_date(address, target_datetime, window_hours=24):
                 matches.append({
                     "tx_hash": tx.get("hash"), "tx_time_utc": tx_time.strftime("%Y-%m-%d %H:%M:%S"),
                     "amount": amount_label,
-                    "explorer_url": f"https://livenet.xrpl.org/transactions/{tx.get('hash')}",
+                    "explorer_url": f"https://bithomp.com/explorer/{tx.get('hash')}",
                 })
 
         if oldest_on_page and oldest_on_page < window_start:
@@ -3132,122 +2733,6 @@ def search_wallet_near_date(address, target_datetime_iso, window_hours=24):
     result["target_datetime_utc"] = target_datetime.strftime("%Y-%m-%d %H:%M:%S")
     result["window_hours"] = window_hours
     return result
-
-
-# ====================================================================
-# TIMING-WINDOW CORRELATION ACROSS ALL OF A SERVICE'S KNOWN ADDRESSES
-# ====================================================================
-# WHAT THIS DOES (plain English): find_correlated_counterpart already
-# does amount+time matching from ONE specific reference transaction.
-# This is the complementary, broader search: given a service's name
-# and a target time (e.g. when an output/payout was observed), pulls
-# EVERY inbound transaction to EVERY known address tagged with that
-# service - across every chain it has an address on - within a time
-# window around that moment. No amount filtering at all - this is
-# pure timing correlation, giving you the full candidate pool to
-# review by eye, useful when you're not certain of the exact deposit
-# amount or just want to see everything that was happening around
-# that time.
-#
-# HONEST LIMITATION: only Ethereum and Tron get a clean inbound-only
-# filter here, since their transaction data has clear separate
-# "from"/"to" fields to filter on. Bitcoin and XRP's date-window
-# search (reused from search_wallet_near_date) doesn't cleanly
-# separate inbound from outbound in its result shape - for those two
-# chains, this reports EVERY transaction touching the address in the
-# window, not inbound-only. That's flagged explicitly in the result,
-# not silently glossed over.
-# ====================================================================
-
-def find_known_entity_addresses_by_name(entity_name):
-    """
-    PLAIN ENGLISH: Given a service's name, returns every address
-    tagged with that exact name in Known Entities, with ORIGINAL case
-    preserved - reads the raw file directly rather than
-    load_known_entities()'s dict, which keys everything by LOWERCASED
-    address for fast lookup. That's fine for exact-match checks, but
-    Tron addresses are case-sensitive - a lowercased Tron address is
-    simply invalid and would fail chain detection entirely.
-    """
-    raw_entries = []
-    if os.path.isfile(KNOWN_ENTITIES_FILE):
-        try:
-            with open(KNOWN_ENTITIES_FILE, "r", encoding="utf-8") as file_handle:
-                raw_entries = json.load(file_handle)
-        except (json.JSONDecodeError, OSError):
-            raw_entries = []
-
-    return [
-        {"address": entry["address"], "name": entry.get("name", ""), "type": entry.get("type", ""),
-         "chain": entry.get("chain") or detect_chain(entry["address"])}
-        for entry in raw_entries
-        if entry.get("address") and entry.get("name", "").strip().lower() == entity_name.strip().lower()
-    ]
-
-
-def find_inbound_activity_in_time_window(entity_name, target_datetime_iso, window_hours=4):
-    """
-    PLAIN ENGLISH: Given a known service's name (must match an entry
-    in Known Entities exactly) and a target date/time, searches EVERY
-    known address tagged with that name for inbound activity within
-    +/- window_hours/2 of that moment - no amount filtering, pure
-    timing correlation across the whole service, not just one wallet.
-    """
-    try:
-        target_datetime = datetime.fromisoformat(target_datetime_iso).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return {"entity_name": entity_name, "found_any": False, "message": "Could not parse that date/time.", "addresses_checked": []}
-
-    matching_addresses = find_known_entity_addresses_by_name(entity_name)
-    if not matching_addresses:
-        return {
-            "entity_name": entity_name, "found_any": False, "addresses_checked": [],
-            "message": f"No addresses found in Known Entities under the name \"{entity_name}\" - check the exact spelling used there.",
-        }
-
-    all_matches = []
-    addresses_checked = []
-    for entry in matching_addresses:
-        address = entry["address"]
-        chain = entry.get("chain") or detect_chain(address)
-        raw_result = search_wallet_near_date(address, target_datetime_iso, window_hours)
-        addresses_checked.append({"address": address, "chain": chain, "found_any": raw_result.get("found_any", False)})
-
-        for match in raw_result.get("matches", []):
-            if chain in ("ethereum", "tron"):
-                # Clean inbound-only filter - these chains' matches
-                # have real from/to fields.
-                if match.get("to", "").lower() != address.lower():
-                    continue
-                match_out = dict(match)
-                match_out["direction_note"] = "inbound (confirmed)"
-            else:
-                # Bitcoin/XRP - can't cleanly isolate inbound here,
-                # say so honestly rather than guess.
-                match_out = dict(match)
-                match_out["direction_note"] = "touches this address (direction not isolated for this chain)"
-            match_out["matched_address"] = address
-            match_out["chain"] = chain
-            all_matches.append(match_out)
-        time.sleep(SECONDS_BETWEEN_REQUESTS)
-
-    all_matches.sort(key=lambda m: m.get("tx_time_utc", ""))
-
-    return {
-        "entity_name": entity_name,
-        "target_datetime_utc": target_datetime.strftime("%Y-%m-%d %H:%M:%S"),
-        "window_hours": window_hours,
-        "addresses_checked": addresses_checked,
-        "found_any": len(all_matches) > 0,
-        "matches": all_matches,
-        "message": (
-            f"Found {len(all_matches)} inbound transaction(s) across {len(matching_addresses)} known "
-            f"{entity_name} address(es) within the window." if all_matches else
-            f"No inbound activity found across {len(matching_addresses)} known {entity_name} address(es) "
-            f"within the window - this doesn't rule one out, the deposit may be outside this window "
-            f"or the relevant address may not be registered in Known Entities yet."
-        ),
-    }
 
 
 # ====================================================================
@@ -3316,10 +2801,59 @@ def parse_amount_from_label(amount_label):
         return None
 
 
+def _lookup_bithomp_service(address):
+    """
+    PLAIN ENGLISH: Asks Bithomp whether this XRP address has a known
+    username/service label attached (e.g. an exchange's labeled hot
+    wallet) - a fallback for addresses not yet in your own curated
+    known_entities. Returns {"name":..., "type": "exchange", "source":
+    "bithomp"} if Bithomp has a label, or None (not an error - most
+    ordinary addresses simply have no label). Cached in-memory per
+    run so a trace hitting the same address repeatedly doesn't burn
+    through the free tier's 10 requests/minute limit.
+    """
+    if not BITHOMP_API_KEY:
+        return None
+
+    cache_key = address.lower()
+    if cache_key in _bithomp_lookup_cache:
+        return _bithomp_lookup_cache[cache_key]
+
+    result = None
+    try:
+        response = requests.get(
+            f"{BITHOMP_API_BASE}/address/{address}",
+            params={"username": "true", "service": "true"},
+            headers={"x-bithomp-token": BITHOMP_API_KEY},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            label = (data.get("service") or {}).get("name") or data.get("username")
+            if label:
+                result = {"name": label, "type": "exchange", "source": "bithomp"}
+        elif response.status_code == 429:
+            print("    ⚠️  Bithomp rate limit hit - skipping label lookups for the rest of this run.")
+            # Cache a "no result" for every future call this run too, rather
+            # than hammering an already-rate-limited endpoint repeatedly.
+    except (requests.exceptions.RequestException, ValueError) as error:
+        print(f"    ⚠️  Could not reach Bithomp: {error}")
+
+    _bithomp_lookup_cache[cache_key] = result
+    return result
+
+
 def check_known_entity(address):
     """Returns {"name":..., "type":...} if address is a known exchange/mixer/
-    custodial wallet, otherwise None."""
-    return KNOWN_ENTITIES.get(address.lower())
+    custodial wallet, otherwise None. For XRP addresses specifically, falls
+    back to a live Bithomp label lookup if not already in known_entities
+    and BITHOMP_API_KEY is set - see _lookup_bithomp_service()."""
+    entity = KNOWN_ENTITIES.get(address.lower())
+    if entity:
+        return entity
+    if BITHOMP_API_KEY and detect_chain(address) == "xrp":
+        return _lookup_bithomp_service(address)
+    return None
 
 
 def load_case_watchlist_addresses():
