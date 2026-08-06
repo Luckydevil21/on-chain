@@ -573,9 +573,7 @@ def _swap_candidates_for_flagged_path(path, search_direction):
 
 @app.post("/api/link-trace")
 def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
-    ...
-    auth.log_action(_auth["username"], "link_trace", target=req.wallet, detail=f"direction={req.direction}")
-    return {...}
+    """
     Traces forward (who did this wallet send to, hop by hop) or backward
     (who funded this wallet, hop by hop) looking for a link to a flagged
     wallet. Every branch is reported, not just matches - see
@@ -584,6 +582,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     """
     if req.direction not in ("forward", "backward"):
         raise HTTPException(400, 'direction must be "forward" or "backward".')
+    ...
 
     chain = lt.detect_chain(req.wallet)
     if chain is None:
