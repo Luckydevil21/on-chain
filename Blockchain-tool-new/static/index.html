@@ -1260,6 +1260,30 @@ function renderLinkTraceResults(data, meta) {
     }
   }
 
+  function renderEmbeddedDestination(path) {
+    // Look for it on the LAST hop, same spot swap correlation checks -
+    // this is where a trail typically ends at a known bridge/service.
+    const lastHop = path.hops[path.hops.length - 1];
+    if (!lastHop || !lastHop.embedded_destination) return;
+    const dest = lastHop.embedded_destination;
+    const row = el("div", "trail-row");
+    row.appendChild(el("div", "trail-reason",
+      `📍 This transaction's own memo states its destination directly - this is the service's OWN stated ` +
+      `routing, NOT a timing/amount heuristic guess like Swap Correlation below. Still worth independently ` +
+      `verifying, but this is stronger evidence than a correlation candidate.`));
+    const flow = el("div", "trail-flow");
+    flow.appendChild(makeBox(`(memo-stated destination, ${dest.chain})`, "entity"));
+    flow.appendChild(makeArrow("→", "", false));
+    const destBox = makeBox(dest.address, "guess");
+    flow.appendChild(destBox);
+    row.appendChild(flow);
+    const continueBtn = el("button", "btn secondary", `⇢ Trace forward on ${dest.chain} from here`);
+    continueBtn.style.cssText = "margin-top:8px; font-size:12px; padding:6px 12px;";
+    continueBtn.onclick = () => runForwardTraceFrom(dest.address);
+    row.appendChild(continueBtn);
+    container.appendChild(row);
+  }
+
   function renderGroup(title, cls, paths) {
     if (!paths.length) return;
     container.appendChild(el("div", "diagram-section-title " + cls, title));
@@ -1281,6 +1305,7 @@ function renderLinkTraceResults(data, meta) {
       });
       row.appendChild(flow);
       container.appendChild(row);
+      renderEmbeddedDestination(path);
       renderSwapLeads(path);
     }
   }
