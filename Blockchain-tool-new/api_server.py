@@ -86,8 +86,7 @@ to migrate these two files into a real database (SQLite to start).
 
 import sys
 import os
-import psycopg2
-import psycopg2.extras
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import json
@@ -112,6 +111,8 @@ import ai_assist
 import auth
 import email_sender
 
+import psycopg2
+import psycopg2.extras
 
 # ====================================================================
 # SECTION 1: AUTH - user logins (roles) + the original static API key
@@ -415,6 +416,13 @@ def disable_2fa(req: Disable2FARequest, current_user=Depends(require_read)):
         raise HTTPException(401, "Incorrect password.")
     return {"disabled": True}
 
+@app.get("/api/audit-log")
+def get_audit_log_endpoint(current_user=Depends(require_read)):
+    """Admins see everyone's activity. Everyone else sees only their own."""
+    username = None if current_user["role"] == "admin" else current_user["username"]
+    return auth.get_audit_log(username=username)
+
+
 
 # ---- Forgot / reset password ----
 
@@ -466,6 +474,7 @@ def add_user(req: CreateUserRequest, _admin=Depends(require_write)):
         raise HTTPException(status_code=400, detail=str(error))
     auth.log_action(_admin["username"], "user_created", target=req.username, detail=f"role={req.role}")
     return {"added": True}
+    
 
 
 @app.delete("/api/users/{username}")
@@ -476,13 +485,6 @@ def remove_user(username: str, current_user=Depends(require_write)):
         raise HTTPException(status_code=404, detail="No user with that username.")
     auth.log_action(current_user["username"], "user_deleted", target=username)
     return {"deleted": True}
-
-
-@app.get("/api/audit-log")
-def get_audit_log_endpoint(current_user=Depends(require_read)):
-    """Admins see everyone's activity. Everyone else sees only their own."""
-    username = None if current_user["role"] == "admin" else current_user["username"]
-    return auth.get_audit_log(username=username)
 
 
 # SECTION 5: LINK TRACER
@@ -659,6 +661,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     flagged_end_paths.sort(key=lambda item: _first_hop_time(item[0]))
     amount_filtered_paths.sort(key=lambda item: _first_hop_time(item[0]))
 
+    auth.log_action(_auth["username"], "link_trace", target=req.wallet, detail=f"direction={req.direction}")
     return {
         "wallet": req.wallet,
         "direction": req.direction,
@@ -714,6 +717,11 @@ def _write_case_watchlist(entries):
     pass
 
 
+def _write_case_watchlist(entries):
+    with open(lt.CASE_WATCHLIST_FILE, "w", encoding="utf-8") as file_handle:
+        json.dump(entries, file_handle, indent=2)
+
+
 @app.get("/api/case-watchlist")
 def get_case_watchlist(_auth=Depends(require_read)):
     with _file_lock:
@@ -742,6 +750,7 @@ def add_case_watchlist_entry(entry: CaseWatchlistEntryIn, _auth=Depends(require_
                 )
                 conn.commit()
 
+    auth.log_action(_auth["username"], "case_watchlist_add", target=entry.address)
     return {"added": True}
 
 
@@ -754,6 +763,7 @@ def delete_case_watchlist_entry(address: str, _auth=Depends(require_write)):
                 conn.commit()
                 if cur.rowcount == 0:
                     raise HTTPException(404, "That address isn't on the shared case watchlist.")
+    auth.log_action(_auth["username"], "case_watchlist_delete", target=address)
     return {"deleted": True}
 
 
@@ -789,6 +799,10 @@ def get_known_entities(_auth=Depends(require_read)):
     with _file_lock:
         return _read_known_entities()
 
+class BulkKnownEntityIn(BaseModel):
+    addresses: List[str] = Field(..., description="One address per entry - e.g. pasted lines from a CSV or list.")
+    name: str
+    type: str = Field(default="exchange", description='e.g. "exchange", "mixer", "instant_swap", "bridge"')
 
 @app.post("/api/known-entities")
 def add_known_entity(entry: KnownEntityIn, _auth=Depends(require_write)):
@@ -808,10 +822,6 @@ def add_known_entity(entry: KnownEntityIn, _auth=Depends(require_write)):
         lt.KNOWN_ENTITIES = lt.load_known_entities()
     return {"added": True}
 
-class BulkKnownEntityIn(BaseModel):
-    addresses: List[str] = Field(..., description="One address per entry - e.g. pasted lines from a CSV or list.")
-    name: str
-    type: str = Field(default="exchange", description='e.g. "exchange", "mixer", "instant_swap", "bridge"')
 
 @app.post("/api/known-entities/bulk")
 def add_known_entities_bulk(payload: BulkKnownEntityIn, _auth=Depends(require_write)):
@@ -851,7 +861,6 @@ def add_known_entities_bulk(payload: BulkKnownEntityIn, _auth=Depends(require_wr
         "skipped_duplicate_count": len(skipped_duplicate), "skipped_duplicate": skipped_duplicate,
         "skipped_invalid_count": len(skipped_invalid), "skipped_invalid": skipped_invalid,
     }
-
 
 
 @app.delete("/api/known-entities/{address}")
@@ -980,67 +989,6 @@ def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(requi
     return result
 
 
-class UnifiedSwapCheckRequest(BaseModel):
-    address: str = Field(..., description="Wallet to check.")
-    direction: str = Field(default="both", description='"outgoing", "incoming", or "both".')
-    timing_window_hours: float = Field(default=4, description="Window (hours) for the automatic timing correlation, +/- half this on each side.")
-
-
-@app.post("/api/swap-correlation/unified-check")
-def unified_swap_correlation_check(req: UnifiedSwapCheckRequest, _auth=Depends(require_read)):
-    """
-    The consolidated one-input version: checks the wallet, and for
-    every deposit/payout found, automatically also pulls in the
-    service's own recent activity and runs a timing-window
-    correlation - all in one response.
-    """
-    if req.direction not in ("outgoing", "incoming", "both"):
-        raise HTTPException(400, 'direction must be "outgoing", "incoming", or "both".')
-    if req.timing_window_hours <= 0 or req.timing_window_hours > 24 * 7:
-        raise HTTPException(400, "timing_window_hours must be a positive number, capped at 168 (7 days).")
-    return lt.unified_swap_check(req.address, req.direction, req.timing_window_hours)
-
-
-class WalletActivityRequest(BaseModel):
-    address: str = Field(..., description="A KNOWN service's own address (or any address) to view activity for.")
-    direction: str = Field(default="outgoing", description='"outgoing" or "incoming".')
-
-
-@app.post("/api/wallet-activity")
-def wallet_activity(req: WalletActivityRequest, _auth=Depends(require_read)):
-    """
-    Shows a wallet's own recent activity as a flat list - amount,
-    date/time, destination, for each transaction. No hop-following, no
-    target-matching. Built specifically for checking a KNOWN service's
-    own address directly (Link Tracer would just flag it as a
-    high-fanout trail-end and stop, showing nothing useful).
-    """
-    if req.direction not in ("outgoing", "incoming"):
-        raise HTTPException(400, 'direction must be "outgoing" or "incoming".')
-    return lt.get_wallet_activity(req.address, req.direction)
-
-
-class TimingWindowRequest(BaseModel):
-    entity_name: str = Field(..., description="Must match a name used in Known Entities exactly.")
-    target_datetime: str = Field(..., description="ISO format, e.g. 2026-05-06T14:00:00 - typically an observed output/payout time.")
-    window_hours: float = Field(default=4, description="Search +/- this many hours around the target, across EVERY known address for this entity.")
-
-
-@app.post("/api/timing-window-correlation")
-def timing_window_correlation(req: TimingWindowRequest, _auth=Depends(require_read)):
-    """
-    Pulls every inbound transaction to EVERY known address tagged
-    with the given service name, within a time window around a target
-    moment (typically an observed payout) - no amount filtering, pure
-    timing correlation across the whole service at once. See
-    link_tracer.py's matching section for the full explanation,
-    including the honest Bitcoin/XRP limitation.
-    """
-    if req.window_hours <= 0 or req.window_hours > 24 * 7:
-        raise HTTPException(400, "window_hours must be a positive number, capped at 168 (7 days).")
-    return lt.find_inbound_activity_in_time_window(req.entity_name, req.target_datetime, req.window_hours)
-
-
 # ====================================================================
 # SECTION 7G: GAS-FUNDING-SOURCE CLUSTERING
 # ====================================================================
@@ -1078,31 +1026,40 @@ class OpReturnPatternIn(BaseModel):
 
 @app.get("/api/op-return-patterns")
 def get_op_return_patterns(_auth=Depends(require_read)):
-    with _file_lock:
-        return lt.load_known_op_return_patterns()
+    return lt.load_known_op_return_patterns()
 
 
 @app.post("/api/op-return-patterns")
 def add_op_return_pattern(entry: OpReturnPatternIn, _auth=Depends(require_write)):
     if not entry.pattern.strip():
         raise HTTPException(400, "Pattern can't be empty.")
-    with _file_lock:
-        patterns = lt.load_known_op_return_patterns()
-        if any(p.get("pattern") == entry.pattern for p in patterns):
-            raise HTTPException(400, "That exact pattern is already registered.")
-        patterns.append({"pattern": entry.pattern, "name": entry.name, "type": entry.type})
-        lt.save_known_op_return_patterns(patterns)
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM known_op_return_patterns WHERE pattern = %s;", (entry.pattern,))
+            if cur.fetchone():
+                raise HTTPException(400, "That exact pattern is already registered.")
+            cur.execute(
+                "INSERT INTO known_op_return_patterns (pattern, name, type) VALUES (%s, %s, %s);",
+                (entry.pattern, entry.name, entry.type)
+            )
+            conn.commit()
     return {"added": True}
 
 
 @app.delete("/api/op-return-patterns/{pattern_index}")
 def delete_op_return_pattern(pattern_index: int, _auth=Depends(require_write)):
-    with _file_lock:
-        patterns = lt.load_known_op_return_patterns()
-        if pattern_index < 0 or pattern_index >= len(patterns):
-            raise HTTPException(404, "No pattern at that index.")
-        patterns.pop(pattern_index)
-        lt.save_known_op_return_patterns(patterns)
+    """pattern_index refers to position in the SAME ordering load_known_op_return_patterns()
+    returns (ORDER BY created_at) - matches how the frontend indexes into the list it
+    already fetched via GET, without needing a separate id-based API."""
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM known_op_return_patterns ORDER BY created_at;")
+            rows = cur.fetchall()
+            if pattern_index < 0 or pattern_index >= len(rows):
+                raise HTTPException(404, "No pattern at that index.")
+            target_id = rows[pattern_index][0]
+            cur.execute("DELETE FROM known_op_return_patterns WHERE id = %s;", (target_id,))
+            conn.commit()
     return {"deleted": True}
 
 
