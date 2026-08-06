@@ -902,9 +902,19 @@ function renderLinkTraceSection() {
     <div class="card">
       <h3>Search by</h3>
       <div class="radio-row" style="margin-bottom:14px;">
-        <label><input type="radio" name="searchMode" value="wallet"> Wallet address (full trace)</label>
         <label><input type="radio" name="searchMode" value="txhash" checked> Transaction hash</label>
+        <label><input type="radio" name="searchMode" value="wallet"> Wallet address (full trace)</label>
         <label><input type="radio" name="searchMode" value="walletdate"> Wallet + date</label>
+      </div>
+
+      <div id="modeFieldsTxHash">
+        <div class="field hint" style="margin-bottom:14px;">
+          If you already know the exact transaction (from another tool, a screenshot, a colleague),
+          get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
+          are unambiguous. Bitcoin/XRP/Tron hashes look identical (64 hex characters, no prefix) - this
+          tries each of those three in turn until one recognizes it.
+        </div>
+        <div class="field"><label>Transaction hash</label><input type="text" id="txhAddress" placeholder="0x... or a bare 64-character hash"></div>
       </div>
 
       <div id="modeFieldsWallet" style="display:none;">
@@ -920,16 +930,6 @@ function renderLinkTraceSection() {
         <div class="field"><label><input type="checkbox" id="ltExactAmount" style="width:auto; margin-right:6px;"> Exact amount only (no 10%-105% fuzzy band - only follows an almost-exact match, e.g. if you know the specific stolen sum)</label></div>
         <div class="field"><label><input type="checkbox" id="ltIncludeWatchlist" checked style="width:auto; margin-right:6px;"> Include shared case watchlist as targets</label></div>
         <div class="field"><label><input type="checkbox" id="ltContinuePastMatch" style="width:auto; margin-right:6px;"> Continue tracing past a matched target (see what that wallet did next, instead of stopping there)</label></div>
-      </div>
-
-      <div id="modeFieldsTxHash">
-        <div class="field hint" style="margin-bottom:14px;">
-          If you already know the exact transaction (from another tool, a screenshot, a colleague),
-          get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
-          are unambiguous. Bitcoin/XRP/Tron hashes look identical (64 hex characters, no prefix) - this
-          tries each of those three in turn until one recognizes it.
-        </div>
-        <div class="field"><label>Transaction hash</label><input type="text" id="txhAddress" placeholder="0x... or a bare 64-character hash"></div>
       </div>
 
       <div id="modeFieldsWalletDate" style="display:none;">
