@@ -1112,8 +1112,9 @@ function renderLinkTraceSection() {
       if (data.from) {
         const traceBtn = el("button", "btn secondary", "⇢ Trace forward from this transaction");
         traceBtn.style.cssText = "margin-top:12px; font-size:12px; padding:7px 14px;";
-        traceBtn.title = "Starts the trace from the SENDER, so this exact transaction becomes hop 1 - that way any memo/entity pattern on it still gets evaluated correctly.";
-        traceBtn.onclick = () => runForwardTraceFrom(data.from);
+        traceBtn.title = "Seeds the trace with this EXACT transaction as hop 1 - works even if it's old " +
+          "enough to be buried past the sender's recent-activity window, unlike a fresh wallet search.";
+        traceBtn.onclick = () => runForwardTraceFrom(data.from, data.tx_hash);
         card.appendChild(traceBtn);
       }
       resultsEl.appendChild(card);
@@ -1123,7 +1124,7 @@ function renderLinkTraceSection() {
     }
   }
 
-  async function runForwardTraceFrom(wallet) {
+  async function runForwardTraceFrom(wallet, seedTxHash) {
     // Switch the UI over to wallet-search mode and pre-fill it, so the
     // person can see/adjust direction, targets, amount filter etc. before
     // running - not a silent black-box trace.
@@ -1136,12 +1137,15 @@ function renderLinkTraceSection() {
 
     const statusEl = document.getElementById("ltStatus");
     const resultsEl = document.getElementById("ltResults");
-    statusEl.textContent = "Tracing... this can take a while.";
+    statusEl.textContent = seedTxHash
+      ? "Tracing from this exact transaction... this can take a while."
+      : "Tracing... this can take a while.";
     statusEl.className = "status-line";
     resultsEl.innerHTML = "";
 
     const includeWatchlist = document.getElementById("ltIncludeWatchlist").checked;
     const body = { wallet, direction: "forward", include_case_watchlist: includeWatchlist, continue_past_match: false };
+    if (seedTxHash) body.seed_tx_hash = seedTxHash;
 
     try {
       const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
