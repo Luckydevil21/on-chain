@@ -1116,6 +1116,31 @@ function renderLinkTraceSection() {
           "enough to be buried past the sender's recent-activity window, unlike a fresh wallet search.";
         traceBtn.onclick = () => runForwardTraceFrom(data.from, data.tx_hash);
         card.appendChild(traceBtn);
+      } else if (data.chain === "bitcoin" && data.inputs && data.inputs.length) {
+        // Bitcoin can have multiple inputs - ask which one to treat as
+        // "the sender" before seeding, rather than guessing.
+        const uniqueInputs = [...new Set(data.inputs.map(i => i.address).filter(Boolean))];
+        const picker = el("div");
+        picker.style.cssText = "margin-top:12px;";
+        const label = el("div", "hint", "This Bitcoin transaction has multiple inputs - pick which address to trace forward from:");
+        label.style.marginBottom = "6px";
+        picker.appendChild(label);
+        const select = document.createElement("select");
+        select.style.cssText = "font-family:var(--mono); font-size:12px; margin-right:8px;";
+        for (const addr of uniqueInputs) {
+          const option = document.createElement("option");
+          option.value = addr;
+          option.textContent = addr;
+          select.appendChild(option);
+        }
+        picker.appendChild(select);
+        const traceBtn = el("button", "btn secondary", "⇢ Trace forward from selected input");
+        traceBtn.style.cssText = "font-size:12px; padding:7px 14px;";
+        traceBtn.title = "Seeds the trace with every real payment (excluding change) this input sent in " +
+          "this exact transaction, works even for old transactions buried past the recent-activity window.";
+        traceBtn.onclick = () => runForwardTraceFrom(select.value, data.tx_hash, select.value);
+        picker.appendChild(traceBtn);
+        card.appendChild(picker);
       }
       resultsEl.appendChild(card);
     } catch (err) {
@@ -1124,7 +1149,7 @@ function renderLinkTraceSection() {
     }
   }
 
-  async function runForwardTraceFrom(wallet, seedTxHash) {
+  async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress) {
     // Switch the UI over to wallet-search mode and pre-fill it, so the
     // person can see/adjust direction, targets, amount filter etc. before
     // running - not a silent black-box trace.
@@ -1146,6 +1171,7 @@ function renderLinkTraceSection() {
     const includeWatchlist = document.getElementById("ltIncludeWatchlist").checked;
     const body = { wallet, direction: "forward", include_case_watchlist: includeWatchlist, continue_past_match: false };
     if (seedTxHash) body.seed_tx_hash = seedTxHash;
+    if (seedSenderAddress) body.seed_sender_address = seedSenderAddress;
 
     try {
       const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
