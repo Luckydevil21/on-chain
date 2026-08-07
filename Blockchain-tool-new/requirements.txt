@@ -10,3 +10,6 @@ pyotp
 qrcode
 pillow
 psycopg2-binary
+
+# evidence_pack.py
+opentimestamps-client
