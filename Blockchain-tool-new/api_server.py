@@ -549,6 +549,16 @@ def _hop_out(hop):
                 "address": pattern_match["embedded_destination_address"],
                 "chain": pattern_match.get("embedded_destination_chain"),
             }
+
+    coinjoin_match = hop.get("coinjoin_match")
+    if coinjoin_match:
+        output["coinjoin_match"] = {
+            "name": coinjoin_match.get("name"),
+            "equal_output_value_btc": coinjoin_match.get("equal_output_value_btc"),
+            "equal_output_count": coinjoin_match.get("equal_output_count"),
+            "total_outputs": coinjoin_match.get("total_outputs"),
+            "total_inputs": coinjoin_match.get("total_inputs"),
+        }
     return output
 
 
@@ -619,6 +629,14 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     chain = lt.detect_chain(actual_wallet)
     if chain is None:
         raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
+
+    # If the wallet being traced FROM is itself a registered known
+    # entity, the trace correctly refuses to expand into its (likely
+    # huge, unrelated) customer base - but without this, that produces
+    # silently empty results with no explanation. Surface it plainly
+    # instead, so it reads as "you searched the entity itself" rather
+    # than "the tool found nothing."
+    root_known_entity = lt.check_known_entity(actual_wallet)
 
     targets = list(req.target_wallets or [])
     if req.include_case_watchlist:
@@ -699,6 +717,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
         "wallet": actual_wallet,
         "direction": req.direction,
         "chain": chain,
+        "root_known_entity": root_known_entity,
         "targets_checked": len(targets),
         "addresses_visited": addresses_visited,
         "matched_paths": [_path_out(path) for path in matched_paths],
