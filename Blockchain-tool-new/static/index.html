@@ -1249,6 +1249,8 @@ function renderLinkTraceResults(data, meta) {
   document.getElementById("aiDraftReportBtn").onclick = () => runAIAssist("draft-report", data, meta);
   document.getElementById("aiTypologyBtn").onclick = () => runAIAssist("describe-typology", data, meta);
 
+  renderEvidencePackCard(data, meta, container);
+
   const targetSet = new Set(); // we don't get the raw target list back, so flagged/matched styling below relies on server-provided known_entity + the fact matched_paths ARE the target hits
 
   let aliases = {};
@@ -1355,6 +1357,71 @@ function renderLinkTraceResults(data, meta) {
     summaryCard.appendChild(table);
     container.appendChild(summaryCard);
   }
+}
+
+function renderEvidencePackCard(traceData, meta, container) {
+  const card = el("div", "card");
+  card.innerHTML = `
+    <h3>📄 Evidence Pack</h3>
+    <div class="hint" style="margin-bottom:10px;">
+      Generates a court-ready PDF from the trace above: cover sheet, full methodology (so a third party
+      can independently replicate this trace and check they get the same result), a SHA-256 hash proving
+      the data hasn't changed since capture, and every hop with block-explorer references.
+    </div>
+    <div class="field"><label>Case reference (optional)</label><input type="text" id="epCaseReference" placeholder="e.g. your case/reference number"></div>
+    <div class="field">
+      <label><input type="checkbox" id="epAnchorBlockchain" style="width:auto; margin-right:6px;">
+        Also anchor the hash to the Bitcoin blockchain (via OpenTimestamps) - free, but calls external
+        servers outside this app's control. Off by default; the hash and timestamp are still recorded
+        either way.</label>
+    </div>
+    <button class="btn" id="epGenerateBtn">Generate Evidence Pack</button>
+    <div class="status-line" id="epStatus"></div>
+    <div id="epResult"></div>
+  `;
+  container.appendChild(card);
+
+  document.getElementById("epGenerateBtn").onclick = async () => {
+    const caseReference = document.getElementById("epCaseReference").value.trim();
+    const anchorToBlockchain = document.getElementById("epAnchorBlockchain").checked;
+    const statusEl = document.getElementById("epStatus");
+    const resultEl = document.getElementById("epResult");
+    const button = document.getElementById("epGenerateBtn");
+
+    button.disabled = true;
+    statusEl.textContent = anchorToBlockchain
+      ? "Generating and submitting for blockchain anchoring... this can take a few seconds."
+      : "Generating...";
+    statusEl.className = "status-line";
+    resultEl.innerHTML = "";
+
+    try {
+      const body = {
+        trace_data: traceData,
+        case_reference: caseReference || null,
+        wallet: meta.wallet,
+        direction: meta.direction,
+        anchor_to_blockchain: anchorToBlockchain,
+      };
+      const result = await apiFetch("/api/evidence-pack", { method: "POST", body: JSON.stringify(body) });
+      statusEl.textContent = "";
+
+      resultEl.innerHTML = `
+        <div class="footnote" style="margin-top:10px;">
+          Evidence pack created - SHA-256: <span class="mono">${escapeHtml(result.sha256_hash)}</span>
+        </div>
+        <div class="footnote">${escapeHtml(result.note || "")}</div>
+        <a href="/api/evidence-pack/${encodeURIComponent(result.id)}/pdf" target="_blank">
+          <button class="btn secondary" style="margin-top:8px; font-size:12px; padding:7px 14px;">⬇ Download PDF</button>
+        </a>
+      `;
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    } finally {
+      button.disabled = false;
+    }
+  };
 }
 
 function truncateAddress(address) {
