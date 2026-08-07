@@ -1879,18 +1879,30 @@ def manual_check_swap_correlation(address, direction="both"):
 # ====================================================================
 
 def load_deposit_map():
-    if not os.path.isfile(DEPOSIT_MAP_FILE):
-        return []
     try:
-        with open(DEPOSIT_MAP_FILE, "r", encoding="utf-8") as file_handle:
-            return json.load(file_handle)
-    except (json.JSONDecodeError, OSError):
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT address, chain, exchange_name, exchange_type, discovered_via, "
+                    "consolidation_tx_hash, consolidation_time_utc, first_seen_utc FROM deposit_address_map;"
+                )
+                return [
+                    {
+                        "address": row[0], "chain": row[1], "exchange_name": row[2],
+                        "exchange_type": row[3], "discovered_via": row[4],
+                        "consolidation_tx_hash": row[5], "consolidation_time_utc": row[6],
+                        "first_seen_utc": row[7].strftime("%Y-%m-%d %H:%M:%S") if row[7] else None,
+                    }
+                    for row in cur.fetchall()
+                ]
+    except Exception as error:
+        print(f"⚠️  Could not read deposit_address_map from the database: {error}")
         return []
 
 
 def save_deposit_map(entries):
-    with open(DEPOSIT_MAP_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(entries, file_handle, indent=2)
+    """No longer used - register_deposit_address now inserts directly. Kept as a no-op for compatibility."""
+    pass
 
 
 def register_deposit_address(address, chain, exchange_name, exchange_type,
@@ -1904,23 +1916,25 @@ def register_deposit_address(address, chain, exchange_name, exchange_type,
     too, not just future runs. Returns True if newly added, False if
     it was already known.
     """
-    entries = load_deposit_map()
-    if any(entry["address"].lower() == address.lower() for entry in entries):
+    tx_time_str = tx_time.strftime("%Y-%m-%d %H:%M:%S") if hasattr(tx_time, "strftime") else str(tx_time)
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM deposit_address_map WHERE lower(address) = lower(%s);", (address,))
+                if cur.fetchone():
+                    return False
+                cur.execute(
+                    """
+                    INSERT INTO deposit_address_map
+                        (address, chain, exchange_name, exchange_type, discovered_via, consolidation_tx_hash, consolidation_time_utc)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                    """,
+                    (address, chain, exchange_name, exchange_type, discovered_via, tx_hash, tx_time_str)
+                )
+                conn.commit()
+    except Exception as error:
+        print(f"⚠️  Could not write to deposit_address_map: {error}")
         return False
-
-    entries.append({
-        "address": address,
-        "chain": chain,
-        "exchange_name": exchange_name,
-        "exchange_type": exchange_type,
-        "discovered_via": discovered_via,
-        "consolidation_tx_hash": tx_hash,
-        "consolidation_time_utc": (
-            tx_time.strftime("%Y-%m-%d %H:%M:%S") if hasattr(tx_time, "strftime") else str(tx_time)
-        ),
-        "first_seen_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    })
-    save_deposit_map(entries)
 
     KNOWN_ENTITIES[address.lower()] = {"name": exchange_name, "type": exchange_type}
     return True
@@ -2879,19 +2893,13 @@ def load_known_entities():
         print(f"⚠️  Could not read known_entities from the database: {error}")
 
     # Fold in every exchange deposit address confirmed by a past
-    # consolidation-mapping discovery (SECTION 3C) - unchanged, still file-based.
-    if os.path.isfile(DEPOSIT_MAP_FILE):
-        try:
-            with open(DEPOSIT_MAP_FILE, "r", encoding="utf-8") as file_handle:
-                deposit_entries = json.load(file_handle)
-            for entry in deposit_entries:
-                if entry.get("address"):
-                    entities[entry["address"].lower()] = {
-                        "name": entry.get("exchange_name", "Known entity"),
-                        "type": entry.get("exchange_type", "exchange"),
-                    }
-        except (json.JSONDecodeError, OSError, KeyError) as error:
-            print(f"⚠️  Could not read deposit map file: {error}")
+    # consolidation-mapping discovery (SECTION 3C) - now Postgres-backed.
+    for entry in load_deposit_map():
+        if entry.get("address"):
+            entities[entry["address"].lower()] = {
+                "name": entry.get("exchange_name", "Known entity"),
+                "type": entry.get("exchange_type", "exchange"),
+            }
 
     return entities
 
