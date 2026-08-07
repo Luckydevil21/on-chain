@@ -769,11 +769,6 @@ def _write_case_watchlist(entries):
     pass
 
 
-def _write_case_watchlist(entries):
-    with open(lt.CASE_WATCHLIST_FILE, "w", encoding="utf-8") as file_handle:
-        json.dump(entries, file_handle, indent=2)
-
-
 @app.get("/api/case-watchlist")
 def get_case_watchlist(_auth=Depends(require_read)):
     with _file_lock:
