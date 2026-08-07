@@ -100,7 +100,7 @@ from typing import List, Optional
 import requests
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 # ---- link_tracer.py, imported as a module. Importing it does NOT run
@@ -1019,6 +1019,26 @@ def get_evidence_pack_endpoint(evidence_pack_id: str, current_user=Depends(requi
     if current_user["role"] != "admin" and pack["created_by"] != current_user["username"]:
         raise HTTPException(403, "You can only view your own evidence packs.")
     return pack
+
+
+@app.get("/api/evidence-pack/{evidence_pack_id}/pdf")
+def download_evidence_pack_pdf(evidence_pack_id: str, current_user=Depends(require_read)):
+    pack = evidence_pack.get_evidence_pack(evidence_pack_id)
+    if not pack:
+        raise HTTPException(404, "No evidence pack with that id.")
+    if current_user["role"] != "admin" and pack["created_by"] != current_user["username"]:
+        raise HTTPException(403, "You can only view your own evidence packs.")
+
+    pdf_bytes = evidence_pack.generate_evidence_pack_pdf(evidence_pack_id)
+    if pdf_bytes is None:
+        raise HTTPException(404, "No evidence pack with that id.")
+
+    auth.log_action(current_user["username"], "evidence_pack_pdf_downloaded", target=evidence_pack_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="evidence-pack-{evidence_pack_id[:8]}.pdf"'},
+    )
 
 
 # ====================================================================
