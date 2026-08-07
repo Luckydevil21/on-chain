@@ -345,6 +345,27 @@ DEPOSIT_MAP_FILE = os.path.join(TOOLKIT_DATA_DIR, "deposit_address_map.json")
 HIGH_FANOUT_THRESHOLD = 25
 
 # --------------------------------------------------------------
+# WASABI/WABISABI COINJOIN DETECTION (Bitcoin only). Wasabi Wallet is
+# non-custodial - there's no single "Wasabi address" to register the
+# way there is for an exchange. Instead it's recognized by TRANSACTION
+# STRUCTURE: many unrelated participants combine inputs into one
+# transaction with many EQUAL-VALUE outputs, specifically to break the
+# link between who sent what and who received what. Per the published
+# WabiSabi research paper (Ficsor & Zerdel, 2021): a Bitcoin
+# transaction with more than 10 outputs of the EXACT SAME value is a
+# reliable indicator of a Wasabi CoinJoin specifically - other CoinJoin
+# implementations (e.g. Samourai/Whirlpool) use a much smaller, fixed
+# 5-output structure, so this threshold distinguishes them. This is a
+# HEURISTIC based on published research, not certain identification -
+# always verify independently, same as every other heuristic in this
+# toolkit. When detected, the hop is treated the same as hitting a
+# known mixer: the trail is flagged and NOT expanded further, since a
+# CoinJoin's whole purpose is making "which output continues this
+# specific input's money" analytically meaningless.
+# --------------------------------------------------------------
+WASABI_COINJOIN_MIN_EQUAL_OUTPUTS = 10
+
+# --------------------------------------------------------------
 # AMOUNT-BASED FILTERING (optional). If you know how much the victim
 # actually sent (or how much the illicit wallet actually moved), give
 # it here and the trace will ignore hops that clearly AREN'T part of
@@ -662,6 +683,7 @@ def get_outgoing_bitcoin(address):
         # KNOWN OP_RETURN PATTERNS. This is what lets a rotating-address
         # service (a new address every transaction) still get recognized.
         pattern_match = find_op_return_pattern_match_in_tx(tx)
+        coinjoin_match = detect_wasabi_coinjoin(tx)
 
         for output in tx.get("vout", []):
             recipient = output.get("scriptpubkey_address")
@@ -679,6 +701,8 @@ def get_outgoing_bitcoin(address):
                 }
                 if pattern_match:
                     hop_info["pattern_match"] = pattern_match
+                if coinjoin_match:
+                    hop_info["coinjoin_match"] = coinjoin_match
                 results.append(hop_info)
     return results, len(unique_counterparties)
 
@@ -1092,6 +1116,7 @@ def get_incoming_bitcoin(address):
             tx_time = datetime.now(timezone.utc)
         amount_label = f"{received_value / 100_000_000:.8f} BTC"
         pattern_match = find_op_return_pattern_match_in_tx(tx)
+        coinjoin_match = detect_wasabi_coinjoin(tx)
 
         for sender in senders:
             unique_counterparties.add(sender.lower())
@@ -1105,6 +1130,8 @@ def get_incoming_bitcoin(address):
                 }
                 if pattern_match:
                     hop_info["pattern_match"] = pattern_match
+                if coinjoin_match:
+                    hop_info["coinjoin_match"] = coinjoin_match
                 results.append(hop_info)
     return results, len(unique_counterparties)
 
@@ -2032,6 +2059,44 @@ def find_op_return_pattern_match_in_tx(tx):
             match["decoded_text"] = decoded
             return match
     return None
+
+
+def detect_wasabi_coinjoin(tx):
+    """
+    PLAIN ENGLISH: Heuristically identifies a likely Wasabi/WabiSabi
+    CoinJoin transaction by its STRUCTURE, not an address - see
+    WASABI_COINJOIN_MIN_EQUAL_OUTPUTS above for the research this is
+    based on and its honest limitations. Returns None if the
+    transaction doesn't match, or an entity-shaped dict (same "name"/
+    "type" fields as a known_entities match) describing it if it does
+    - deliberately entity-shaped so it plugs into every existing
+    flagging/reporting code path without needing a parallel one.
+    """
+    outputs = tx.get("vout", [])
+    if len(outputs) < WASABI_COINJOIN_MIN_EQUAL_OUTPUTS:
+        return None
+
+    value_counts = {}
+    for output in outputs:
+        value = output.get("value", 0)
+        if value > 0:
+            value_counts[value] = value_counts.get(value, 0) + 1
+
+    if not value_counts:
+        return None
+    most_common_value, most_common_count = max(value_counts.items(), key=lambda item: item[1])
+    if most_common_count < WASABI_COINJOIN_MIN_EQUAL_OUTPUTS:
+        return None
+
+    return {
+        "name": "Possible Wasabi/WabiSabi CoinJoin",
+        "type": "mixer",
+        "source": "coinjoin_heuristic",
+        "equal_output_value_btc": round(most_common_value / 100_000_000, 8),
+        "equal_output_count": most_common_count,
+        "total_outputs": len(outputs),
+        "total_inputs": len(tx.get("vin", [])),
+    }
 
 
 def decode_eth_input_data(input_hex):
@@ -3070,7 +3135,7 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
         for address, path_so_far, tracked_amount, is_post_match in frontier:
             entity = check_known_entity(address)
             if not entity and path_so_far:
-                entity = path_so_far[-1].get("pattern_match")
+                entity = path_so_far[-1].get("pattern_match") or path_so_far[-1].get("coinjoin_match")
             print(f"  Checking outgoing activity from {address} "
                   + (f"(tracking ~{tracked_amount:g}) " if tracked_amount is not None else "")
                   + "...")
@@ -3258,7 +3323,7 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
         for address, path_so_far, tracked_amount, is_post_match in frontier:
             entity = check_known_entity(address)
             if not entity and path_so_far:
-                entity = path_so_far[0].get("pattern_match")
+                entity = path_so_far[0].get("pattern_match") or path_so_far[0].get("coinjoin_match")
             print(f"  Checking incoming activity into {address} "
                   + (f"(tracking ~{tracked_amount:g}) " if tracked_amount is not None else "")
                   + "...")
