@@ -13,3 +13,4 @@ psycopg2-binary
 
 # evidence_pack.py
 opentimestamps-client
+reportlab
