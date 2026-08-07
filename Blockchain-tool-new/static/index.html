@@ -1207,9 +1207,27 @@ function renderLinkTraceResults(data, meta) {
   container.innerHTML = "";
   const simple = state.reportStyle === "simple";
 
+  if (data.root_known_entity) {
+    const warnCard = el("div", "card");
+    warnCard.style.borderColor = "var(--warn)";
+    warnCard.innerHTML = `
+      <h3 style="color:var(--warn);">⚠️ You're tracing FROM a known entity itself</h3>
+      <div class="hint">
+        <strong>${escapeHtml(meta.wallet)}</strong> is registered as <strong>${escapeHtml(data.root_known_entity.name)}
+        (${escapeHtml(data.root_known_entity.type)})</strong>. The trace deliberately does NOT expand into a known
+        entity's own customer base (that would mean tracing thousands of unrelated depositors' funds), so its outgoing
+        activity is intentionally not followed further - this is expected, not an error.
+        <br><br>
+        If you're trying to check whether a CUSTOMER wallet touched this service, trace FORWARD from that customer's
+        wallet instead - the trace will correctly stop and flag it when it reaches this address.
+      </div>
+    `;
+    container.appendChild(warnCard);
+  }
+
   const allPaths = [...data.matched_paths, ...data.flagged_end_paths.map(p => p), ...data.amount_filtered_paths.map(p => p)];
   if (!allPaths.length) {
-    container.innerHTML = `<div class="empty-state">No on-chain activity found within the hop limit. This does not rule out a link - see the tool's documented limitations (exchanges, mixers, and cross-chain bridges all break a simple on-chain trail).</div>`;
+    container.innerHTML += `<div class="empty-state">No on-chain activity found within the hop limit. This does not rule out a link - see the tool's documented limitations (exchanges, mixers, and cross-chain bridges all break a simple on-chain trail).</div>`;
     return;
   }
 
@@ -1223,6 +1241,7 @@ function renderLinkTraceResults(data, meta) {
     <button class="btn secondary" id="aiDraftReportBtn" style="font-size:12px; padding:7px 14px;">📝 Draft narrative report</button>
     <button class="btn secondary" id="aiTypologyBtn" style="font-size:12px; padding:7px 14px; margin-left:8px;">🏷️ Describe pattern</button>
     <div class="status-line" id="aiAssistStatus"></div>
+
     <div id="aiAssistOutput"></div>
   `;
   container.appendChild(aiCard);
