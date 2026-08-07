@@ -3030,9 +3030,10 @@ def build_seed_hop_from_tx_hash(tx_hash):
     exactly this transaction, regardless of how far back it sits in the
     sender's history. Returns (hop_dict, chain, None) on success, or
     (None, None, error_message) if the hash isn't found or isn't a
-    single-sender/single-recipient transaction this can seed from
-    (Bitcoin's multi-input transactions aren't supported here - use the
-    regular wallet trace or Deposit Map for those instead).
+    single-sender/single-recipient transaction this can seed from. For
+    Bitcoin specifically (which can have multiple inputs AND multiple
+    outputs), use build_seed_hops_from_bitcoin_tx instead - see there
+    for why a single hop_dict doesn't fit Bitcoin's structure.
     """
     result = lookup_transaction_across_chains(tx_hash)
     if not result.get("found"):
@@ -3043,8 +3044,8 @@ def build_seed_hop_from_tx_hash(tx_hash):
     if not from_address or not to_address:
         return None, None, (
             f"This {chain} transaction doesn't have a single clear sender/recipient to seed a "
-            f"trace from (Bitcoin transactions especially can have multiple inputs) - use the "
-            f"regular wallet trace instead."
+            f"trace from - use build_seed_hops_from_bitcoin_tx for Bitcoin, or the regular wallet "
+            f"trace otherwise."
         )
 
     try:
@@ -3063,6 +3064,63 @@ def build_seed_hop_from_tx_hash(tx_hash):
     if result.get("pattern_match"):
         hop["pattern_match"] = result["pattern_match"]
     return hop, chain, None
+
+
+def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
+    """
+    PLAIN ENGLISH: Bitcoin transactions can have MULTIPLE inputs
+    (several people's coins spent together) and MULTIPLE outputs
+    (several recipients, often including "change" back to one of the
+    senders) - so unlike the other chains, one transaction can't
+    always be represented as a single from/to hop. Given a specific
+    input address the person confirms they want to treat as "the
+    sender" (since this app can't guess which input is the one that
+    matters to the investigation), this returns ONE seed hop per
+    OUTPUT of that transaction - excluding any output that pays back
+    to sender_address itself (that's change, not a new hop).
+
+    Returns (list_of_hop_dicts, None) on success, or (None,
+    error_message) if the hash isn't found, isn't Bitcoin, or
+    sender_address wasn't actually one of this transaction's inputs.
+    """
+    result = get_bitcoin_transaction_by_hash(tx_hash)
+    if not result:
+        return None, "That Bitcoin transaction hash wasn't found."
+
+    input_addresses_lower = {(i.get("address") or "").lower() for i in result.get("inputs", [])}
+    if sender_address.lower() not in input_addresses_lower:
+        return None, f"{sender_address} was not one of this transaction's inputs."
+
+    try:
+        tx_time = datetime.strptime(result["tx_time_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        tx_time = datetime.now(timezone.utc)
+
+    pattern_match = result.get("pattern_match")
+
+    hops = []
+    for output in result.get("outputs", []):
+        recipient = output.get("address")
+        if not recipient or recipient.lower() == sender_address.lower():
+            continue  # change back to the sender - not a new hop
+        hop = {
+            "from": sender_address,
+            "to": recipient,
+            "tx_hash": tx_hash,
+            "tx_time": tx_time,
+            "amount_label": output.get("amount", "unknown"),
+            "explorer_url": result["explorer_url"],
+        }
+        if pattern_match:
+            hop["pattern_match"] = pattern_match
+        hops.append(hop)
+
+    if not hops:
+        return None, (
+            f"Every output of this transaction pays back to {sender_address} itself (change only) - "
+            f"there's no onward hop to trace from here."
+        )
+    return hops, None
 
 
 def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, seed_hop=None):
@@ -3121,15 +3179,24 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
     amount_filtered_paths = []
 
     if seed_hop:
-        seed_to = seed_hop["to"]
-        visited = {victim_wallet.lower(), seed_to.lower()}
-        seed_amount = parse_amount_from_label(seed_hop["amount_label"]) if starting_amount is not None else None
-        if seed_to.lower() in target_lowercase_set:
-            print(f"    🚨 MATCH: the seeded transaction itself reaches flagged wallet {seed_to}!")
-            found_paths.append([seed_hop])
-            frontier = [(seed_to, [seed_hop], seed_amount, True)] if continue_past_match else []
-        else:
-            frontier = [(seed_to, [seed_hop], seed_amount, False)]
+        # seed_hop can be a single hop dict (Ethereum/XRP/Tron - one clear
+        # sender/recipient) or a LIST of hop dicts (Bitcoin - one
+        # transaction can pay several distinct recipients at once; see
+        # build_seed_hops_from_bitcoin_tx). Normalize to a list either way.
+        seed_hops = seed_hop if isinstance(seed_hop, list) else [seed_hop]
+        visited = {victim_wallet.lower()}
+        frontier = []
+        for one_seed_hop in seed_hops:
+            seed_to = one_seed_hop["to"]
+            visited.add(seed_to.lower())
+            seed_amount = parse_amount_from_label(one_seed_hop["amount_label"]) if starting_amount is not None else None
+            if seed_to.lower() in target_lowercase_set:
+                print(f"    🚨 MATCH: the seeded transaction itself reaches flagged wallet {seed_to}!")
+                found_paths.append([one_seed_hop])
+                if continue_past_match:
+                    frontier.append((seed_to, [one_seed_hop], seed_amount, True))
+            else:
+                frontier.append((seed_to, [one_seed_hop], seed_amount, False))
     else:
         visited = {victim_wallet.lower()}
         # Each frontier entry: (address, path_so_far, tracked_amount, is_post_match).
