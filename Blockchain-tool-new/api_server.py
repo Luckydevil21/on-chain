@@ -110,6 +110,7 @@ import link_tracer as lt
 import ai_assist
 import auth
 import email_sender
+import evidence_pack
 
 import psycopg2
 import psycopg2.extras
@@ -964,6 +965,60 @@ def ai_draft_service_trace(req: AIServiceTraceRequest, _auth=Depends(require_rea
     if error:
         raise HTTPException(503, error)
     return {"report": text}
+
+
+# ====================================================================
+# SECTION 7H: EVIDENCE PACKS - cryptographically-verifiable, blockchain-
+# anchored evidence records. See evidence_pack.py's module docstring
+# for the full explanation and which UK evidentiary principles this
+# addresses. This section is READ-only-role safe (require_read, not
+# require_write) since generating an evidence pack doesn't change any
+# case data - it's a snapshot/attestation of results already found.
+# ====================================================================
+
+class CreateEvidencePackRequest(BaseModel):
+    trace_data: dict = Field(..., description="The full response body a completed /api/link-trace call already returned.")
+    case_reference: Optional[str] = Field(default=None, description="Optional - your own case/reference number, included in the evidence record.")
+    wallet: Optional[str] = None
+    direction: Optional[str] = None
+    anchor_to_blockchain: bool = Field(
+        default=False,
+        description="If true, also submits the evidence hash to free OpenTimestamps calendar servers "
+                    "for independent Bitcoin blockchain anchoring (see evidence_pack.py). Off by default "
+                    "- with it off, the evidence is still SHA-256 hashed and timestamped, just relying on "
+                    "this app's own database record rather than an externally-verifiable Bitcoin proof.",
+    )
+
+
+@app.post("/api/evidence-pack")
+def create_evidence_pack_endpoint(req: CreateEvidencePackRequest, _auth=Depends(require_read)):
+    try:
+        result = evidence_pack.create_evidence_pack(
+            _auth["username"], req.trace_data, req.case_reference,
+            extra_methodology={"wallet": req.wallet, "direction": req.direction},
+            anchor_to_blockchain=req.anchor_to_blockchain,
+        )
+    except RuntimeError as error:
+        raise HTTPException(503, f"Could not anchor this evidence to the blockchain right now: {error}")
+    auth.log_action(_auth["username"], "evidence_pack_created", target=result["id"], detail=req.case_reference)
+    return result
+
+
+@app.get("/api/evidence-pack")
+def list_evidence_packs_endpoint(current_user=Depends(require_read)):
+    """Admins see every evidence pack. Everyone else sees only their own - same visibility rule as the audit log."""
+    username = None if current_user["role"] == "admin" else current_user["username"]
+    return evidence_pack.list_evidence_packs(username=username)
+
+
+@app.get("/api/evidence-pack/{evidence_pack_id}")
+def get_evidence_pack_endpoint(evidence_pack_id: str, current_user=Depends(require_read)):
+    pack = evidence_pack.get_evidence_pack(evidence_pack_id)
+    if not pack:
+        raise HTTPException(404, "No evidence pack with that id.")
+    if current_user["role"] != "admin" and pack["created_by"] != current_user["username"]:
+        raise HTTPException(403, "You can only view your own evidence packs.")
+    return pack
 
 
 # ====================================================================
