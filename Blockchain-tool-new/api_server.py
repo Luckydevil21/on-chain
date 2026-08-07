@@ -498,8 +498,13 @@ class LinkTraceRequest(BaseModel):
         default=None,
         description="Optional - a known transaction hash to use as hop 1, instead of relying on the "
                     "sender's RECENT activity to rediscover it (which can miss an old transaction "
-                    "buried past the normal lookback window). Only supported with direction=forward, "
-                    "and only for single-sender/single-recipient transactions (not Bitcoin's multi-input case).",
+                    "buried past the normal lookback window). Only supported with direction=forward.",
+    )
+    seed_sender_address: Optional[str] = Field(
+        default=None,
+        description="Required ONLY when seed_tx_hash points to a Bitcoin transaction - Bitcoin can have "
+                    "multiple inputs, so this specifies WHICH input address to treat as the sender. Every "
+                    "output of the transaction (excluding change back to this address) becomes a starting hop.",
     )
     target_wallets: Optional[List[str]] = Field(
         default=None, description="Extra wallets to check for a link, beyond the shared case watchlist."
@@ -622,10 +627,20 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     seed_hop = None
     actual_wallet = req.wallet
     if req.seed_tx_hash:
-        seed_hop, seed_chain, error_message = lt.build_seed_hop_from_tx_hash(req.seed_tx_hash)
-        if error_message:
-            raise HTTPException(400, error_message)
-        actual_wallet = seed_hop["from"]  # the trace's real root is this transaction's sender
+        if req.seed_sender_address:
+            # Bitcoin path - multiple inputs possible, so the person must
+            # confirm which input address is "the sender" for this trace.
+            seed_hops, error_message = lt.build_seed_hops_from_bitcoin_tx(req.seed_tx_hash, req.seed_sender_address)
+            if error_message:
+                raise HTTPException(400, error_message)
+            seed_hop = seed_hops  # a list - trace_forward accepts either a single hop or a list
+            actual_wallet = req.seed_sender_address
+        else:
+            single_hop, seed_chain, error_message = lt.build_seed_hop_from_tx_hash(req.seed_tx_hash)
+            if error_message:
+                raise HTTPException(400, error_message)
+            seed_hop = single_hop
+            actual_wallet = single_hop["from"]  # the trace's real root is this transaction's sender
 
     chain = lt.detect_chain(actual_wallet)
     if chain is None:
