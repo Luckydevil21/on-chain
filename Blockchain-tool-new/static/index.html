@@ -1342,6 +1342,15 @@ function renderLinkTraceResults(data, meta) {
     container.appendChild(row);
   }
 
+  function renderCoinjoinStats(path) {
+    const lastHop = path.hops[path.hops.length - 1];
+    if (!lastHop || !lastHop.coinjoin_match) return;
+    const cj = lastHop.coinjoin_match;
+    container.appendChild(el("div", "trail-reason",
+      `🌀 Structural CoinJoin heuristic: ${cj.equal_output_count} outputs of exactly ${cj.equal_output_value_btc} BTC each, ` +
+      `out of ${cj.total_outputs} total outputs and ${cj.total_inputs} inputs. This is a pattern-based indicator, not confirmed - verify the transaction independently.`));
+  }
+
   function renderGroup(title, cls, paths) {
     if (!paths.length) return;
     container.appendChild(el("div", "diagram-section-title " + cls, title));
@@ -1354,16 +1363,25 @@ function renderLinkTraceResults(data, meta) {
       path.hops.forEach((hop, i) => {
         const isLast = i === path.hops.length - 1;
         const isMatchTarget = cls === "match" && isLast;
+        const isFlaggedEnd = cls === "flagged" && isLast;
         flow.appendChild(makeArrow(hop.amount, formatFriendlyDate(hop.tx_time_utc), false));
         let label = simple ? (aliases[hop.to_address.toLowerCase()] || hop.to_address) : hop.to_address;
         let boxCls = "";
-        if (isMatchTarget) { boxCls = "flagged"; label = "🚩 " + label; }
-        else if (hop.to_known_entity) { boxCls = "entity"; }
+        if (isMatchTarget) {
+          boxCls = "flagged"; label = "🚩 " + label;
+        } else if (hop.to_known_entity) {
+          boxCls = "entity";
+        } else if (isFlaggedEnd && hop.matched_pattern) {
+          boxCls = "entity"; label = `${label} (${hop.matched_pattern.name})`;
+        } else if (isFlaggedEnd && hop.coinjoin_match) {
+          boxCls = "guess"; label = `🌀 ${label}`;
+        }
         flow.appendChild(makeBox(label, boxCls));
       });
       row.appendChild(flow);
       container.appendChild(row);
       renderEmbeddedDestination(path);
+      renderCoinjoinStats(path);
       renderSwapLeads(path);
     }
   }
