@@ -1209,13 +1209,21 @@ function renderLinkTraceSection() {
   }
 }
 
-async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress) {
+async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress, priorHops) {
   // Switch the UI over to wallet-search mode and pre-fill it, so the
   // person can see/adjust direction, targets, amount filter etc. before
   // running - not a silent black-box trace. Top-level (not nested inside
   // renderLinkTraceSection) so buttons defined elsewhere - e.g. the
   // embedded-destination "trace forward on X from here" button inside
   // renderLinkTraceResults - can actually call it.
+  //
+  // priorHops (optional): hops from an EARLIER chain's trace that led up
+  // to this address (e.g. the XRP leg that reached a Bridgers memo
+  // stating a Tron destination). When given, they're prepended onto
+  // every path in the NEW trace's result, so the combined view - and
+  // any Evidence Pack built from it - shows the whole cross-chain flow
+  // as one continuous investigation, not two disconnected traces where
+  // the first one silently gets discarded.
   document.querySelector('input[name="searchMode"][value="wallet"]').checked = true;
   document.getElementById("modeFieldsWallet").style.display = "block";
   document.getElementById("modeFieldsTxHash").style.display = "none";
@@ -1225,7 +1233,9 @@ async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress) {
 
   const statusEl = document.getElementById("ltStatus");
   const resultsEl = document.getElementById("ltResults");
-  statusEl.textContent = seedTxHash
+  statusEl.textContent = priorHops
+    ? "Tracing the next leg of this investigation... this can take a while."
+    : seedTxHash
     ? "Tracing from this exact transaction... this can take a while."
     : "Tracing... this can take a while.";
   statusEl.className = "status-line";
@@ -1241,6 +1251,26 @@ async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress) {
 
   try {
     const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+
+    if (priorHops && priorHops.length) {
+      // Stitch the prior leg onto the FRONT of every path this new trace found,
+      // so each one reads as a single continuous flow from the original start.
+      for (const group of ["matched_paths", "flagged_end_paths", "amount_filtered_paths"]) {
+        for (const path of data[group] || []) {
+          path.hops = [...priorHops, ...path.hops];
+        }
+      }
+      // clean_summary is deduped by tx_hash server-side for the new leg only -
+      // prepend the prior leg's rows too (different chain, so no hash collisions).
+      const priorSummaryRows = priorHops.map(h => ({
+        from: h.from_address, to: h.to_address, amount: h.amount,
+        tx_time_utc: h.tx_time_utc, tx_hash: h.tx_hash, verify_url: h.explorer_url,
+      }));
+      data.clean_summary = [...priorSummaryRows, ...(data.clean_summary || [])];
+      data.cross_chain_continuation = true;
+      data.addresses_visited = (data.addresses_visited || 0);
+    }
+
     lastResults.linkTrace = data;
     lastResults.linkTraceMeta = { wallet, direction: "forward" };
     statusEl.textContent = `${data.addresses_visited} wallet(s) visited. ${data.matched_paths.length} direct link(s) found.`;
@@ -1272,6 +1302,21 @@ function renderLinkTraceResults(data, meta) {
       </div>
     `;
     container.appendChild(warnCard);
+  }
+
+  if (data.cross_chain_continuation) {
+    const infoCard = el("div", "card");
+    infoCard.style.borderColor = "var(--entity)";
+    infoCard.innerHTML = `
+      <h3 style="color:var(--entity);">🔗 Cross-chain continuation of this investigation</h3>
+      <div class="hint">
+        The path(s) below combine an earlier leg on a different chain with this new trace, joined at the
+        cross-chain jump you followed. This is a composed view built from two separately-run traces, not a
+        single trace the tool verified end-to-end in one pass - each leg's own hops remain independently
+        verifiable at their respective block explorers, exactly as before.
+      </div>
+    `;
+    container.appendChild(infoCard);
   }
 
   const allPaths = [...data.matched_paths, ...data.flagged_end_paths.map(p => p), ...data.amount_filtered_paths.map(p => p)];
@@ -1353,7 +1398,7 @@ function renderLinkTraceResults(data, meta) {
     row.appendChild(flow);
     const continueBtn = el("button", "btn secondary", `⇢ Trace forward on ${dest.chain} from here`);
     continueBtn.style.cssText = "margin-top:8px; font-size:12px; padding:6px 12px;";
-    continueBtn.onclick = () => runForwardTraceFrom(dest.address);
+    continueBtn.onclick = () => runForwardTraceFrom(dest.address, null, null, path.hops);
     row.appendChild(continueBtn);
     container.appendChild(row);
   }
