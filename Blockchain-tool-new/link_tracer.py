@@ -3233,17 +3233,24 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
     OUTPUT of that transaction - excluding any output that pays back
     to sender_address itself (that's change, not a new hop).
 
-    Returns (list_of_hop_dicts, None) on success, or (None,
-    error_message) if the hash isn't found, isn't Bitcoin, or
-    sender_address wasn't actually one of this transaction's inputs.
+    CAPPED at MAX_FANOUT_PER_HOP outputs (same limit used everywhere
+    else in a trace) - a transaction with many outputs (e.g. a large
+    CoinJoin or consolidation sweep) would otherwise seed dozens of
+    simultaneous hop-1 branches, each needing its own full paginated
+    fetch, which can make the trace take minutes or effectively hang.
+
+    Returns (list_of_hop_dicts, None, was_capped) on success, or
+    (None, error_message, False) if the hash isn't found, isn't
+    Bitcoin, or sender_address wasn't actually one of this
+    transaction's inputs.
     """
     result = get_bitcoin_transaction_by_hash(tx_hash)
     if not result:
-        return None, "That Bitcoin transaction hash wasn't found."
+        return None, "That Bitcoin transaction hash wasn't found.", False
 
     input_addresses_lower = {(i.get("address") or "").lower() for i in result.get("inputs", [])}
     if sender_address.lower() not in input_addresses_lower:
-        return None, f"{sender_address} was not one of this transaction's inputs."
+        return None, f"{sender_address} was not one of this transaction's inputs.", False
 
     try:
         tx_time = datetime.strptime(result["tx_time_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
@@ -3253,10 +3260,14 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
     pattern_match = result.get("pattern_match")
 
     hops = []
+    was_capped = False
     for output in result.get("outputs", []):
         recipient = output.get("address")
         if not recipient or recipient.lower() == sender_address.lower():
             continue  # change back to the sender - not a new hop
+        if len(hops) >= MAX_FANOUT_PER_HOP:
+            was_capped = True
+            continue
         hop = {
             "from": sender_address,
             "to": recipient,
@@ -3273,8 +3284,8 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
         return None, (
             f"Every output of this transaction pays back to {sender_address} itself (change only) - "
             f"there's no onward hop to trace from here."
-        )
-    return hops, None
+        ), False
+    return hops, None, was_capped
 
 
 def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, seed_hop=None, evm_chain=DEFAULT_EVM_CHAIN):
