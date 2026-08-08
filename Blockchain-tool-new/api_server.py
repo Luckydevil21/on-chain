@@ -1057,6 +1057,37 @@ def download_evidence_pack_pdf(evidence_pack_id: str, current_user=Depends(requi
 
 
 # ====================================================================
+# SECTION 7I: TOKEN / CONTRACT RISK CHECK
+# ====================================================================
+# Real, verifiable on-chain red flags for a Solana SPL token mint or
+# an Ethereum contract - see link_tracer.py's check_solana_token_risk /
+# check_ethereum_contract_risk for exactly what's checked and why. A
+# "clean" result is NOT a safety guarantee - only that these SPECIFIC
+# known mechanisms weren't found. Bitcoin, XRP, and Tron have no
+# equivalent concept (no smart-contract-style mint/freeze/ownership
+# mechanisms to check) - not supported for those chains.
+
+class TokenRiskCheckRequest(BaseModel):
+    address: str = Field(..., description="A Solana SPL token mint address, or an Ethereum contract address.")
+
+
+@app.post("/api/token-risk-check")
+def check_token_risk(req: TokenRiskCheckRequest, _auth=Depends(require_read)):
+    chain = lt.detect_chain(req.address)
+    if chain == "solana":
+        result = lt.check_solana_token_risk(req.address)
+    elif chain == "ethereum":
+        result = lt.check_ethereum_contract_risk(req.address)
+    elif chain in ("bitcoin", "xrp", "tron"):
+        raise HTTPException(400, f"Token/contract risk checks aren't applicable to {chain} - it has no equivalent mint/freeze/ownership mechanism to check.")
+    else:
+        raise HTTPException(400, "Not a recognized Solana or Ethereum address.")
+
+    auth.log_action(_auth["username"], "token_risk_check", target=req.address, detail=f"chain={chain}")
+    return result
+
+
+# ====================================================================
 # SECTION 7D: TRANSACTION HASH LOOKUP + DATE-ANCHORED SEARCH
 # ====================================================================
 
