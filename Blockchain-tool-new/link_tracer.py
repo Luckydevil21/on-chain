@@ -2455,7 +2455,11 @@ def _address_has_no_prior_history(address):
         mempool_stats = data.get("mempool_stats", {})
         total_tx_count = chain_stats.get("tx_count", 0) + mempool_stats.get("tx_count", 0)
         return total_tx_count <= 1
-    except (requests.exceptions.RequestException, ValueError):
+    except requests.exceptions.RequestException as error:
+        print(f"    ⚠️  Change detection: could not check history for {address}: {error}")
+        return False
+    except ValueError as error:
+        print(f"    ⚠️  Change detection: could not parse response for {address}: {error}")
         return False  # can't verify - don't claim it's change on unclear data
 
 
@@ -3584,7 +3588,27 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
 
                 if entity or high_fanout:
                     # Don't expand past a known/likely custodial wallet -
-                    # already reported as a flagged trail end above.
+                    # already reported as a flagged trail end above, UNLESS
+                    # this is the trace's own ROOT wallet (path_so_far is
+                    # empty - no prior hop exists to have triggered that
+                    # report). Without this, a high-fanout root (e.g. a
+                    # major exchange's hot wallet, entered directly as the
+                    # wallet to trace) would have every one of its real
+                    # outgoing hops silently discarded here with NO record
+                    # anywhere - the trace genuinely finds real activity,
+                    # then throws it away, producing an empty result set
+                    # that looks like nothing was found at all. A known
+                    # ENTITY root is deliberately excluded from this fix -
+                    # that case already has its own explanatory banner
+                    # (see api_server.py's root_known_entity) and we still
+                    # don't want to expand into an entity's own huge
+                    # customer base either way.
+                    if not path_so_far and not entity:
+                        short_reason = (
+                            f"high fan-out wallet ({fanout_count}+ distinct counterparties "
+                            f"seen - likely exchange/custodial)"
+                        )
+                        flagged_end_paths.append((new_path, f"Starting wallet itself is a {short_reason}"))
                     continue
 
                 if counterparty.lower() not in visited:
@@ -3767,7 +3791,16 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
 
                 if entity or high_fanout:
                     # Don't expand past a known/likely custodial wallet -
-                    # already reported as a flagged trail end above.
+                    # already reported as a flagged trail end above, UNLESS
+                    # this is the trace's own starting wallet (path_so_far
+                    # is empty - see trace_forward's matching fix for the
+                    # full explanation of why this matters).
+                    if not path_so_far and not entity:
+                        short_reason = (
+                            f"high fan-in wallet ({fanout_count}+ distinct counterparties "
+                            f"seen - likely exchange/custodial)"
+                        )
+                        trail_end_paths.append((new_path, f"Starting wallet itself is a {short_reason}"))
                     continue
 
                 if counterparty.lower() not in visited:
