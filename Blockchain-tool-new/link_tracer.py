@@ -3248,8 +3248,10 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
     input address the person confirms they want to treat as "the
     sender" (since this app can't guess which input is the one that
     matters to the investigation), this returns ONE seed hop per
-    OUTPUT of that transaction - excluding any output that pays back
-    to sender_address itself (that's change, not a new hop).
+    OUTPUT of that transaction, INCLUDING any output that pays back to
+    sender_address itself - those are tagged "is_change": True rather
+    than silently dropped, so the investigator can see and judge it
+    themselves instead of the tool making that call invisibly.
 
     CAPPED at MAX_FANOUT_PER_HOP outputs (same limit used everywhere
     else in a trace) - a transaction with many outputs (e.g. a large
@@ -3281,8 +3283,8 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
     was_capped = False
     for output in result.get("outputs", []):
         recipient = output.get("address")
-        if not recipient or recipient.lower() == sender_address.lower():
-            continue  # change back to the sender - not a new hop
+        if not recipient:
+            continue
         if len(hops) >= MAX_FANOUT_PER_HOP:
             was_capped = True
             continue
@@ -3293,6 +3295,7 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
             "tx_time": tx_time,
             "amount_label": output.get("amount", "unknown"),
             "explorer_url": result["explorer_url"],
+            "is_change": recipient.lower() == sender_address.lower(),
         }
         if pattern_match:
             hop["pattern_match"] = pattern_match
@@ -3300,8 +3303,8 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
 
     if not hops:
         return None, (
-            f"Every output of this transaction pays back to {sender_address} itself (change only) - "
-            f"there's no onward hop to trace from here."
+            f"None of this transaction's outputs have a usable address to trace from (e.g. an "
+            f"OP_RETURN-only output) - there's no onward hop to trace from here."
         ), False
     return hops, None, was_capped
 
@@ -3373,6 +3376,14 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
             seed_to = one_seed_hop["to"]
             visited.add(seed_to.lower())
             seed_amount = parse_amount_from_label(one_seed_hop["amount_label"]) if starting_amount is not None else None
+            if one_seed_hop.get("is_change"):
+                # Change returns to the sender itself - record it as a
+                # visible trail end (so it shows up, labeled, in results)
+                # rather than expanding it into a new branch, which would
+                # just redundantly re-fetch the sender's own activity
+                # that the other seed hops already cover.
+                flagged_end_paths.append(([one_seed_hop], f"Change output - returns to the sender's own address ({seed_to})"))
+                continue
             if seed_to.lower() in target_lowercase_set:
                 print(f"    🚨 MATCH: the seeded transaction itself reaches flagged wallet {seed_to}!")
                 found_paths.append([one_seed_hop])
