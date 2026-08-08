@@ -507,10 +507,10 @@ class LinkTraceRequest(BaseModel):
                     "output of the transaction (excluding change back to this address) becomes a starting hop.",
     )
     target_wallets: Optional[List[str]] = Field(
-        default=None, description="Extra wallets to check for a link, beyond the shared case watchlist."
+        default=None, description="Extra wallets to check for a link, beyond a saved case's wallets."
     )
-    include_case_watchlist: bool = Field(
-        default=True, description="Also check against every address on the shared case watchlist."
+    case_id: Optional[str] = Field(
+        default=None, description="Optional - a saved case's id. Every wallet saved under that case is also checked as a target."
     )
     max_hops: Optional[int] = Field(default=None, description="Overrides link_tracer.py's default hop limit.")
     starting_amount: Optional[float] = Field(
@@ -655,9 +655,9 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     root_known_entity = lt.check_known_entity(actual_wallet)
 
     targets = list(req.target_wallets or [])
-    if req.include_case_watchlist:
+    if req.case_id:
         existing_lowercase = {t.lower() for t in targets}
-        for address in lt.load_case_watchlist_addresses():
+        for address in lt.load_case_wallet_addresses(req.case_id):
             if address.lower() not in existing_lowercase:
                 targets.append(address)
                 existing_lowercase.add(address.lower())
@@ -747,87 +747,153 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
 
 
 # ====================================================================
-# SECTION 6: SHARED CASE WATCHLIST (CRUD)
+# SECTION 6: SAVED CASES - groups multiple wallets/traces together
+# under a named case, replacing the old flat, ungrouped watchlist.
 # ====================================================================
 
-class CaseWatchlistEntryIn(BaseModel):
+class CaseIn(BaseModel):
+    name: str
+    notes: Optional[str] = None
+
+
+class CaseWalletIn(BaseModel):
     address: str
     chain: Optional[str] = Field(default=None, description="Auto-detected if omitted.")
     source: Optional[str] = None
     context: Optional[str] = None
 
 
-def _read_case_watchlist():
+@app.get("/api/cases")
+def list_cases(_auth=Depends(require_read)):
+    """Every saved case, newest first, with a wallet count for each."""
     with auth._get_db_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT address, chain, coin_type, first_seen_utc, discovered_via, source, context FROM case_watchlist;")
-            rows = cur.fetchall()
+            cur.execute(
+                """
+                SELECT c.id, c.name, c.notes, c.created_by, c.created_at, COUNT(w.id) AS wallet_count
+                FROM cases c
+                LEFT JOIN case_wallets w ON w.case_id = c.id
+                GROUP BY c.id
+                ORDER BY c.created_at DESC;
+                """
+            )
             return [
                 {
-                    "address": row["address"],
-                    "chain": row["chain"],
-                    "coin_type": row["coin_type"],
-                    "first_seen_utc": row["first_seen_utc"].strftime("%Y-%m-%d %H:%M:%S") if row["first_seen_utc"] else None,
-                    "discovered_via": row["discovered_via"],
-                    "source": row["source"] or "",
-                    "context": row["context"] or "",
+                    "id": str(row["id"]), "name": row["name"], "notes": row["notes"] or "",
+                    "created_by": row["created_by"],
+                    "created_at": row["created_at"].strftime("%Y-%m-%d %H:%M:%S") if row["created_at"] else None,
+                    "wallet_count": row["wallet_count"],
                 }
-                for row in rows
+                for row in cur.fetchall()
             ]
 
 
-def _write_case_watchlist(entries):
-    """
-    Kept for signature compatibility - no longer used directly, since
-    add/delete now write straight to Postgres (see below). Left as a
-    no-op in case any other call site references it.
-    """
-    pass
+@app.post("/api/cases")
+def create_case(req: CaseIn, _auth=Depends(require_write)):
+    if not req.name.strip():
+        raise HTTPException(400, "Case name can't be empty.")
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO cases (name, notes, created_by) VALUES (%s, %s, %s) RETURNING id;",
+                (req.name.strip(), req.notes, _auth["username"])
+            )
+            case_id = cur.fetchone()[0]
+            conn.commit()
+    auth.log_action(_auth["username"], "case_created", target=str(case_id), detail=req.name)
+    return {"id": str(case_id), "added": True}
 
 
-@app.get("/api/case-watchlist")
-def get_case_watchlist(_auth=Depends(require_read)):
-    with _file_lock:
-        return _read_case_watchlist()
+@app.get("/api/cases/{case_id}")
+def get_case(case_id: str, _auth=Depends(require_read)):
+    with auth._get_db_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT id, name, notes, created_by, created_at FROM cases WHERE id = %s;", (case_id,))
+            case_row = cur.fetchone()
+            if not case_row:
+                raise HTTPException(404, "No case with that id.")
+
+            cur.execute(
+                "SELECT address, chain, source, context, added_by, added_at FROM case_wallets "
+                "WHERE case_id = %s ORDER BY added_at DESC;",
+                (case_id,)
+            )
+            wallets = [
+                {
+                    "address": w["address"], "chain": w["chain"],
+                    "source": w["source"] or "", "context": w["context"] or "",
+                    "added_by": w["added_by"],
+                    "added_at": w["added_at"].strftime("%Y-%m-%d %H:%M:%S") if w["added_at"] else None,
+                }
+                for w in cur.fetchall()
+            ]
+
+    return {
+        "id": str(case_row["id"]), "name": case_row["name"], "notes": case_row["notes"] or "",
+        "created_by": case_row["created_by"],
+        "created_at": case_row["created_at"].strftime("%Y-%m-%d %H:%M:%S") if case_row["created_at"] else None,
+        "wallets": wallets,
+    }
 
 
-@app.post("/api/case-watchlist")
-def add_case_watchlist_entry(entry: CaseWatchlistEntryIn, _auth=Depends(require_write)):
+@app.delete("/api/cases/{case_id}")
+def delete_case(case_id: str, _auth=Depends(require_write)):
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM cases WHERE id = %s;", (case_id,))
+            conn.commit()
+            if cur.rowcount == 0:
+                raise HTTPException(404, "No case with that id.")
+    auth.log_action(_auth["username"], "case_deleted", target=case_id)
+    return {"deleted": True}
+
+
+@app.post("/api/cases/{case_id}/wallets")
+def add_case_wallet(case_id: str, entry: CaseWalletIn, _auth=Depends(require_write)):
     chain = entry.chain or lt.detect_chain(entry.address)
     if chain is None:
-        raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
+        raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, Tron, or Solana address.")
 
-    with _file_lock:
-        with auth._get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM case_watchlist WHERE lower(address) = lower(%s);", (entry.address,))
-                if cur.fetchone():
-                    return {"added": False, "message": "Already on the shared case watchlist."}
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM cases WHERE id = %s;", (case_id,))
+            if not cur.fetchone():
+                raise HTTPException(404, "No case with that id.")
 
-                cur.execute(
-                    """
-                    INSERT INTO case_watchlist (address, chain, coin_type, first_seen_utc, discovered_via, source, context)
-                    VALUES (%s, %s, %s, now(), %s, %s, %s);
-                    """,
-                    (entry.address, chain, chain, "api_server.py (manual/API entry)", entry.source or "", entry.context or "")
-                )
-                conn.commit()
+            cur.execute(
+                "SELECT 1 FROM case_wallets WHERE case_id = %s AND lower(address) = lower(%s);",
+                (case_id, entry.address)
+            )
+            if cur.fetchone():
+                return {"added": False, "message": "That address is already in this case."}
 
-    auth.log_action(_auth["username"], "case_watchlist_add", target=entry.address)
+            cur.execute(
+                """
+                INSERT INTO case_wallets (case_id, address, chain, source, context, added_by)
+                VALUES (%s, %s, %s, %s, %s, %s);
+                """,
+                (case_id, entry.address, chain, entry.source or "", entry.context or "", _auth["username"])
+            )
+            conn.commit()
+
+    auth.log_action(_auth["username"], "case_wallet_add", target=entry.address, detail=f"case_id={case_id}")
     return {"added": True}
 
 
-@app.delete("/api/case-watchlist/{address}")
-def delete_case_watchlist_entry(address: str, _auth=Depends(require_write)):
-    with _file_lock:
-        with auth._get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM case_watchlist WHERE lower(address) = lower(%s);", (address,))
-                conn.commit()
-                if cur.rowcount == 0:
-                    raise HTTPException(404, "That address isn't on the shared case watchlist.")
-    auth.log_action(_auth["username"], "case_watchlist_delete", target=address)
+@app.delete("/api/cases/{case_id}/wallets/{address}")
+def delete_case_wallet(case_id: str, address: str, _auth=Depends(require_write)):
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM case_wallets WHERE case_id = %s AND lower(address) = lower(%s);",
+                (case_id, address)
+            )
+            conn.commit()
+            if cur.rowcount == 0:
+                raise HTTPException(404, "That address isn't in this case.")
+    auth.log_action(_auth["username"], "case_wallet_delete", target=address, detail=f"case_id={case_id}")
     return {"deleted": True}
+
 
 
 # ====================================================================
