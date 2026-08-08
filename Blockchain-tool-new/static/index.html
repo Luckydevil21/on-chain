@@ -406,6 +406,7 @@ const SECTIONS = [
   { id: "link-trace", icon: "⇢", label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, group: "Investigate" },
   { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
   { id: "swap-correlation", icon: "⇄", label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
+  { id: "token-risk", icon: "⚠", label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
   { id: "case-watchlist", icon: "▤", label: "Case Watchlist", sub: "Shared list of flagged illicit wallets", adminOnly: false, group: "Case Data" },
   { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
   { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
@@ -789,6 +790,7 @@ function enterApp() {
   renderKnownEntitiesSection();
   renderDepositMapSection();
   renderSwapCorrelationSection();
+  renderTokenRiskSection();
   if (isAdmin()) renderUsersSection();
 
   buildNav();
@@ -1942,6 +1944,82 @@ function renderSwapCorrelationResults(data, container) {
 
   for (const entry of data.deposits_found || []) renderEntry(entry, "deposit");
   for (const entry of data.payouts_found || []) renderEntry(entry, "payout");
+}
+
+// ============================================================
+// TOKEN / CONTRACT RISK CHECK
+// ============================================================
+function renderTokenRiskSection() {
+  const section = el("div", "section", "");
+  section.id = "section-token-risk";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Check a token or contract</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        Checks a Solana SPL token mint or an Ethereum contract for specific, well-understood red flags -
+        mint/freeze authority still active (Solana), or ownership not renounced / upgradeable proxy pattern
+        (Ethereum) - read directly from the chain itself, not a guess or prediction. A clean result does
+        NOT mean a token is safe - it only means these specific mechanisms weren't found. Bitcoin, XRP,
+        and Tron have no equivalent mechanism to check.
+      </div>
+      <div class="field"><label>Token mint or contract address</label><input type="text" id="trAddress" placeholder="Solana SPL mint or Ethereum contract address"></div>
+      <button class="btn" id="trCheck">Check</button>
+    </div>
+    <div class="status-line" id="trStatus"></div>
+    <div id="trResults" class="result-box"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("trCheck").onclick = async () => {
+    const address = document.getElementById("trAddress").value.trim();
+    const statusEl = document.getElementById("trStatus");
+    const resultsEl = document.getElementById("trResults");
+    if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Checking...";
+    statusEl.className = "status-line";
+    resultsEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/token-risk-check", { method: "POST", body: JSON.stringify({ address }) });
+      statusEl.textContent = "";
+      renderTokenRiskResults(data, resultsEl);
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+function renderTokenRiskResults(data, container) {
+  const card = el("div", "card");
+  const hasFlags = data.flags && data.flags.length > 0;
+  let html = `<h3>${hasFlags ? "⚠️ Red flag(s) found" : "✅ No known red flags found"} (${escapeHtml(data.chain)})</h3>`;
+  html += `<div class="footnote" style="margin-bottom:10px;">${escapeHtml(data.message)}</div>`;
+
+  if (hasFlags) {
+    html += `<ul style="margin:0 0 14px; padding-left:20px; color:var(--warn);">` +
+      data.flags.map(f => `<li style="margin-bottom:6px;">${escapeHtml(f)}</li>`).join("") +
+      `</ul>`;
+  }
+
+  let rows = `<tr><td class="label">Address</td><td>${escapeHtml(data.address)}</td></tr>`;
+  if (data.chain === "solana") {
+    rows += `
+      <tr><td class="label">Mint authority</td><td>${data.mint_authority_renounced ? '<span class="pill ok">Renounced</span>' : `<span class="pill flag">Active - ${escapeHtml(data.mint_authority || "")}</span>`}</td></tr>
+      <tr><td class="label">Freeze authority</td><td>${data.freeze_authority_renounced ? '<span class="pill ok">Renounced</span>' : `<span class="pill flag">Active - ${escapeHtml(data.freeze_authority || "")}</span>`}</td></tr>
+      <tr><td class="label">Supply</td><td>${escapeHtml(data.supply || "-")}</td></tr>
+      <tr><td class="label">Decimals</td><td>${escapeHtml(String(data.decimals ?? "-"))}</td></tr>`;
+  } else if (data.chain === "ethereum") {
+    rows += `
+      <tr><td class="label">Ownership</td><td>${
+        data.ownership_check_supported === false ? '<span class="hint">No owner() function detected</span>' :
+        data.ownership_renounced ? '<span class="pill ok">Renounced</span>' : `<span class="pill flag">Not renounced - ${escapeHtml(data.owner_address || "")}</span>`
+      }</td></tr>
+      <tr><td class="label">Upgradeable proxy (EIP-1967)</td><td>${data.is_proxy ? '<span class="pill flag">Yes</span>' : '<span class="pill ok">No</span>'}</td></tr>`;
+  }
+  html += `<table class="legend-table">${rows}</table>`;
+
+  card.innerHTML = html;
+  container.appendChild(card);
 }
 
 // INIT
