@@ -683,12 +683,12 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     evm_chain = req.evm_chain or lt.DEFAULT_EVM_CHAIN
 
     if req.direction == "backward":
-        matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths = lt.trace_backward(
+        matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths, root_high_fanout = lt.trace_backward(
             actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match,
             evm_chain=evm_chain,
         )
     else:
-        matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths = lt.trace_forward(
+        matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths, root_high_fanout = lt.trace_forward(
             actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match,
             seed_hop=seed_hop, evm_chain=evm_chain,
         )
@@ -753,6 +753,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
         "chain": chain,
         "root_known_entity": root_known_entity,
         "seed_hops_capped": seed_hops_capped,
+        "root_high_fanout": root_high_fanout,
         "targets_checked": len(targets),
         "addresses_visited": addresses_visited,
         "matched_paths": [_path_out(path) for path in matched_paths],
