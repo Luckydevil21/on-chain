@@ -3424,11 +3424,19 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
     if victim_chain is None:
         print("[!] The victim wallet doesn't look like a valid Ethereum, Bitcoin, "
               "or XRP address. Please double check it.")
-        return [], [], 0, []
+        return [], [], 0, [], None
 
     found_paths = []
     flagged_end_paths = []
     amount_filtered_paths = []
+    # Set to a dict ONLY if the trace's own ROOT wallet turns out to be
+    # high-fan-out - see the fix below for why this is a single summary
+    # signal rather than enumerating each of its individual outgoing
+    # hops as if they were real findings. A high-volume wallet's
+    # outgoing transactions are essentially unrelated other customers'
+    # activity, not leads connected to this specific case - showing
+    # them individually would be actively misleading, not just noisy.
+    root_high_fanout = None
 
     if seed_hop:
         # seed_hop can be a single hop dict (Ethereum/XRP/Tron - one clear
@@ -3591,24 +3599,18 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
                     # already reported as a flagged trail end above, UNLESS
                     # this is the trace's own ROOT wallet (path_so_far is
                     # empty - no prior hop exists to have triggered that
-                    # report). Without this, a high-fanout root (e.g. a
-                    # major exchange's hot wallet, entered directly as the
-                    # wallet to trace) would have every one of its real
-                    # outgoing hops silently discarded here with NO record
-                    # anywhere - the trace genuinely finds real activity,
-                    # then throws it away, producing an empty result set
-                    # that looks like nothing was found at all. A known
-                    # ENTITY root is deliberately excluded from this fix -
-                    # that case already has its own explanatory banner
-                    # (see api_server.py's root_known_entity) and we still
-                    # don't want to expand into an entity's own huge
-                    # customer base either way.
-                    if not path_so_far and not entity:
-                        short_reason = (
-                            f"high fan-out wallet ({fanout_count}+ distinct counterparties "
-                            f"seen - likely exchange/custodial)"
-                        )
-                        flagged_end_paths.append((new_path, f"Starting wallet itself is a {short_reason}"))
+                    # report). A high-fanout ROOT (e.g. entering a major
+                    # exchange's hot wallet directly as the wallet to
+                    # trace) needs its OWN explanation - but as ONE clear
+                    # summary, not by enumerating each of its outgoing
+                    # hops as if they were real findings connected to this
+                    # case. They aren't: a high-volume wallet's outgoing
+                    # activity is essentially other customers' unrelated
+                    # transactions. A known ENTITY root is deliberately
+                    # excluded here too - that already has its own banner
+                    # (see api_server.py's root_known_entity).
+                    if not path_so_far and not entity and root_high_fanout is None:
+                        root_high_fanout = {"fanout_count": fanout_count, "threshold": HIGH_FANOUT_THRESHOLD}
                     continue
 
                 if counterparty.lower() not in visited:
@@ -3620,7 +3622,7 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
             print("\n  No further un-visited wallets to follow - trail ends here.")
             break
 
-    return found_paths, flagged_end_paths, len(visited), amount_filtered_paths
+    return found_paths, flagged_end_paths, len(visited), amount_filtered_paths, root_high_fanout
 
 
 def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, evm_chain=DEFAULT_EVM_CHAIN):
@@ -3663,11 +3665,12 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
     if start_chain is None:
         print("[!] That wallet doesn't look like a valid Ethereum, Bitcoin, "
               "or XRP address. Please double check it.")
-        return [], [], 0, []
+        return [], [], 0, [], None
 
     matched_paths = []
     trail_end_paths = []
     amount_filtered_paths = []
+    root_high_fanout = None
     visited = {start_wallet.lower()}
     # Each frontier entry: (address, path_so_far_in_chronological_order,
     # tracked_amount, is_post_match) - see trace_forward's matching
@@ -3792,15 +3795,12 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
                 if entity or high_fanout:
                     # Don't expand past a known/likely custodial wallet -
                     # already reported as a flagged trail end above, UNLESS
-                    # this is the trace's own starting wallet (path_so_far
-                    # is empty - see trace_forward's matching fix for the
-                    # full explanation of why this matters).
-                    if not path_so_far and not entity:
-                        short_reason = (
-                            f"high fan-in wallet ({fanout_count}+ distinct counterparties "
-                            f"seen - likely exchange/custodial)"
-                        )
-                        trail_end_paths.append((new_path, f"Starting wallet itself is a {short_reason}"))
+                    # this is the trace's own starting wallet - see
+                    # trace_forward's matching fix for the full
+                    # explanation of why this is ONE summary signal, not
+                    # enumerated individual "findings".
+                    if not path_so_far and not entity and root_high_fanout is None:
+                        root_high_fanout = {"fanout_count": fanout_count, "threshold": HIGH_FANOUT_THRESHOLD}
                     continue
 
                 if counterparty.lower() not in visited:
@@ -3825,7 +3825,7 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
             if path_so_far:
                 trail_end_paths.append((path_so_far, "hop limit reached - trail may continue further back"))
 
-    return matched_paths, trail_end_paths, len(visited), amount_filtered_paths
+    return matched_paths, trail_end_paths, len(visited), amount_filtered_paths, root_high_fanout
 
 
 def print_trail_end_path(path, path_number, reason=None):
@@ -4228,9 +4228,15 @@ def run_forward_trace(victim_wallet, target_wallets_arg, starting_amount=None):
     target_wallets, target_lowercase_set = build_target_set(include_case_watchlist=True)
     print(f"Checking against {len(target_wallets)} illicit-wallet target(s).")
 
-    paths_found, flagged_end_paths, addresses_visited, amount_filtered_paths = trace_forward(
+    paths_found, flagged_end_paths, addresses_visited, amount_filtered_paths, root_high_fanout = trace_forward(
         victim_wallet, target_lowercase_set, MAX_HOPS, starting_amount
     )
+    if root_high_fanout:
+        print(f"\n🔶 The victim wallet itself is a high fan-out wallet "
+              f"({root_high_fanout['fanout_count']}+ distinct counterparties seen) - "
+              f"likely exchange/custodial. Its individual outgoing transactions are not "
+              f"enumerated below, since they're essentially unrelated other customers' "
+              f"activity, not leads connected to this specific trace.")
 
     print("\n" + "=" * 60)
     print("FORWARD TRACE COMPLETE")
@@ -4357,9 +4363,15 @@ def run_backward_trace(illicit_wallet, target_wallets_arg, starting_amount=None)
         print("No source targets given - will report every backward trail found "
               "up to the hop limit (no specific wallet being checked for).")
 
-    matched_paths, trail_end_paths, addresses_visited, amount_filtered_paths = trace_backward(
+    matched_paths, trail_end_paths, addresses_visited, amount_filtered_paths, root_high_fanout = trace_backward(
         illicit_wallet, target_lowercase_set, MAX_HOPS, starting_amount
     )
+    if root_high_fanout:
+        print(f"\n🔶 The starting wallet itself is a high fan-in wallet "
+              f"({root_high_fanout['fanout_count']}+ distinct counterparties seen) - "
+              f"likely exchange/custodial. Its individual incoming transactions are not "
+              f"enumerated below, since they're essentially unrelated other customers' "
+              f"activity, not leads connected to this specific trace.")
 
     print("\n" + "=" * 60)
     print("BACKWARD TRACE COMPLETE")
