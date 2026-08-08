@@ -1306,6 +1306,25 @@ function renderLinkTraceResults(data, meta) {
     container.appendChild(warnCard);
   }
 
+  if (data.root_high_fanout) {
+    const fanoutCard = el("div", "card");
+    fanoutCard.style.borderColor = "var(--warn)";
+    fanoutCard.innerHTML = `
+      <h3 style="color:var(--warn);">⚠️ Starting wallet is a high fan-out/fan-in wallet</h3>
+      <div class="hint">
+        <strong>${escapeHtml(meta.wallet)}</strong> has ${data.root_high_fanout.fanout_count}+ distinct
+        counterparties (threshold: ${data.root_high_fanout.threshold}) - likely an exchange or other custodial
+        wallet. Its individual transactions are NOT listed below: a wallet this busy is essentially other
+        customers' unrelated activity, not leads connected to this specific case, so showing them individually
+        would be misleading rather than useful.
+        <br><br>
+        If you're trying to check whether a CUSTOMER wallet touched this service, trace FROM that customer's
+        wallet instead - the trace will correctly stop and flag it when it reaches this address.
+      </div>
+    `;
+    container.appendChild(fanoutCard);
+  }
+
   if (data.cross_chain_continuation) {
     const infoCard = el("div", "card");
     infoCard.style.borderColor = "var(--entity)";
