@@ -1428,11 +1428,16 @@ function renderEvidencePackCard(traceData, meta, container) {
   card.innerHTML = `
     <h3>📄 Evidence Pack</h3>
     <div class="hint" style="margin-bottom:10px;">
-      Generates a court-ready PDF from the trace above: cover sheet, full methodology (so a third party
-      can independently replicate this trace and check they get the same result), a SHA-256 hash proving
-      the data hasn't changed since capture, and every hop with block-explorer references.
+      Generates a full expert-report-style PDF from the trace above - report particulars, methodology,
+      chain of custody, transaction trail, and a SHA-256 hash proving the data hasn't changed since
+      capture. The declaration and expert conclusions sections are left as templates for you to complete
+      and sign - this tool drafts the factual scaffolding, not your professional judgment.
     </div>
-    <div class="field"><label>Case reference (optional)</label><input type="text" id="epCaseReference" placeholder="e.g. your case/reference number"></div>
+    <div class="field"><label>Case/report reference (optional)</label><input type="text" id="epCaseReference" placeholder="e.g. BTR-2026-001"></div>
+    <div class="field"><label>Instructed by (optional)</label><input type="text" id="epInstructedBy" placeholder="e.g. Smith &amp; Co Solicitors"></div>
+    <div class="field"><label>Analyst name (optional)</label><input type="text" id="epAnalystName" placeholder="Your name"></div>
+    <div class="field"><label>Certification(s) (optional)</label><input type="text" id="epAnalystCert" placeholder="e.g. CDAF, CCI, CCCA"></div>
+    <div class="field"><label>Background / scope of instruction (optional)</label><textarea id="epBackground" rows="3" style="width:100%;" placeholder="Drawn from the instruction letter - what you were asked to investigate"></textarea></div>
     <div class="field">
       <label><input type="checkbox" id="epAnchorBlockchain" style="width:auto; margin-right:6px;">
         Also anchor the hash to the Bitcoin blockchain (via OpenTimestamps) - free, but calls external
@@ -1447,6 +1452,10 @@ function renderEvidencePackCard(traceData, meta, container) {
 
   document.getElementById("epGenerateBtn").onclick = async () => {
     const caseReference = document.getElementById("epCaseReference").value.trim();
+    const instructedBy = document.getElementById("epInstructedBy").value.trim();
+    const analystName = document.getElementById("epAnalystName").value.trim();
+    const analystCert = document.getElementById("epAnalystCert").value.trim();
+    const background = document.getElementById("epBackground").value.trim();
     const anchorToBlockchain = document.getElementById("epAnchorBlockchain").checked;
     const statusEl = document.getElementById("epStatus");
     const resultEl = document.getElementById("epResult");
@@ -1465,6 +1474,10 @@ function renderEvidencePackCard(traceData, meta, container) {
         case_reference: caseReference || null,
         wallet: meta.wallet,
         direction: meta.direction,
+        instructed_by: instructedBy || null,
+        analyst_name: analystName || null,
+        analyst_certification: analystCert || null,
+        background_notes: background || null,
         anchor_to_blockchain: anchorToBlockchain,
       };
       const result = await apiFetch("/api/evidence-pack", { method: "POST", body: JSON.stringify(body) });
