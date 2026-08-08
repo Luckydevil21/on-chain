@@ -921,6 +921,10 @@ function renderLinkTraceSection() {
 
       <div id="modeFieldsWallet" style="display:none;">
         <div class="field"><label>Wallet</label><input type="text" id="ltWallet" placeholder="Victim wallet (forward) or wallet under investigation (backward)"></div>
+        <div class="field"><label>If this is an 0x... address, which EVM chain?</label>
+          <select id="ltEvmChain"><option value="ethereum">Ethereum (default)</option></select>
+          <div class="hint" style="margin-top:4px;">Every EVM chain shares the same 0x... address format - this only matters if you're tracing an address on a chain OTHER than Ethereum mainnet (e.g. Arbitrum, Base). Ignored for Bitcoin/XRP/Tron/Solana addresses.</div>
+        </div>
         <div class="field"><label>Direction</label>
           <div class="radio-row">
             <label><input type="radio" name="ltDirection" value="forward" checked> Forward (follow money OUT)</label>
@@ -976,6 +980,7 @@ function renderLinkTraceSection() {
   `;
   document.getElementById("content").appendChild(section);
   populateCasePicker();
+  populateEvmChainPicker();
 
   document.getElementById("fsCheck").onclick = async () => {
     const raw = document.getElementById("fsAddresses").value;
@@ -1052,6 +1057,7 @@ function renderLinkTraceSection() {
     const amountRaw = document.getElementById("ltAmount").value.trim();
     const exactAmountOnly = document.getElementById("ltExactAmount").checked;
     const selectedCaseId = document.getElementById("ltCaseId").value;
+    const selectedEvmChain = document.getElementById("ltEvmChain").value;
     const continuePastMatch = document.getElementById("ltContinuePastMatch").checked;
     const statusEl = document.getElementById("ltStatus");
     const resultsEl = document.getElementById("ltResults");
@@ -1059,6 +1065,7 @@ function renderLinkTraceSection() {
 
     const body = { wallet, direction, continue_past_match: continuePastMatch };
     if (selectedCaseId) body.case_id = selectedCaseId;
+    if (selectedEvmChain) body.evm_chain = selectedEvmChain;
     if (targetsRaw) body.target_wallets = targetsRaw.split(",").map(s => s.trim()).filter(Boolean);
     if (amountRaw) { body.starting_amount = parseFloat(amountRaw); body.exact_amount_only = exactAmountOnly; }
 
@@ -1175,8 +1182,10 @@ function renderLinkTraceSection() {
     resultsEl.innerHTML = "";
 
     const selectedCaseId = document.getElementById("ltCaseId").value;
+    const selectedEvmChainEl = document.getElementById("ltEvmChain");
     const body = { wallet, direction: "forward", continue_past_match: false };
     if (selectedCaseId) body.case_id = selectedCaseId;
+    if (selectedEvmChainEl && selectedEvmChainEl.value) body.evm_chain = selectedEvmChainEl.value;
     if (seedTxHash) body.seed_tx_hash = seedTxHash;
     if (seedSenderAddress) body.seed_sender_address = seedSenderAddress;
 
@@ -1518,6 +1527,14 @@ function populateCasePicker() {
   apiFetch("/api/cases").then(cases => {
     select.innerHTML = `<option value="">— none —</option>` +
       cases.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${c.wallet_count} wallet${c.wallet_count === 1 ? "" : "s"})</option>`).join("");
+  }).catch(() => {});
+}
+
+function populateEvmChainPicker() {
+  const select = document.getElementById("ltEvmChain");
+  if (!select) return;
+  apiFetch("/api/evm-chains").then(chains => {
+    select.innerHTML = chains.map(c => `<option value="${escapeHtml(c.key)}">${escapeHtml(c.name)}${c.key === "ethereum" ? " (default)" : ""}</option>`).join("");
   }).catch(() => {});
 }
 
@@ -2082,13 +2099,16 @@ function renderTokenRiskSection() {
     <div class="card">
       <h3>Check a token or contract</h3>
       <div class="field hint" style="margin-bottom:14px;">
-        Checks a Solana SPL token mint or an Ethereum contract for specific, well-understood red flags -
+        Checks a Solana SPL token mint or an Ethereum-format contract for specific, well-understood red flags -
         mint/freeze authority still active (Solana), or ownership not renounced / upgradeable proxy pattern
-        (Ethereum) - read directly from the chain itself, not a guess or prediction. A clean result does
+        (EVM chains) - read directly from the chain itself, not a guess or prediction. A clean result does
         NOT mean a token is safe - it only means these specific mechanisms weren't found. Bitcoin, XRP,
         and Tron have no equivalent mechanism to check.
       </div>
-      <div class="field"><label>Token mint or contract address</label><input type="text" id="trAddress" placeholder="Solana SPL mint or Ethereum contract address"></div>
+      <div class="field"><label>Token mint or contract address</label><input type="text" id="trAddress" placeholder="Solana SPL mint or EVM contract address"></div>
+      <div class="field"><label>If this is an 0x... address, which EVM chain?</label>
+        <select id="trEvmChain"><option value="ethereum">Ethereum (default)</option></select>
+      </div>
       <button class="btn" id="trCheck">Check</button>
     </div>
     <div class="status-line" id="trStatus"></div>
@@ -2096,8 +2116,14 @@ function renderTokenRiskSection() {
   `;
   document.getElementById("content").appendChild(section);
 
+  const trChainSelect = document.getElementById("trEvmChain");
+  apiFetch("/api/evm-chains").then(chains => {
+    trChainSelect.innerHTML = chains.map(c => `<option value="${escapeHtml(c.key)}">${escapeHtml(c.name)}${c.key === "ethereum" ? " (default)" : ""}</option>`).join("");
+  }).catch(() => {});
+
   document.getElementById("trCheck").onclick = async () => {
     const address = document.getElementById("trAddress").value.trim();
+    const evmChain = trChainSelect.value;
     const statusEl = document.getElementById("trStatus");
     const resultsEl = document.getElementById("trResults");
     if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
@@ -2105,7 +2131,7 @@ function renderTokenRiskSection() {
     statusEl.className = "status-line";
     resultsEl.innerHTML = "";
     try {
-      const data = await apiFetch("/api/token-risk-check", { method: "POST", body: JSON.stringify({ address }) });
+      const data = await apiFetch("/api/token-risk-check", { method: "POST", body: JSON.stringify({ address, evm_chain: evmChain }) });
       statusEl.textContent = "";
       renderTokenRiskResults(data, resultsEl);
     } catch (err) {
