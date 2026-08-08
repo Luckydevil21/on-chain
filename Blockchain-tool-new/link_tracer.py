@@ -2155,7 +2155,7 @@ def detect_wasabi_coinjoin(tx):
     flagging/reporting code path without needing a parallel one.
     """
     outputs = tx.get("vout", [])
-    if len(outputs) < WASABI_COINJOIN_MIN_EQUAL_OUTPUTS:
+    if len(outputs) <= WASABI_COINJOIN_MIN_EQUAL_OUTPUTS:
         return None
 
     value_counts = {}
@@ -2167,7 +2167,7 @@ def detect_wasabi_coinjoin(tx):
     if not value_counts:
         return None
     most_common_value, most_common_count = max(value_counts.items(), key=lambda item: item[1])
-    if most_common_count < WASABI_COINJOIN_MIN_EQUAL_OUTPUTS:
+    if most_common_count <= WASABI_COINJOIN_MIN_EQUAL_OUTPUTS:
         return None
 
     return {
