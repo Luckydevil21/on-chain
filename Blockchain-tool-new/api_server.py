@@ -639,11 +639,12 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
 
     seed_hop = None
     actual_wallet = req.wallet
+    seed_hops_capped = False
     if req.seed_tx_hash:
         if req.seed_sender_address:
             # Bitcoin path - multiple inputs possible, so the person must
             # confirm which input address is "the sender" for this trace.
-            seed_hops, error_message = lt.build_seed_hops_from_bitcoin_tx(req.seed_tx_hash, req.seed_sender_address)
+            seed_hops, error_message, seed_hops_capped = lt.build_seed_hops_from_bitcoin_tx(req.seed_tx_hash, req.seed_sender_address)
             if error_message:
                 raise HTTPException(400, error_message)
             seed_hop = seed_hops  # a list - trace_forward accepts either a single hop or a list
@@ -749,6 +750,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
         "direction": req.direction,
         "chain": chain,
         "root_known_entity": root_known_entity,
+        "seed_hops_capped": seed_hops_capped,
         "targets_checked": len(targets),
         "addresses_visited": addresses_visited,
         "matched_paths": [_path_out(path) for path in matched_paths],
