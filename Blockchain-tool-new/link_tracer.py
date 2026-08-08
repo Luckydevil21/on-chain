@@ -2457,8 +2457,26 @@ def get_bitcoin_transaction_by_hash(tx_hash):
          "amount": f"{(tx_input.get('prevout') or {}).get('value', 0) / 100_000_000:.8f} BTC"}
         for tx_input in tx.get("vin", [])
     ]
+
+    # Heuristic change detection: an output paying back to one of THIS
+    # transaction's own input addresses is very likely change returning
+    # to the sender, not a genuine payment to someone else. This is a
+    # heuristic, not certain - a CoinJoin-style transaction can have
+    # multiple legitimate self-outputs, and a real payment could in rare
+    # cases coincidentally go to a co-owned address. Flagged clearly as
+    # "is_change" rather than silently hidden, so the investigator can
+    # judge it themselves.
+    input_addresses_lower = {
+        (tx_input.get("prevout") or {}).get("scriptpubkey_address", "").lower()
+        for tx_input in tx.get("vin", [])
+        if (tx_input.get("prevout") or {}).get("scriptpubkey_address")
+    }
     outputs = [
-        {"address": output.get("scriptpubkey_address"), "amount": f"{output.get('value', 0) / 100_000_000:.8f} BTC"}
+        {
+            "address": output.get("scriptpubkey_address"),
+            "amount": f"{output.get('value', 0) / 100_000_000:.8f} BTC",
+            "is_change": bool(output.get("scriptpubkey_address")) and output.get("scriptpubkey_address", "").lower() in input_addresses_lower,
+        }
         for output in tx.get("vout", [])
     ]
     total_btc = sum(output.get("value", 0) for output in tx.get("vout", [])) / 100_000_000
