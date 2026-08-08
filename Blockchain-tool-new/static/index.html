@@ -1120,9 +1120,9 @@ function renderLinkTraceSection() {
           <table class="data-table" style="margin-top:6px;"><tr><th>Address</th><th>Amount</th></tr>` +
           data.inputs.map(i => `<tr><td>${escapeHtml(i.address || "(none)")}${i.address ? saveEntityButtonHtml(i.address) : ""}</td><td>${escapeHtml(i.amount)}</td></tr>`).join("") +
           `</table>
-          <div class="footnote" style="margin-top:12px;">Outputs (${data.outputs.length}):</div>
+          <div class="footnote" style="margin-top:12px;">Outputs (${data.outputs.length}) - outputs highlighted in blue pay back to one of this transaction's own inputs, so are likely change returning to the sender rather than a genuine payment (heuristic, not certain):</div>
           <table class="data-table" style="margin-top:6px;"><tr><th>Address</th><th>Amount</th></tr>` +
-          data.outputs.map(o => `<tr><td>${escapeHtml(o.address || "(none)")}${o.address ? saveEntityButtonHtml(o.address) : ""}</td><td>${escapeHtml(o.amount)}</td></tr>`).join("") +
+          data.outputs.map(o => `<tr style="${o.is_change ? "background:var(--accent-bg);" : ""}"><td>${escapeHtml(o.address || "(none)")}${o.is_change ? ' <span class="pill" style="background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent);">Change</span>' : ""}${o.address ? saveEntityButtonHtml(o.address) : ""}</td><td>${escapeHtml(o.amount)}</td></tr>`).join("") +
           `</table>`;
       }
       card.innerHTML = html;
