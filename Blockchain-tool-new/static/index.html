@@ -1319,6 +1319,21 @@ function renderLinkTraceResults(data, meta) {
     container.appendChild(infoCard);
   }
 
+  if (data.seed_hops_capped) {
+    const capCard = el("div", "card");
+    capCard.style.borderColor = "var(--warn)";
+    capCard.innerHTML = `
+      <h3 style="color:var(--warn);">⚠️ Some outputs of this transaction were not traced</h3>
+      <div class="hint">
+        The seeded transaction paid out to more addresses than this trace follows per hop - only the first
+        set are shown below. This does not affect the accuracy of what IS shown, only its completeness for
+        this specific transaction. Check the transaction directly on a block explorer if you need every
+        recipient.
+      </div>
+    `;
+    container.appendChild(capCard);
+  }
+
   const allPaths = [...data.matched_paths, ...data.flagged_end_paths.map(p => p), ...data.amount_filtered_paths.map(p => p)];
   if (!allPaths.length) {
     container.innerHTML += `<div class="empty-state">No on-chain activity found within the hop limit. This does not rule out a link - see the tool's documented limitations (exchanges, mixers, and cross-chain bridges all break a simple on-chain trail).</div>`;
