@@ -274,8 +274,8 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <h1>On-Chain Investigations</h1>
     <p class="landing-lede">
-      A blockchain forensics toolkit for tracing cryptocurrency and building court-ready
-      evidence - built for investigators, solicitors and law enforcement. Covers Ethereum,
+      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
+      evidence - built for investigators working with law enforcement. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
     <div class="landing-grid">
@@ -1166,45 +1166,6 @@ function renderLinkTraceSection() {
     }
   }
 
-  async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress) {
-    // Switch the UI over to wallet-search mode and pre-fill it, so the
-    // person can see/adjust direction, targets, amount filter etc. before
-    // running - not a silent black-box trace.
-    document.querySelector('input[name="searchMode"][value="wallet"]').checked = true;
-    document.getElementById("modeFieldsWallet").style.display = "block";
-    document.getElementById("modeFieldsTxHash").style.display = "none";
-    document.getElementById("modeFieldsWalletDate").style.display = "none";
-    document.getElementById("ltWallet").value = wallet;
-    document.querySelector('input[name="ltDirection"][value="forward"]').checked = true;
-
-    const statusEl = document.getElementById("ltStatus");
-    const resultsEl = document.getElementById("ltResults");
-    statusEl.textContent = seedTxHash
-      ? "Tracing from this exact transaction... this can take a while."
-      : "Tracing... this can take a while.";
-    statusEl.className = "status-line";
-    resultsEl.innerHTML = "";
-
-    const selectedCaseId = document.getElementById("ltCaseId").value;
-    const selectedEvmChainEl = document.getElementById("ltEvmChain");
-    const body = { wallet, direction: "forward", continue_past_match: false };
-    if (selectedCaseId) body.case_id = selectedCaseId;
-    if (selectedEvmChainEl && selectedEvmChainEl.value) body.evm_chain = selectedEvmChainEl.value;
-    if (seedTxHash) body.seed_tx_hash = seedTxHash;
-    if (seedSenderAddress) body.seed_sender_address = seedSenderAddress;
-
-    try {
-      const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
-      lastResults.linkTrace = data;
-      lastResults.linkTraceMeta = { wallet, direction: "forward" };
-      statusEl.textContent = `${data.addresses_visited} wallet(s) visited. ${data.matched_paths.length} direct link(s) found.`;
-      renderLinkTraceResults(data, lastResults.linkTraceMeta);
-    } catch (err) {
-      statusEl.textContent = "Error: " + err.message;
-      statusEl.className = "status-line error";
-    }
-  }
-
   async function runWalletDateSearch() {
     const address = document.getElementById("dsAddress").value.trim();
     const datetimeLocal = document.getElementById("dsDatetime").value;
@@ -1245,6 +1206,48 @@ function renderLinkTraceSection() {
       statusEl.textContent = "Error: " + err.message;
       statusEl.className = "status-line error";
     }
+  }
+}
+
+async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress) {
+  // Switch the UI over to wallet-search mode and pre-fill it, so the
+  // person can see/adjust direction, targets, amount filter etc. before
+  // running - not a silent black-box trace. Top-level (not nested inside
+  // renderLinkTraceSection) so buttons defined elsewhere - e.g. the
+  // embedded-destination "trace forward on X from here" button inside
+  // renderLinkTraceResults - can actually call it.
+  document.querySelector('input[name="searchMode"][value="wallet"]').checked = true;
+  document.getElementById("modeFieldsWallet").style.display = "block";
+  document.getElementById("modeFieldsTxHash").style.display = "none";
+  document.getElementById("modeFieldsWalletDate").style.display = "none";
+  document.getElementById("ltWallet").value = wallet;
+  document.querySelector('input[name="ltDirection"][value="forward"]').checked = true;
+
+  const statusEl = document.getElementById("ltStatus");
+  const resultsEl = document.getElementById("ltResults");
+  statusEl.textContent = seedTxHash
+    ? "Tracing from this exact transaction... this can take a while."
+    : "Tracing... this can take a while.";
+  statusEl.className = "status-line";
+  resultsEl.innerHTML = "";
+
+  const selectedCaseId = document.getElementById("ltCaseId").value;
+  const selectedEvmChainEl = document.getElementById("ltEvmChain");
+  const body = { wallet, direction: "forward", continue_past_match: false };
+  if (selectedCaseId) body.case_id = selectedCaseId;
+  if (selectedEvmChainEl && selectedEvmChainEl.value) body.evm_chain = selectedEvmChainEl.value;
+  if (seedTxHash) body.seed_tx_hash = seedTxHash;
+  if (seedSenderAddress) body.seed_sender_address = seedSenderAddress;
+
+  try {
+    const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+    lastResults.linkTrace = data;
+    lastResults.linkTraceMeta = { wallet, direction: "forward" };
+    statusEl.textContent = `${data.addresses_visited} wallet(s) visited. ${data.matched_paths.length} direct link(s) found.`;
+    renderLinkTraceResults(data, lastResults.linkTraceMeta);
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    statusEl.className = "status-line error";
   }
 }
 
