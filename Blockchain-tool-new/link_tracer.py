@@ -149,12 +149,130 @@ EVM_CHAINS = {
 }
 DEFAULT_EVM_CHAIN = "ethereum"
 
+# --------------------------------------------------------------
+# TRACKED ERC-20 TOKENS. The Ethereum/EVM native-currency tracing above
+# only ever saw ETH/AVAX/etc. movements - not token transfers (USDT,
+# USDC), which is how most real value actually moves on these chains,
+# especially through exchange wallets. This registry adds that
+# coverage, deliberately scoped to well-known STABLECOINS with
+# INDEPENDENTLY VERIFIED contract addresses only - never trusted by a
+# transfer's claimed token symbol/name alone, since anyone can deploy a
+# scam contract that calls itself "USDT" or "USDC" to deceive. Only
+# these specific, confirmed addresses are ever treated as the real
+# thing - same scoping discipline as Tron's USDT-TRC20-only coverage
+# elsewhere in this file.
+#
+# HONEST GAP: only Ethereum mainnet and Arbitrum are populated so far -
+# verifying every stablecoin variant across all 9 registered EVM chains
+# properly (not guessing) is a larger research task than fits here.
+# ERC-20 tracing on the other chains (Optimism, Base, Avalanche,
+# Fantom, Cronos, opBNB, zkSync) currently finds nothing - native
+# currency tracing there is unaffected either way.
+# --------------------------------------------------------------
+TRACKED_ERC20_TOKENS = {
+    "ethereum": {
+        "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
+    },
+    "arbitrum": {
+        "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "USDC",    # Circle-issued native USDC (Arbiscan-confirmed)
+        "0xff970a61a04b1ca14834a43f5de4533ebddb5cc8": "USDC.e",  # bridged/legacy USDC - a DIFFERENT token, kept distinct
+        "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9": "USDT0",   # Arbitrum's USDT0 - a separate, 1:1-backed bridged
+                                                                   # representation of USDT, NOT the original Tether
+                                                                   # contract - labeled distinctly for accuracy
+    },
+}
+
 
 def _resolve_evm_chain(evm_chain):
     """Returns (chainid_str, explorer_base_url, native_symbol) for a given
     evm_chain key, falling back to Ethereum mainnet for anything unrecognized."""
     entry = EVM_CHAINS.get(evm_chain or DEFAULT_EVM_CHAIN, EVM_CHAINS[DEFAULT_EVM_CHAIN])
     return entry["chainid"], entry["explorer"], entry["native_symbol"]
+
+
+def _get_erc20_transfers(address, evm_chain, direction):
+    """
+    PLAIN ENGLISH: Fetches ERC-20 TOKEN transfers (not native currency)
+    for an address on a given EVM chain, via Etherscan's tokentx
+    action - filtered to ONLY the specific, verified contract addresses
+    in TRACKED_ERC20_TOKENS (see that registry's own docstring for why
+    this matters). direction: "outgoing" or "incoming". Returns the
+    same (results, unique_counterparty_count) shape as the native
+    fetchers, so it can be merged directly into their output.
+    """
+    tracked = TRACKED_ERC20_TOKENS.get(evm_chain, {})
+    if not tracked:
+        return [], 0
+
+    chainid, explorer_base, _native_symbol = _resolve_evm_chain(evm_chain)
+    url = "https://api.etherscan.io/v2/api"
+    per_page = 1000
+    all_txs = []
+
+    for page_number in range(1, ETHEREUM_TRACE_MAX_PAGES + 1):
+        params = {
+            "chainid": chainid, "module": "account", "action": "tokentx",
+            "address": address, "sort": "desc", "apikey": ETHERSCAN_API_KEY,
+            "page": page_number, "offset": per_page,
+        }
+        try:
+            response = requests.get(url, params=params, timeout=15)
+            data = response.json()
+        except requests.exceptions.RequestException as error:
+            print(f"    ⚠️  Could not reach Etherscan (token transfers): {error}")
+            break
+
+        if data.get("status") != "1":
+            if data.get("message") != "No transactions found":
+                print(f"    ⚠️  Etherscan error (token transfers): {data.get('message')}")
+            break
+
+        page = data.get("result", [])
+        all_txs.extend(page)
+        if len(page) < per_page:
+            break
+        time.sleep(SECONDS_BETWEEN_REQUESTS)
+
+    results = []
+    unique_counterparties = set()
+    for tx in all_txs:
+        contract = (tx.get("contractAddress") or "").lower()
+        symbol = tracked.get(contract)
+        if not symbol:
+            continue  # not one of our verified, tracked tokens - skip (spam/unrelated token noise)
+
+        tx_from, tx_to = tx.get("from", ""), tx.get("to", "")
+        if direction == "outgoing":
+            if tx_from.lower() != address.lower():
+                continue
+            counterparty = tx_to
+        else:
+            if tx_to.lower() != address.lower():
+                continue
+            counterparty = tx_from
+        if not counterparty:
+            continue
+
+        unique_counterparties.add(counterparty.lower())
+        if len(results) >= MAX_FANOUT_PER_HOP:
+            continue
+
+        try:
+            decimals = int(tx.get("tokenDecimal", 6))
+            amount = int(tx.get("value", 0)) / (10 ** decimals)
+        except (TypeError, ValueError):
+            amount = 0.0
+
+        results.append({
+            "counterparty": counterparty,
+            "tx_hash": tx.get("hash"),
+            "tx_time": datetime.fromtimestamp(int(tx["timeStamp"]), tz=timezone.utc),
+            "amount_label": f"{amount:.6f} {symbol}",
+            "explorer_url": f"{explorer_base}/tx/{tx.get('hash')}",
+        })
+    return results, len(unique_counterparties)
+
 XRPL_RPC_URL = "https://s1.ripple.com:51234"
 
 # --------------------------------------------------------------
@@ -659,6 +777,15 @@ def get_outgoing_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
         if pattern_match:
             hop_info["pattern_match"] = pattern_match
         results.append(hop_info)
+
+    # Merge in verified stablecoin transfers (see TRACKED_ERC20_TOKENS) -
+    # most real value on these chains moves as tokens, not native
+    # currency, so native-only tracing was missing the bulk of activity
+    # for wallets like exchange hot wallets.
+    token_results, token_unique_count = _get_erc20_transfers(address, evm_chain, "outgoing")
+    results.extend(token_results)
+    unique_counterparties |= {r["counterparty"].lower() for r in token_results}
+
     return results, len(unique_counterparties)
 
 
@@ -1146,6 +1273,11 @@ def get_incoming_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
         if pattern_match:
             hop_info["pattern_match"] = pattern_match
         results.append(hop_info)
+
+    token_results, token_unique_count = _get_erc20_transfers(address, evm_chain, "incoming")
+    results.extend(token_results)
+    unique_counterparties |= {r["counterparty"].lower() for r in token_results}
+
     return results, len(unique_counterparties)
 
 
