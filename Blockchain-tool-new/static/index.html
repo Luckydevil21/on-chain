@@ -407,7 +407,7 @@ const SECTIONS = [
   { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
   { id: "swap-correlation", icon: "⇄", label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
   { id: "token-risk", icon: "⚠", label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
-  { id: "case-watchlist", icon: "▤", label: "Case Watchlist", sub: "Shared list of flagged illicit wallets", adminOnly: false, group: "Case Data" },
+  { id: "saved-cases", icon: "▤", label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, group: "Case Data" },
   { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
   { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
 ];
@@ -480,7 +480,7 @@ function switchSection(id) {
   document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
   document.getElementById("section-" + id).classList.add("active");
   // These sections show live server data - refresh every time the tab opens.
-  if (id === "case-watchlist") loadCaseWatchlist();
+  if (id === "saved-cases") loadCases();
   if (id === "known-entities") loadKnownEntities();
   if (id === "deposit-map") loadDepositMap();
   if (id === "users") loadUsers();
@@ -786,7 +786,7 @@ function enterApp() {
   const contentEl = document.getElementById("content");
   contentEl.innerHTML = "";
   renderLinkTraceSection();
-  renderCaseWatchlistSection();
+  renderSavedCasesSection();
   renderKnownEntitiesSection();
   renderDepositMapSection();
   renderSwapCorrelationSection();
@@ -928,9 +928,11 @@ function renderLinkTraceSection() {
           </div>
         </div>
         <div class="field"><label>Extra target wallet(s) (optional, comma separated)</label><input type="text" id="ltTargets"></div>
+        <div class="field"><label>Also check against a saved case's wallets (optional)</label>
+          <select id="ltCaseId"><option value="">— none —</option></select>
+        </div>
         <div class="field"><label>Starting amount for amount-filtering (optional)</label><input type="text" id="ltAmount"></div>
         <div class="field"><label><input type="checkbox" id="ltExactAmount" style="width:auto; margin-right:6px;"> Exact amount only (no 10%-105% fuzzy band - only follows an almost-exact match, e.g. if you know the specific stolen sum)</label></div>
-        <div class="field"><label><input type="checkbox" id="ltIncludeWatchlist" checked style="width:auto; margin-right:6px;"> Include shared case watchlist as targets</label></div>
         <div class="field"><label><input type="checkbox" id="ltContinuePastMatch" style="width:auto; margin-right:6px;"> Continue tracing past a matched target (see what that wallet did next, instead of stopping there)</label></div>
       </div>
 
@@ -973,6 +975,7 @@ function renderLinkTraceSection() {
     <div id="fsResults" class="result-box"></div>
   `;
   document.getElementById("content").appendChild(section);
+  populateCasePicker();
 
   document.getElementById("fsCheck").onclick = async () => {
     const raw = document.getElementById("fsAddresses").value;
@@ -1048,13 +1051,14 @@ function renderLinkTraceSection() {
     const targetsRaw = document.getElementById("ltTargets").value.trim();
     const amountRaw = document.getElementById("ltAmount").value.trim();
     const exactAmountOnly = document.getElementById("ltExactAmount").checked;
-    const includeWatchlist = document.getElementById("ltIncludeWatchlist").checked;
+    const selectedCaseId = document.getElementById("ltCaseId").value;
     const continuePastMatch = document.getElementById("ltContinuePastMatch").checked;
     const statusEl = document.getElementById("ltStatus");
     const resultsEl = document.getElementById("ltResults");
     if (!wallet) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
 
-    const body = { wallet, direction, include_case_watchlist: includeWatchlist, continue_past_match: continuePastMatch };
+    const body = { wallet, direction, continue_past_match: continuePastMatch };
+    if (selectedCaseId) body.case_id = selectedCaseId;
     if (targetsRaw) body.target_wallets = targetsRaw.split(",").map(s => s.trim()).filter(Boolean);
     if (amountRaw) { body.starting_amount = parseFloat(amountRaw); body.exact_amount_only = exactAmountOnly; }
 
@@ -1170,8 +1174,9 @@ function renderLinkTraceSection() {
     statusEl.className = "status-line";
     resultsEl.innerHTML = "";
 
-    const includeWatchlist = document.getElementById("ltIncludeWatchlist").checked;
-    const body = { wallet, direction: "forward", include_case_watchlist: includeWatchlist, continue_past_match: false };
+    const selectedCaseId = document.getElementById("ltCaseId").value;
+    const body = { wallet, direction: "forward", continue_past_match: false };
+    if (selectedCaseId) body.case_id = selectedCaseId;
     if (seedTxHash) body.seed_tx_hash = seedTxHash;
     if (seedSenderAddress) body.seed_sender_address = seedSenderAddress;
 
@@ -1485,61 +1490,164 @@ function makeArrow(amount, dateLabel, heuristic) {
 }
 
 // ============================================================
-// CASE WATCHLIST
+// SAVED CASES
 // ============================================================
-function renderCaseWatchlistSection() {
+const savedCasesState = { openCaseId: null };
+
+function populateCasePicker() {
+  const select = document.getElementById("ltCaseId");
+  if (!select) return;
+  apiFetch("/api/cases").then(cases => {
+    select.innerHTML = `<option value="">— none —</option>` +
+      cases.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${c.wallet_count} wallet${c.wallet_count === 1 ? "" : "s"})</option>`).join("");
+  }).catch(() => {});
+}
+
+function renderSavedCasesSection() {
   const section = el("div", "section", "");
-  section.id = "section-case-watchlist";
+  section.id = "section-saved-cases";
   section.innerHTML = `
     ${isAdmin() ? `<div class="card">
-      <h3>Add a wallet</h3>
-      <div class="field"><label>Address</label><input type="text" id="cwAddress"></div>
-      <div class="field"><label>Source (optional)</label><input type="text" id="cwSource"></div>
-      <div class="field"><label>Context (optional)</label><input type="text" id="cwContext"></div>
-      <button class="btn" id="cwAdd">Add to watchlist</button>
+      <h3>New case</h3>
+      <div class="field"><label>Case name</label><input type="text" id="caseNewName" placeholder="e.g. Smith v. Jones fraud investigation"></div>
+      <div class="field"><label>Notes (optional)</label><input type="text" id="caseNewNotes"></div>
+      <button class="btn" id="caseCreateBtn">Create case</button>
     </div>
-    <div class="status-line" id="cwStatus"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
-    <div class="card"><h3>Shared case watchlist</h3><div id="cwList"></div></div>
+    <div class="status-line" id="caseCreateStatus"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
+    <div id="casesListView">
+      <div class="card"><h3>Your saved cases</h3><div id="casesList"></div></div>
+    </div>
+    <div id="caseDetailView" style="display:none;"></div>
   `;
   document.getElementById("content").appendChild(section);
 
   if (isAdmin()) {
-    document.getElementById("cwAdd").onclick = async () => {
-      const address = document.getElementById("cwAddress").value.trim();
-      const source = document.getElementById("cwSource").value.trim();
-      const context = document.getElementById("cwContext").value.trim();
-      const statusEl = document.getElementById("cwStatus");
-      if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+    document.getElementById("caseCreateBtn").onclick = async () => {
+      const name = document.getElementById("caseNewName").value.trim();
+      const notes = document.getElementById("caseNewNotes").value.trim();
+      const statusEl = document.getElementById("caseCreateStatus");
+      if (!name) { statusEl.textContent = "Enter a case name first."; statusEl.className = "status-line error"; return; }
       try {
-        const r = await apiFetch("/api/case-watchlist", { method: "POST", body: JSON.stringify({ address, source, context }) });
-        statusEl.textContent = r.added ? "Added." : (r.message || "Already on the watchlist.");
+        await apiFetch("/api/cases", { method: "POST", body: JSON.stringify({ name, notes }) });
+        statusEl.textContent = "Case created.";
         statusEl.className = "status-line";
-        document.getElementById("cwAddress").value = "";
-        loadCaseWatchlist();
+        document.getElementById("caseNewName").value = "";
+        document.getElementById("caseNewNotes").value = "";
+        loadCases();
+        populateCasePicker();
       } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
     };
   }
 }
-async function loadCaseWatchlist() {
-  const listEl = document.getElementById("cwList");
+
+async function loadCases() {
+  const listEl = document.getElementById("casesList");
   if (!listEl) return;
   try {
-    const entries = await apiFetch("/api/case-watchlist");
+    const cases = await apiFetch("/api/cases");
     listEl.innerHTML = "";
-    if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No addresses on the shared watchlist yet.</div>`; return; }
+    if (!cases.length) { listEl.innerHTML = `<div class="empty-state">No saved cases yet - create one above to start grouping wallets together.</div>`; return; }
     const table = el("table", "data-table");
-    table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>First seen</th><th>Source</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
-      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.chain)}</td><td>${escapeHtml(e.first_seen_utc)}</td><td>${escapeHtml(e.source || "")}</td>
-       ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCaseWatchlistEntry('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
+    table.innerHTML = `<tr><th>Name</th><th>Wallets</th><th>Created by</th><th>Created</th><th></th></tr>` + cases.map(c =>
+      `<tr>
+        <td><a href="#" onclick="openCase('${escapeHtml(c.id)}'); return false;">${escapeHtml(c.name)}</a></td>
+        <td>${c.wallet_count}</td>
+        <td>${escapeHtml(c.created_by)}</td>
+        <td>${escapeHtml(c.created_at || "")}</td>
+        <td>${isAdmin() ? `<button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCase('${escapeHtml(c.id)}')">Delete</button>` : ""}</td>
+      </tr>`
     ).join("");
     listEl.appendChild(table);
   } catch (err) {
     listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
   }
 }
-async function deleteCaseWatchlistEntry(address) {
-  await apiFetch("/api/case-watchlist/" + encodeURIComponent(address), { method: "DELETE" });
-  loadCaseWatchlist();
+
+async function deleteCase(caseId) {
+  if (!confirm("Delete this case and every wallet saved under it? This can't be undone.")) return;
+  await apiFetch("/api/cases/" + encodeURIComponent(caseId), { method: "DELETE" });
+  loadCases();
+  populateCasePicker();
+}
+
+async function openCase(caseId) {
+  savedCasesState.openCaseId = caseId;
+  document.getElementById("casesListView").style.display = "none";
+  const detailView = document.getElementById("caseDetailView");
+  detailView.style.display = "block";
+  detailView.innerHTML = `<div class="empty-state">Loading...</div>`;
+
+  try {
+    const caseData = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
+    detailView.innerHTML = `
+      <button class="btn secondary" id="caseBackBtn" style="margin-bottom:14px;">← All cases</button>
+      <div class="card">
+        <h3>${escapeHtml(caseData.name)}</h3>
+        ${caseData.notes ? `<div class="hint" style="margin-bottom:10px;">${escapeHtml(caseData.notes)}</div>` : ""}
+        <div class="footnote">Created by ${escapeHtml(caseData.created_by)} on ${escapeHtml(caseData.created_at || "")}</div>
+      </div>
+      ${isAdmin() ? `<div class="card">
+        <h3>Add a wallet to this case</h3>
+        <div class="field"><label>Address</label><input type="text" id="cwAddress"></div>
+        <div class="field"><label>Source (optional)</label><input type="text" id="cwSource"></div>
+        <div class="field"><label>Context (optional)</label><input type="text" id="cwContext"></div>
+        <button class="btn" id="cwAdd">Add wallet</button>
+      </div>
+      <div class="status-line" id="cwStatus"></div>` : ""}
+      <div class="card"><h3>Wallets in this case</h3><div id="cwList"></div></div>
+    `;
+
+    document.getElementById("caseBackBtn").onclick = () => {
+      detailView.style.display = "none";
+      document.getElementById("casesListView").style.display = "block";
+      savedCasesState.openCaseId = null;
+    };
+
+    renderCaseWalletsTable(caseData.wallets);
+
+    if (isAdmin()) {
+      document.getElementById("cwAdd").onclick = async () => {
+        const address = document.getElementById("cwAddress").value.trim();
+        const source = document.getElementById("cwSource").value.trim();
+        const context = document.getElementById("cwContext").value.trim();
+        const statusEl = document.getElementById("cwStatus");
+        if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+        try {
+          const r = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/wallets`, { method: "POST", body: JSON.stringify({ address, source, context }) });
+          statusEl.textContent = r.added ? "Added." : (r.message || "Already in this case.");
+          statusEl.className = "status-line";
+          document.getElementById("cwAddress").value = "";
+          const refreshed = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
+          renderCaseWalletsTable(refreshed.wallets);
+          populateCasePicker();
+        } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
+      };
+    }
+  } catch (err) {
+    detailView.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderCaseWalletsTable(wallets) {
+  const listEl = document.getElementById("cwList");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  if (!wallets.length) { listEl.innerHTML = `<div class="empty-state">No wallets in this case yet.</div>`; return; }
+  const table = el("table", "data-table");
+  table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>Added</th><th>Source</th>${isAdmin() ? "<th></th>" : ""}</tr>` + wallets.map(w =>
+    `<tr><td>${escapeHtml(w.address)}</td><td>${escapeHtml(w.chain || "")}</td><td>${escapeHtml(w.added_at || "")}</td><td>${escapeHtml(w.source || "")}</td>
+     ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCaseWallet('${escapeHtml(w.address)}')">Remove</button></td>` : ""}</tr>`
+  ).join("");
+  listEl.appendChild(table);
+}
+
+async function deleteCaseWallet(address) {
+  const caseId = savedCasesState.openCaseId;
+  if (!caseId) return;
+  await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/wallets/${encodeURIComponent(address)}`, { method: "DELETE" });
+  const refreshed = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
+  renderCaseWalletsTable(refreshed.wallets);
+  populateCasePicker();
 }
 
 // ============================================================
