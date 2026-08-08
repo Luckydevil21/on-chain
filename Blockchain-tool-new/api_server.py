@@ -555,6 +555,7 @@ def _hop_out(hop):
         "from_known_entity": lt.check_known_entity(hop["from"]),
         "to_known_entity": lt.check_known_entity(hop["to"]),
         "is_change": hop.get("is_change", False),
+        "change_confidence": hop.get("change_confidence"),
     }
     if pattern_match:
         output["matched_pattern"] = {
