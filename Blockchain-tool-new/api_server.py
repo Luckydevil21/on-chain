@@ -1084,6 +1084,10 @@ class CreateEvidencePackRequest(BaseModel):
                     "- with it off, the evidence is still SHA-256 hashed and timestamped, just relying on "
                     "this app's own database record rather than an externally-verifiable Bitcoin proof.",
     )
+    instructed_by: Optional[str] = Field(default=None, description="Optional - instructing solicitor/client name, shown on the report cover.")
+    analyst_name: Optional[str] = Field(default=None, description="Optional - your name, shown in the declaration section you'll sign.")
+    analyst_certification: Optional[str] = Field(default=None, description="Optional - your certification(s), e.g. 'CDAF, CCI, CCCA'.")
+    background_notes: Optional[str] = Field(default=None, description="Optional - background/scope of instruction text for the report.")
 
 
 @app.post("/api/evidence-pack")
@@ -1091,7 +1095,11 @@ def create_evidence_pack_endpoint(req: CreateEvidencePackRequest, _auth=Depends(
     try:
         result = evidence_pack.create_evidence_pack(
             _auth["username"], req.trace_data, req.case_reference,
-            extra_methodology={"wallet": req.wallet, "direction": req.direction},
+            extra_methodology={
+                "wallet": req.wallet, "direction": req.direction,
+                "instructed_by": req.instructed_by, "analyst_name": req.analyst_name,
+                "analyst_certification": req.analyst_certification, "background_notes": req.background_notes,
+            },
             anchor_to_blockchain=req.anchor_to_blockchain,
         )
     except RuntimeError as error:
