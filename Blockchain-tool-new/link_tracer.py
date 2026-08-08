@@ -873,6 +873,71 @@ def _solana_rpc_call(method, params):
     return None
 
 
+# ====================================================================
+# TOKEN/CONTRACT RISK CHECK - real, verifiable on-chain red flags for
+# a Solana SPL token mint or an Ethereum contract, checked directly
+# against the chain itself - NOT a prediction, NOT a guarantee of
+# safety, just factual answers to specific, well-understood questions
+# (does the creator still hold the ability to mint unlimited new
+# tokens? freeze anyone's holdings? change the contract's logic after
+# launch?). A "clean" result here does NOT mean a token/contract is
+# safe - it only means these SPECIFIC checks didn't find these
+# SPECIFIC known red flags. Many scams don't rely on any of these
+# mechanisms at all.
+# ====================================================================
+
+def check_solana_token_risk(mint_address):
+    """
+    PLAIN ENGLISH: Checks a Solana SPL token's mint account for the
+    two most common "rug pull" mechanisms:
+      - MINT AUTHORITY: if still present (not null), the holder can
+        create unlimited new tokens at will, diluting/destroying value
+        whenever they choose.
+      - FREEZE AUTHORITY: if still present, the holder can freeze
+        ANY wallet's tokens, preventing them from ever selling.
+    Both being null ("renounced") is the normal, expected state for a
+    legitimate token past its initial setup. Returns a dict with the
+    raw findings and a plain-English flags list, or an error message
+    if the address isn't a valid/found SPL mint.
+    """
+    result = _solana_rpc_call("getAccountInfo", [mint_address, {"encoding": "jsonParsed"}])
+    if not result or not result.get("value"):
+        return {"found": False, "message": "No account found at that address on Solana - check it's correct."}
+
+    account_data = result["value"].get("data", {})
+    parsed = account_data.get("parsed", {}) if isinstance(account_data, dict) else {}
+    if parsed.get("type") != "mint":
+        return {"found": False, "message": "This address exists on Solana but isn't an SPL token mint account."}
+
+    info = parsed.get("info", {})
+    mint_authority = info.get("mintAuthority")
+    freeze_authority = info.get("freezeAuthority")
+
+    flags = []
+    if mint_authority:
+        flags.append(f"Mint authority is still active ({mint_authority}) - the holder can create unlimited new tokens at any time.")
+    if freeze_authority:
+        flags.append(f"Freeze authority is still active ({freeze_authority}) - the holder can freeze any wallet's tokens at any time.")
+
+    return {
+        "found": True,
+        "chain": "solana",
+        "address": mint_address,
+        "mint_authority": mint_authority,
+        "mint_authority_renounced": mint_authority is None,
+        "freeze_authority": freeze_authority,
+        "freeze_authority_renounced": freeze_authority is None,
+        "supply": info.get("supply"),
+        "decimals": info.get("decimals"),
+        "flags": flags,
+        "message": (
+            "No red flags found among the checks performed - this does NOT mean the token is safe, "
+            "only that these specific mechanisms aren't present." if not flags else
+            f"{len(flags)} red flag(s) found - see above."
+        ),
+    }
+
+
 def _get_solana_signatures(address, limit):
     all_signatures = []
     before = None
@@ -2390,6 +2455,82 @@ def get_bitcoin_transaction_by_hash(tx_hash):
     if pattern_match:
         output_dict["pattern_match"] = pattern_match
     return output_dict
+
+
+def check_ethereum_contract_risk(contract_address):
+    """
+    PLAIN ENGLISH: Checks an Ethereum contract for two well-understood,
+    verifiable red flags:
+      - OWNERSHIP NOT RENOUNCED: many token/contract templates include
+        an "owner" with special privileges (pausing transfers, minting,
+        changing fees, blacklisting addresses). If that owner is still
+        a real address (not the zero address / renounced), that
+        privilege still exists and could be used at any time.
+      - UPGRADEABLE PROXY PATTERN (EIP-1967): if the contract is a
+        proxy, its actual logic can be swapped out by whoever controls
+        the upgrade - meaning the contract's behavior could change
+        completely after launch, even if the original code looked safe.
+    Both checks call the contract directly via Etherscan's proxy RPC -
+    no bytecode decompilation, no guessing, just reading what's
+    actually on-chain. Returns a dict with the raw findings and a
+    plain-English flags list.
+    """
+    url = "https://api.etherscan.io/v2/api"
+
+    # ---- Ownership check: call the standard owner() function (Ownable pattern) ----
+    owner_address = None
+    ownership_check_supported = False
+    try:
+        response = requests.get(url, params={
+            "chainid": "1", "module": "proxy", "action": "eth_call",
+            "to": contract_address, "data": "0x8da5cb5b",  # owner() function selector
+            "tag": "latest", "apikey": ETHERSCAN_API_KEY,
+        }, timeout=15)
+        result = response.json().get("result")
+        if result and result not in ("0x", None) and len(result) >= 66:
+            ownership_check_supported = True
+            owner_hex = result[-40:]
+            if int(owner_hex, 16) != 0:
+                owner_address = "0x" + owner_hex
+    except (requests.exceptions.RequestException, ValueError, TypeError):
+        pass  # contract doesn't implement owner() - not itself a red flag, just not this pattern
+
+    # ---- Proxy check: read the EIP-1967 implementation storage slot ----
+    is_proxy = False
+    try:
+        eip1967_slot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+        response = requests.get(url, params={
+            "chainid": "1", "module": "proxy", "action": "eth_getStorageAt",
+            "address": contract_address, "position": eip1967_slot,
+            "tag": "latest", "apikey": ETHERSCAN_API_KEY,
+        }, timeout=15)
+        result = response.json().get("result")
+        if result and int(result, 16) != 0:
+            is_proxy = True
+    except (requests.exceptions.RequestException, ValueError, TypeError):
+        pass
+
+    flags = []
+    if ownership_check_supported and owner_address:
+        flags.append(f"Ownership has NOT been renounced ({owner_address}) - this address retains any owner-only privileges the contract has.")
+    if is_proxy:
+        flags.append("This is an upgradeable proxy contract (EIP-1967) - its logic can be changed by whoever controls the upgrade, even after launch.")
+
+    return {
+        "found": True,
+        "chain": "ethereum",
+        "address": contract_address,
+        "ownership_check_supported": ownership_check_supported,
+        "owner_address": owner_address,
+        "ownership_renounced": (owner_address is None) if ownership_check_supported else None,
+        "is_proxy": is_proxy,
+        "flags": flags,
+        "message": (
+            "No red flags found among the checks performed - this does NOT mean the contract is safe, "
+            "only that these specific mechanisms aren't present." if not flags else
+            f"{len(flags)} red flag(s) found - see above."
+        ),
+    }
 
 
 def get_ethereum_transaction_by_hash(tx_hash):
