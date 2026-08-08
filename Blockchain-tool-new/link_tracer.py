@@ -3126,36 +3126,26 @@ def check_known_entity(address):
     return None
 
 
-def load_case_watchlist_addresses():
+def load_case_wallet_addresses(case_id):
+    """Returns every address saved under a specific case (see the 'cases'/'case_wallets'
+    tables), for use as trace targets. Replaces the old global, unscoped watchlist."""
     try:
         with auth._get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT address FROM case_watchlist;")
+                cur.execute("SELECT address FROM case_wallets WHERE case_id = %s;", (case_id,))
                 return [row[0] for row in cur.fetchall()]
     except Exception as error:
-        print(f"⚠️  Could not read shared case watchlist from the database: {error}")
+        print(f"⚠️  Could not read case wallets from the database: {error}")
         return []
 
 
 def build_target_set(include_case_watchlist=True):
-    """Combines TARGET_ILLICIT_WALLETS with the shared case watchlist (unless
-    include_case_watchlist is False), deduped."""
+    """Combines TARGET_ILLICIT_WALLETS with a case's saved wallets, deduped.
+    NOTE: only used by the CLI (python link_tracer.py directly) - the web app
+    (api_server.py) passes a specific case_id to trace against instead, since
+    case wallets are now grouped per-case rather than one global list."""
     targets = list(TARGET_ILLICIT_WALLETS)
     existing_lowercase = {t.lower() for t in targets}
-
-    if include_case_watchlist:
-        case_addresses = load_case_watchlist_addresses()
-        added_from_case = 0
-        for address in case_addresses:
-            if address.lower() not in existing_lowercase:
-                targets.append(address)
-                existing_lowercase.add(address.lower())
-                added_from_case += 1
-
-        if added_from_case:
-            print(f"🔗 Pulled in {added_from_case} illicit-wallet target(s) from the shared "
-                  f"case watchlist ({os.path.basename(CASE_WATCHLIST_FILE)}).")
-
     return targets, existing_lowercase
 
 
