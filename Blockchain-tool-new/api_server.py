@@ -326,6 +326,12 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/evm-chains")
+def get_evm_chains(_auth=Depends(require_read)):
+    """Every EVM chain this tool can trace against - see link_tracer.py's EVM_CHAINS."""
+    return [{"key": key, "name": entry["name"]} for key, entry in lt.EVM_CHAINS.items()]
+
+
 # ====================================================================
 # SECTION 2B: AUTH ENDPOINTS (login/logout/whoami/user management)
 # ====================================================================
@@ -506,6 +512,13 @@ class LinkTraceRequest(BaseModel):
                     "multiple inputs, so this specifies WHICH input address to treat as the sender. Every "
                     "output of the transaction (excluding change back to this address) becomes a starting hop.",
     )
+    evm_chain: Optional[str] = Field(
+        default=None,
+        description="Only relevant when the wallet is an 0x... address (Ethereum-format). Every EVM chain "
+                    "shares the same address format, so this specifies WHICH chain to actually trace - "
+                    "e.g. 'arbitrum', 'base', 'optimism', 'avalanche', 'fantom', 'cronos', 'opbnb', 'zksync'. "
+                    "Defaults to Ethereum mainnet if not given.",
+    )
     target_wallets: Optional[List[str]] = Field(
         default=None, description="Extra wallets to check for a link, beyond a saved case's wallets."
     )
@@ -664,15 +677,17 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     target_lowercase_set = {t.lower() for t in targets}
 
     max_hops = req.max_hops or lt.MAX_HOPS
+    evm_chain = req.evm_chain or lt.DEFAULT_EVM_CHAIN
 
     if req.direction == "backward":
         matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths = lt.trace_backward(
-            actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match
+            actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match,
+            evm_chain=evm_chain,
         )
     else:
         matched_paths, flagged_end_paths, addresses_visited, amount_filtered_paths = lt.trace_forward(
             actual_wallet, target_lowercase_set, max_hops, req.starting_amount, req.exact_amount_only, req.continue_past_match,
-            seed_hop=seed_hop,
+            seed_hop=seed_hop, evm_chain=evm_chain,
         )
 
     all_paths_for_summary = (
@@ -1134,7 +1149,12 @@ def download_evidence_pack_pdf(evidence_pack_id: str, current_user=Depends(requi
 # mechanisms to check) - not supported for those chains.
 
 class TokenRiskCheckRequest(BaseModel):
-    address: str = Field(..., description="A Solana SPL token mint address, or an Ethereum contract address.")
+    address: str = Field(..., description="A Solana SPL token mint address, or an Ethereum-format contract address.")
+    evm_chain: Optional[str] = Field(
+        default=None,
+        description="Only relevant when address is 0x... format - which EVM chain to check, since the "
+                    "format is identical across all of them. Defaults to Ethereum mainnet if not given.",
+    )
 
 
 @app.post("/api/token-risk-check")
@@ -1143,7 +1163,8 @@ def check_token_risk(req: TokenRiskCheckRequest, _auth=Depends(require_read)):
     if chain == "solana":
         result = lt.check_solana_token_risk(req.address)
     elif chain == "ethereum":
-        result = lt.check_ethereum_contract_risk(req.address)
+        evm_chain = req.evm_chain or lt.DEFAULT_EVM_CHAIN
+        result = lt.check_ethereum_contract_risk(req.address, evm_chain)
     elif chain in ("bitcoin", "xrp", "tron"):
         raise HTTPException(400, f"Token/contract risk checks aren't applicable to {chain} - it has no equivalent mint/freeze/ownership mechanism to check.")
     else:
