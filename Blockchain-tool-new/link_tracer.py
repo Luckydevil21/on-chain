@@ -122,6 +122,39 @@ from datetime import datetime, timezone, timedelta
 # ====================================================================
 
 ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "DSYVYN6A6E1FKWNGIPZRYDUR349XEUWYCZ")
+
+# --------------------------------------------------------------
+# OTHER EVM CHAINS. Etherscan's V2 API unifies 60+ EVM-compatible
+# chains under ONE endpoint and the SAME API key - just a different
+# "chainid" parameter - so the existing Ethereum fetch functions can
+# serve these other chains too, rather than needing separate per-chain
+# integrations. IMPORTANT LIMITATION: an EVM address (0x... 40 hex
+# characters) looks IDENTICAL on every one of these chains - there is
+# no way to tell which chain an address belongs to just by its format.
+# detect_chain() still returns "ethereum" for any 0x address by
+# default (unchanged, backward compatible) - to trace one of these
+# OTHER chains, the evm_chain parameter must be explicitly specified
+# by the caller (see the API's evm_chain field).
+# --------------------------------------------------------------
+EVM_CHAINS = {
+    "ethereum": {"chainid": "1", "name": "Ethereum", "explorer": "https://etherscan.io", "native_symbol": "ETH"},
+    "arbitrum": {"chainid": "42161", "name": "Arbitrum One", "explorer": "https://arbiscan.io", "native_symbol": "ETH"},
+    "optimism": {"chainid": "10", "name": "Optimism", "explorer": "https://optimistic.etherscan.io", "native_symbol": "ETH"},
+    "base": {"chainid": "8453", "name": "Base", "explorer": "https://basescan.org", "native_symbol": "ETH"},
+    "avalanche": {"chainid": "43114", "name": "Avalanche C-Chain", "explorer": "https://snowtrace.io", "native_symbol": "AVAX"},
+    "fantom": {"chainid": "250", "name": "Fantom", "explorer": "https://ftmscan.com", "native_symbol": "FTM"},
+    "cronos": {"chainid": "25", "name": "Cronos", "explorer": "https://cronoscan.com", "native_symbol": "CRO"},
+    "opbnb": {"chainid": "204", "name": "opBNB", "explorer": "https://opbnbscan.com", "native_symbol": "BNB"},
+    "zksync": {"chainid": "324", "name": "zkSync Era", "explorer": "https://era.zksync.network", "native_symbol": "ETH"},
+}
+DEFAULT_EVM_CHAIN = "ethereum"
+
+
+def _resolve_evm_chain(evm_chain):
+    """Returns (chainid_str, explorer_base_url, native_symbol) for a given
+    evm_chain key, falling back to Ethereum mainnet for anything unrecognized."""
+    entry = EVM_CHAINS.get(evm_chain or DEFAULT_EVM_CHAIN, EVM_CHAINS[DEFAULT_EVM_CHAIN])
+    return entry["chainid"], entry["explorer"], entry["native_symbol"]
 XRPL_RPC_URL = "https://s1.ripple.com:51234"
 
 # --------------------------------------------------------------
@@ -573,14 +606,15 @@ def detect_chain(address):
 #               likely exchange/custodial wallets. See HIGH_FANOUT_THRESHOLD.
 # ====================================================================
 
-def get_outgoing_ethereum(address):
+def get_outgoing_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
+    chainid, explorer_base, native_symbol = _resolve_evm_chain(evm_chain)
     url = "https://api.etherscan.io/v2/api"
     per_page = 1000
     all_txs = []
 
     for page_number in range(1, ETHEREUM_TRACE_MAX_PAGES + 1):
         params = {
-            "chainid": "1", "module": "account", "action": "txlist",
+            "chainid": chainid, "module": "account", "action": "txlist",
             "address": address, "sort": "desc", "apikey": ETHERSCAN_API_KEY,
             "page": page_number, "offset": per_page,
         }
@@ -618,8 +652,8 @@ def get_outgoing_ethereum(address):
             "counterparty": to_address,
             "tx_hash": tx.get("hash"),
             "tx_time": datetime.fromtimestamp(int(tx["timeStamp"]), tz=timezone.utc),
-            "amount_label": f"{eth_value:.6f} ETH",
-            "explorer_url": f"https://etherscan.io/tx/{tx.get('hash')}",
+            "amount_label": f"{eth_value:.6f} {native_symbol}",
+            "explorer_url": f"{explorer_base}/tx/{tx.get('hash')}",
         }
         pattern_match = find_message_pattern_match_in_eth_tx(tx)
         if pattern_match:
@@ -1039,9 +1073,9 @@ def get_incoming_solana(address):
     return _get_solana_hops(address, "incoming")
 
 
-def get_outgoing_counterparties(chain, address):
+def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "ethereum":
-        return get_outgoing_ethereum(address)
+        return get_outgoing_ethereum(address, evm_chain)
     if chain == "bitcoin":
         return get_outgoing_bitcoin(address)
     if chain == "xrp":
@@ -1059,14 +1093,15 @@ def get_outgoing_counterparties(chain, address):
 # not the recipient - this is what powers backward tracing.
 # ====================================================================
 
-def get_incoming_ethereum(address):
+def get_incoming_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
+    chainid, explorer_base, native_symbol = _resolve_evm_chain(evm_chain)
     url = "https://api.etherscan.io/v2/api"
     per_page = 1000
     all_txs = []
 
     for page_number in range(1, ETHEREUM_TRACE_MAX_PAGES + 1):
         params = {
-            "chainid": "1", "module": "account", "action": "txlist",
+            "chainid": chainid, "module": "account", "action": "txlist",
             "address": address, "sort": "desc", "apikey": ETHERSCAN_API_KEY,
             "page": page_number, "offset": per_page,
         }
@@ -1104,8 +1139,8 @@ def get_incoming_ethereum(address):
             "counterparty": from_address,
             "tx_hash": tx.get("hash"),
             "tx_time": datetime.fromtimestamp(int(tx["timeStamp"]), tz=timezone.utc),
-            "amount_label": f"{eth_value:.6f} ETH",
-            "explorer_url": f"https://etherscan.io/tx/{tx.get('hash')}",
+            "amount_label": f"{eth_value:.6f} {native_symbol}",
+            "explorer_url": f"{explorer_base}/tx/{tx.get('hash')}",
         }
         pattern_match = find_message_pattern_match_in_eth_tx(tx)
         if pattern_match:
@@ -1338,21 +1373,6 @@ def get_incoming_tron(address):
     return results, len(unique_counterparties)
 
 
-
-def get_incoming_counterparties(chain, address):
-    if chain == "ethereum":
-        return get_incoming_ethereum(address)
-    if chain == "bitcoin":
-        return get_incoming_bitcoin(address)
-    if chain == "xrp":
-        return get_incoming_xrp(address)
-    if chain == "tron":
-        return get_incoming_tron(address)
-    if chain == "solana":
-        return get_incoming_solana(address)
-    return [], 0
-
-
 # ====================================================================
 # GAS-FUNDING-SOURCE CLUSTERING
 # ====================================================================
@@ -1544,9 +1564,9 @@ def check_common_funding_source(addresses):
     return {"per_address": per_address, "clusters": clusters}
 
 
-def get_incoming_counterparties(chain, address):
+def get_incoming_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "ethereum":
-        return get_incoming_ethereum(address)
+        return get_incoming_ethereum(address, evm_chain)
     if chain == "bitcoin":
         return get_incoming_bitcoin(address)
     if chain == "xrp":
@@ -2457,10 +2477,11 @@ def get_bitcoin_transaction_by_hash(tx_hash):
     return output_dict
 
 
-def check_ethereum_contract_risk(contract_address):
+def check_ethereum_contract_risk(contract_address, evm_chain=DEFAULT_EVM_CHAIN):
     """
-    PLAIN ENGLISH: Checks an Ethereum contract for two well-understood,
-    verifiable red flags:
+    PLAIN ENGLISH: Checks a contract on Ethereum or another registered
+    EVM chain (see EVM_CHAINS) for two well-understood, verifiable red
+    flags:
       - OWNERSHIP NOT RENOUNCED: many token/contract templates include
         an "owner" with special privileges (pausing transfers, minting,
         changing fees, blacklisting addresses). If that owner is still
@@ -2470,11 +2491,12 @@ def check_ethereum_contract_risk(contract_address):
         proxy, its actual logic can be swapped out by whoever controls
         the upgrade - meaning the contract's behavior could change
         completely after launch, even if the original code looked safe.
-    Both checks call the contract directly via Etherscan's proxy RPC -
-    no bytecode decompilation, no guessing, just reading what's
-    actually on-chain. Returns a dict with the raw findings and a
-    plain-English flags list.
+    Both checks call the contract directly via Etherscan's unified V2
+    proxy RPC - no bytecode decompilation, no guessing, just reading
+    what's actually on-chain. Returns a dict with the raw findings and
+    a plain-English flags list.
     """
+    chainid, _explorer_base, _native_symbol = _resolve_evm_chain(evm_chain)
     url = "https://api.etherscan.io/v2/api"
 
     # ---- Ownership check: call the standard owner() function (Ownable pattern) ----
@@ -2482,7 +2504,7 @@ def check_ethereum_contract_risk(contract_address):
     ownership_check_supported = False
     try:
         response = requests.get(url, params={
-            "chainid": "1", "module": "proxy", "action": "eth_call",
+            "chainid": chainid, "module": "proxy", "action": "eth_call",
             "to": contract_address, "data": "0x8da5cb5b",  # owner() function selector
             "tag": "latest", "apikey": ETHERSCAN_API_KEY,
         }, timeout=15)
@@ -2500,7 +2522,7 @@ def check_ethereum_contract_risk(contract_address):
     try:
         eip1967_slot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
         response = requests.get(url, params={
-            "chainid": "1", "module": "proxy", "action": "eth_getStorageAt",
+            "chainid": chainid, "module": "proxy", "action": "eth_getStorageAt",
             "address": contract_address, "position": eip1967_slot,
             "tag": "latest", "apikey": ETHERSCAN_API_KEY,
         }, timeout=15)
@@ -2519,6 +2541,7 @@ def check_ethereum_contract_risk(contract_address):
     return {
         "found": True,
         "chain": "ethereum",
+        "evm_chain": evm_chain,
         "address": contract_address,
         "ownership_check_supported": ownership_check_supported,
         "owner_address": owner_address,
@@ -3254,7 +3277,7 @@ def build_seed_hops_from_bitcoin_tx(tx_hash, sender_address):
     return hops, None
 
 
-def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, seed_hop=None):
+def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, seed_hop=None, evm_chain=DEFAULT_EVM_CHAIN):
     """
     PLAIN ENGLISH: Starting from victim_wallet, follows outgoing
     transactions hop by hop (breadth-first - checking every wallet at
@@ -3348,7 +3371,7 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
             print(f"  Checking outgoing activity from {address} "
                   + (f"(tracking ~{tracked_amount:g}) " if tracked_amount is not None else "")
                   + "...")
-            counterparties, fanout_count = get_outgoing_counterparties(victim_chain, address)
+            counterparties, fanout_count = get_outgoing_counterparties(victim_chain, address, evm_chain)
             time.sleep(SECONDS_BETWEEN_REQUESTS)
 
             high_fanout = fanout_count >= HIGH_FANOUT_THRESHOLD
@@ -3474,7 +3497,7 @@ def trace_forward(victim_wallet, target_lowercase_set, max_hops, starting_amount
     return found_paths, flagged_end_paths, len(visited), amount_filtered_paths
 
 
-def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False):
+def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount=None, exact_amount_only=False, continue_past_match=False, evm_chain=DEFAULT_EVM_CHAIN):
     """
     PLAIN ENGLISH: The mirror image of trace_forward(). Starting from
     an illicit/flagged wallet, follows INCOMING transactions hop by
@@ -3536,7 +3559,7 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
             print(f"  Checking incoming activity into {address} "
                   + (f"(tracking ~{tracked_amount:g}) " if tracked_amount is not None else "")
                   + "...")
-            raw_counterparties, fanout_count = get_incoming_counterparties(start_chain, address)
+            raw_counterparties, fanout_count = get_incoming_counterparties(start_chain, address, evm_chain)
             time.sleep(SECONDS_BETWEEN_REQUESTS)
 
             high_fanout = fanout_count >= HIGH_FANOUT_THRESHOLD
