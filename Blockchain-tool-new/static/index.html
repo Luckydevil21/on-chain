@@ -2317,17 +2317,16 @@ function renderSanctionsSection() {
       const btn = document.getElementById("sanctionsRefreshBtn");
       const statusEl = document.getElementById("sanctionsRefreshStatus");
       btn.disabled = true;
-      statusEl.textContent = "Downloading and parsing the OFAC SDN list... this can take 30-90 seconds.";
+      statusEl.textContent = "Starting refresh...";
       statusEl.className = "status-line";
       try {
-        const result = await apiFetch("/api/sanctions/refresh", { method: "POST" });
-        statusEl.textContent = result.message;
+        const started = await apiFetch("/api/sanctions/refresh", { method: "POST" });
+        statusEl.textContent = started.message;
         statusEl.className = "status-line";
-        loadSanctionsStatus();
+        pollSanctionsRefresh();
       } catch (err) {
         statusEl.textContent = "Error: " + err.message;
         statusEl.className = "status-line error";
-      } finally {
         btn.disabled = false;
       }
     };
@@ -2366,12 +2365,43 @@ async function loadSanctionsStatus() {
   if (!statusEl) return;
   try {
     const data = await apiFetch("/api/sanctions/status");
-    statusEl.textContent = data.last_refreshed_at
-      ? `Last refreshed ${data.last_refreshed_at} UTC by ${data.last_refreshed_by} - ${data.address_count} address(es) loaded.`
-      : "Never refreshed yet - click below to load the current OFAC list for the first time.";
+    if (data.refresh_in_progress) {
+      statusEl.textContent = "Refresh currently in progress...";
+    } else if (data.last_refreshed_at) {
+      statusEl.textContent = `Last refreshed ${data.last_refreshed_at} UTC by ${data.last_refreshed_by} - ${data.address_count} address(es) loaded.`;
+    } else {
+      statusEl.textContent = "Never refreshed yet - click below to load the current OFAC list for the first time.";
+    }
+    return data;
   } catch (err) {
     statusEl.textContent = "Error: " + err.message;
   }
+}
+
+async function pollSanctionsRefresh() {
+  // The refresh runs as a background task server-side (see api_server.py) -
+  // this checks in every few seconds until it's done, rather than waiting
+  // on one long HTTP request, which would exceed most reverse proxies'
+  // timeout (including Render's) and show a 502 even though the work was
+  // still genuinely happening.
+  const btn = document.getElementById("sanctionsRefreshBtn");
+  const refreshStatusEl = document.getElementById("sanctionsRefreshStatus");
+  const poll = async () => {
+    const data = await loadSanctionsStatus();
+    if (data && data.refresh_in_progress) {
+      setTimeout(poll, 4000);
+    } else {
+      if (data && data.last_error) {
+        refreshStatusEl.textContent = "Refresh failed: " + data.last_error;
+        refreshStatusEl.className = "status-line error";
+      } else {
+        refreshStatusEl.textContent = "Refresh complete.";
+        refreshStatusEl.className = "status-line";
+      }
+      if (btn) btn.disabled = false;
+    }
+  };
+  setTimeout(poll, 4000);
 }
 
 
