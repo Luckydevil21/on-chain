@@ -413,6 +413,7 @@ const SECTIONS = [
   { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
   { id: "swap-correlation", icon: "⇄", label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
   { id: "token-risk", icon: "⚠", label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
+  { id: "sanctions", icon: "⛔", label: "Sanctions Screening", sub: "Check an address against the current OFAC SDN digital currency list", adminOnly: false, group: "Investigate" },
   { id: "saved-cases", icon: "▤", label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, group: "Case Data" },
   { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
   { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
@@ -797,6 +798,7 @@ function enterApp() {
   renderDepositMapSection();
   renderSwapCorrelationSection();
   renderTokenRiskSection();
+  renderSanctionsSection();
   if (isAdmin()) renderUsersSection();
 
   buildNav();
@@ -1468,6 +1470,8 @@ function renderLinkTraceResults(data, meta) {
           boxCls = "change"; label = `${label} (${hop.change_confidence === "confirmed" ? "change" : "likely change"})`;
         } else if (isMatchTarget) {
           boxCls = "flagged"; label = "🚩 " + label;
+        } else if (hop.to_known_entity && hop.to_known_entity.type === "sanctioned") {
+          boxCls = "flagged"; label = `⛔ ${label}`;
         } else if (hop.to_known_entity) {
           boxCls = "entity";
         } else if (isFlaggedEnd && hop.matched_pattern) {
@@ -2276,6 +2280,100 @@ function renderTokenRiskResults(data, container) {
   card.innerHTML = html;
   container.appendChild(card);
 }
+
+// ============================================================
+// SANCTIONS SCREENING (OFAC)
+// ============================================================
+function renderSanctionsSection() {
+  const section = el("div", "section", "");
+  section.id = "section-sanctions";
+  section.innerHTML = `
+    ${isAdmin() ? `<div class="card">
+      <h3>Sanctions list status</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        Checks addresses against the US Treasury's OFAC Specially Designated Nationals (SDN) list -
+        the authoritative source, downloaded and parsed directly, not a third party's interpretation.
+        A refresh replaces the whole stored list (so delistings are correctly reflected too) and can
+        take 30-90 seconds, since the source file is large. This does NOT run automatically - refresh
+        periodically, or whenever you hear of a new OFAC designation.
+      </div>
+      <div id="sanctionsStatus" class="footnote">Loading...</div>
+      <button class="btn" id="sanctionsRefreshBtn" style="margin-top:10px;">Refresh sanctions list now</button>
+      <div class="status-line" id="sanctionsRefreshStatus"></div>
+    </div>` : ""}
+    <div class="card">
+      <h3>Check an address</h3>
+      <div class="field"><label>Address</label><input type="text" id="sanctionsCheckAddress" placeholder="Any Bitcoin, Ethereum, XRP, Tron, or Solana address"></div>
+      <button class="btn" id="sanctionsCheckBtn">Check</button>
+    </div>
+    <div class="status-line" id="sanctionsCheckStatus"></div>
+    <div id="sanctionsCheckResult" class="result-box"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  if (isAdmin()) {
+    loadSanctionsStatus();
+    document.getElementById("sanctionsRefreshBtn").onclick = async () => {
+      const btn = document.getElementById("sanctionsRefreshBtn");
+      const statusEl = document.getElementById("sanctionsRefreshStatus");
+      btn.disabled = true;
+      statusEl.textContent = "Downloading and parsing the OFAC SDN list... this can take 30-90 seconds.";
+      statusEl.className = "status-line";
+      try {
+        const result = await apiFetch("/api/sanctions/refresh", { method: "POST" });
+        statusEl.textContent = result.message;
+        statusEl.className = "status-line";
+        loadSanctionsStatus();
+      } catch (err) {
+        statusEl.textContent = "Error: " + err.message;
+        statusEl.className = "status-line error";
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }
+
+  document.getElementById("sanctionsCheckBtn").onclick = async () => {
+    const address = document.getElementById("sanctionsCheckAddress").value.trim();
+    const statusEl = document.getElementById("sanctionsCheckStatus");
+    const resultEl = document.getElementById("sanctionsCheckResult");
+    if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Checking...";
+    statusEl.className = "status-line";
+    resultEl.innerHTML = "";
+    try {
+      const data = await apiFetch("/api/sanctions/check", { method: "POST", body: JSON.stringify({ address }) });
+      statusEl.textContent = "";
+      const card = el("div", "card");
+      if (data.sanctioned) {
+        card.style.borderColor = "var(--flag)";
+        card.innerHTML = `<h3 style="color:var(--flag);">⛔ SANCTIONED</h3>
+          <div class="hint">This address appears on the current OFAC SDN digital currency address list, tagged as <strong>${escapeHtml(data.ofac_asset_symbol)}</strong>.</div>`;
+      } else {
+        card.innerHTML = `<h3>✅ Not on the sanctions list</h3>
+          <div class="footnote">Not found on the OFAC SDN digital currency address list as of the last refresh. This does not rule out sanctions exposure via clustering/indirect association - only a direct listing.</div>`;
+      }
+      resultEl.appendChild(card);
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+async function loadSanctionsStatus() {
+  const statusEl = document.getElementById("sanctionsStatus");
+  if (!statusEl) return;
+  try {
+    const data = await apiFetch("/api/sanctions/status");
+    statusEl.textContent = data.last_refreshed_at
+      ? `Last refreshed ${data.last_refreshed_at} UTC by ${data.last_refreshed_by} - ${data.address_count} address(es) loaded.`
+      : "Never refreshed yet - click below to load the current OFAC list for the first time.";
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+  }
+}
+
 
 // INIT
 // ============================================================
