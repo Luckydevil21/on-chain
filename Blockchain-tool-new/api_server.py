@@ -98,7 +98,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
@@ -350,13 +350,30 @@ def get_sanctions_status(_auth=Depends(require_read)):
     return lt.get_sanctions_list_status()
 
 
+def _run_sanctions_refresh_and_log(username):
+    """Runs the actual refresh, then logs the real outcome once it's known -
+    called as a background task, so the audit log reflects what actually
+    happened rather than just "refresh was requested"."""
+    result = lt.refresh_ofac_sanctions_list(username)
+    detail = f"count={result['count']}" if result.get("success") else f"failed: {result.get('message')}"
+    auth.log_action(username, "sanctions_list_refreshed", detail=detail)
+
+
 @app.post("/api/sanctions/refresh")
-def refresh_sanctions_list(_admin=Depends(require_write)):
-    result = lt.refresh_ofac_sanctions_list(_admin["username"])
-    if not result["success"]:
-        raise HTTPException(503, result["message"])
-    auth.log_action(_admin["username"], "sanctions_list_refreshed", detail=f"count={result['count']}")
-    return result
+def refresh_sanctions_list(background_tasks: BackgroundTasks, _admin=Depends(require_write)):
+    """
+    Starts the OFAC sanctions list refresh in the BACKGROUND and returns
+    immediately - the download+parse genuinely takes 30-90 seconds, which
+    exceeds most reverse proxies' request timeout (Render included) and
+    would otherwise return a 502 to the browser even though the work is
+    still legitimately in progress server-side. Poll GET /api/sanctions/status
+    (refresh_in_progress / last_refreshed_at / last_error) to see when it
+    finishes and what happened.
+    """
+    if lt.SANCTIONS_REFRESH_IN_PROGRESS:
+        return {"started": False, "message": "A refresh is already in progress - check status for when it completes."}
+    background_tasks.add_task(_run_sanctions_refresh_and_log, _admin["username"])
+    return {"started": True, "message": "Refresh started in the background - this can take 30-90 seconds. Check status below."}
 
 
 @app.post("/api/sanctions/check")
