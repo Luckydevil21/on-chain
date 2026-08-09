@@ -3353,27 +3353,44 @@ def check_sanctions(address):
     return {"sanctioned": False}
 
 
+SANCTIONS_REFRESH_IN_PROGRESS = False
+SANCTIONS_REFRESH_LAST_ERROR = None
+
+
 def refresh_ofac_sanctions_list(username):
     """
     PLAIN ENGLISH: Downloads OFAC's CURRENT SDN list and replaces the
     stored sanctioned-address list with whatever it finds NOW - a full
     refresh, not an accumulating one, since delistings need to be
-    reflected too. This can take a while (the source file is large) -
-    expect 30-90 seconds. Updates both the database AND the in-memory
-    cache immediately. Returns a dict describing what happened.
+    reflected too. This can take 30-90 seconds (the source file is
+    large) - meant to be run as a BACKGROUND TASK (see api_server.py's
+    /api/sanctions/refresh), not awaited directly in an HTTP request,
+    since that request duration would exceed most reverse proxies'
+    timeout and return a 502 to the browser even though the work is
+    still genuinely in progress server-side. Updates both the database
+    AND the in-memory cache immediately on completion. Returns a dict
+    describing what happened - also stored in SANCTIONS_REFRESH_LAST_ERROR
+    on failure, so the status endpoint can report it even though nothing
+    was directly awaiting this call.
     """
-    global SANCTIONED_ADDRESSES
+    global SANCTIONED_ADDRESSES, SANCTIONS_REFRESH_IN_PROGRESS, SANCTIONS_REFRESH_LAST_ERROR
+    SANCTIONS_REFRESH_IN_PROGRESS = True
+    SANCTIONS_REFRESH_LAST_ERROR = None
 
     try:
         response = requests.get(OFAC_SDN_XML_URL, timeout=180)
         response.raise_for_status()
     except requests.exceptions.RequestException as error:
-        return {"success": False, "message": f"Could not download the OFAC SDN list: {error}"}
+        SANCTIONS_REFRESH_LAST_ERROR = f"Could not download the OFAC SDN list: {error}"
+        SANCTIONS_REFRESH_IN_PROGRESS = False
+        return {"success": False, "message": SANCTIONS_REFRESH_LAST_ERROR}
 
     try:
         root = ET.fromstring(response.content)
     except ET.ParseError as error:
-        return {"success": False, "message": f"Could not parse the OFAC SDN list: {error}"}
+        SANCTIONS_REFRESH_LAST_ERROR = f"Could not parse the OFAC SDN list: {error}"
+        SANCTIONS_REFRESH_IN_PROGRESS = False
+        return {"success": False, "message": SANCTIONS_REFRESH_LAST_ERROR}
 
     found = []  # (address, asset_symbol)
     for asset in OFAC_TRACKED_ASSETS:
@@ -3416,29 +3433,40 @@ def refresh_ofac_sanctions_list(username):
                 )
                 conn.commit()
     except Exception as error:
-        return {"success": False, "message": f"Downloaded and parsed OK, but could not save to the database: {error}"}
+        SANCTIONS_REFRESH_LAST_ERROR = f"Downloaded and parsed OK, but could not save to the database: {error}"
+        SANCTIONS_REFRESH_IN_PROGRESS = False
+        return {"success": False, "message": SANCTIONS_REFRESH_LAST_ERROR}
 
     SANCTIONED_ADDRESSES = {address.lower(): asset for address, asset in deduped}
+    SANCTIONS_REFRESH_IN_PROGRESS = False
     return {"success": True, "count": len(deduped), "message": f"Refreshed - {len(deduped)} sanctioned digital currency address(es) loaded."}
 
 
 def get_sanctions_list_status():
-    """Returns metadata about the current stored sanctions list - last refresh time/by whom, count."""
+    """Returns metadata about the current stored sanctions list - last
+    refresh time/by whom, count, plus whether a refresh is CURRENTLY
+    running (for the frontend to poll) and the last error if one
+    occurred during a background refresh."""
+    base = {
+        "refresh_in_progress": SANCTIONS_REFRESH_IN_PROGRESS,
+        "last_error": SANCTIONS_REFRESH_LAST_ERROR,
+    }
     try:
         with auth._get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT last_refreshed_at, last_refreshed_by, address_count FROM sanctions_list_metadata WHERE id = 1;")
                 row = cur.fetchone()
                 if not row:
-                    return {"last_refreshed_at": None, "last_refreshed_by": None, "address_count": 0}
+                    return {**base, "last_refreshed_at": None, "last_refreshed_by": None, "address_count": 0}
                 return {
+                    **base,
                     "last_refreshed_at": row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else None,
                     "last_refreshed_by": row[1],
                     "address_count": row[2] or 0,
                 }
     except Exception as error:
         print(f"⚠️  Could not read sanctions list status: {error}")
-        return {"last_refreshed_at": None, "last_refreshed_by": None, "address_count": 0}
+        return {**base, "last_refreshed_at": None, "last_refreshed_by": None, "address_count": 0}
 
 
 def parse_amount_from_label(amount_label):
