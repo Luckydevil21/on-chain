@@ -113,6 +113,7 @@ import csv
 import json
 import time
 import requests
+import xml.etree.ElementTree as ET
 import auth  # only for _get_db_connection - reuses the same DB connection setup as auth.py
 from datetime import datetime, timezone, timedelta
 
@@ -3292,6 +3293,154 @@ if KNOWN_ENTITIES:
           f"({os.path.basename(KNOWN_ENTITIES_FILE)} + built-ins).")
 
 
+# ====================================================================
+# OFAC SANCTIONS SCREENING. Checks addresses against the US Treasury's
+# Specially Designated Nationals (SDN) list - the authoritative source
+# for US sanctions, downloaded and parsed directly, not a third
+# party's interpretation of it. Schema verified against the real,
+# working open-source parser at
+# github.com/0xB10C/ofac-sanctioned-digital-currency-addresses.
+#
+# HOW THIS WORKS: the full SDN list (~80MB XML) is downloaded and
+# parsed on demand via an explicit ADMIN-TRIGGERED refresh (see
+# refresh_ofac_sanctions_list) - NOT automatically on every trace,
+# both because the file is large/slow to fetch and because sanctions
+# designations AND DELISTINGS both happen (e.g. Tornado Cash was
+# removed 21 March 2025) - a full refresh REPLACES the stored list
+# rather than only ever adding to it. The result is cached in memory
+# (same pattern as KNOWN_ENTITIES above) for fast per-hop lookups
+# during a trace, refreshed immediately whenever an admin re-syncs -
+# no restart needed.
+#
+# HONEST LIMITATION: this only catches addresses OFAC has specifically
+# published as a "Digital Currency Address" under a sanctioned party.
+# It does NOT do clustering/heuristic sanctions exposure (e.g. "two
+# hops from a sanctioned wallet") - a clean result means "not directly
+# on the list", not "definitely not sanctions-exposed".
+# ====================================================================
+
+OFAC_SDN_XML_URL = "https://www.treasury.gov/ofac/downloads/sanctions/1.0/sdn_advanced.xml"
+OFAC_NAMESPACE = {"sdn": "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML"}
+OFAC_TRACKED_ASSETS = ["XBT", "ETH", "XRP", "TRX", "SOL", "USDT", "USDC"]
+OFAC_ASSET_TO_CHAIN = {"XBT": "bitcoin", "ETH": "ethereum", "XRP": "xrp", "TRX": "tron", "SOL": "solana"}
+
+
+def load_sanctioned_addresses():
+    """Loads the full sanctioned-address list from Postgres into memory
+    once, for fast per-hop lookups during a trace - same caching
+    pattern as KNOWN_ENTITIES above."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT address, ofac_asset_symbol FROM sanctioned_addresses;")
+                return {address.lower(): asset for address, asset in cur.fetchall()}
+    except Exception as error:
+        print(f"⚠️  Could not read sanctioned_addresses from the database: {error}")
+        return {}
+
+
+SANCTIONED_ADDRESSES = load_sanctioned_addresses()
+if SANCTIONED_ADDRESSES:
+    print(f"⛔ Loaded {len(SANCTIONED_ADDRESSES)} OFAC-sanctioned digital currency address(es).")
+
+
+def check_sanctions(address):
+    """Fast, in-memory check - returns {"sanctioned": True, "ofac_asset_symbol": ...}
+    or {"sanctioned": False}. See SANCTIONED_ADDRESSES above for how this gets populated."""
+    asset = SANCTIONED_ADDRESSES.get(address.lower())
+    if asset:
+        return {"sanctioned": True, "ofac_asset_symbol": asset}
+    return {"sanctioned": False}
+
+
+def refresh_ofac_sanctions_list(username):
+    """
+    PLAIN ENGLISH: Downloads OFAC's CURRENT SDN list and replaces the
+    stored sanctioned-address list with whatever it finds NOW - a full
+    refresh, not an accumulating one, since delistings need to be
+    reflected too. This can take a while (the source file is large) -
+    expect 30-90 seconds. Updates both the database AND the in-memory
+    cache immediately. Returns a dict describing what happened.
+    """
+    global SANCTIONED_ADDRESSES
+
+    try:
+        response = requests.get(OFAC_SDN_XML_URL, timeout=180)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as error:
+        return {"success": False, "message": f"Could not download the OFAC SDN list: {error}"}
+
+    try:
+        root = ET.fromstring(response.content)
+    except ET.ParseError as error:
+        return {"success": False, "message": f"Could not parse the OFAC SDN list: {error}"}
+
+    found = []  # (address, asset_symbol)
+    for asset in OFAC_TRACKED_ASSETS:
+        feature_type = root.find(
+            f"sdn:ReferenceValueSets/sdn:FeatureTypeValues/*[.='Digital Currency Address - {asset}']",
+            OFAC_NAMESPACE,
+        )
+        if feature_type is None:
+            continue
+        address_id = feature_type.attrib.get("ID")
+        for feature in root.findall(f"sdn:DistinctParties//*[@FeatureTypeID='{address_id}']", OFAC_NAMESPACE):
+            for version_detail in feature.findall(".//sdn:VersionDetail", OFAC_NAMESPACE):
+                if version_detail.text:
+                    found.append((version_detail.text.strip(), asset))
+
+    seen_lower = set()
+    deduped = []
+    for address, asset in found:
+        key = address.lower()
+        if key in seen_lower:
+            continue
+        seen_lower.add(key)
+        deduped.append((address, asset))
+
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM sanctioned_addresses;")
+                for address, asset in deduped:
+                    chain = OFAC_ASSET_TO_CHAIN.get(asset)
+                    cur.execute(
+                        "INSERT INTO sanctioned_addresses (address, ofac_asset_symbol, chain) "
+                        "VALUES (%s, %s, %s) ON CONFLICT (address) DO NOTHING;",
+                        (address, asset, chain)
+                    )
+                cur.execute(
+                    "UPDATE sanctions_list_metadata SET last_refreshed_at = now(), "
+                    "last_refreshed_by = %s, address_count = %s WHERE id = 1;",
+                    (username, len(deduped))
+                )
+                conn.commit()
+    except Exception as error:
+        return {"success": False, "message": f"Downloaded and parsed OK, but could not save to the database: {error}"}
+
+    SANCTIONED_ADDRESSES = {address.lower(): asset for address, asset in deduped}
+    return {"success": True, "count": len(deduped), "message": f"Refreshed - {len(deduped)} sanctioned digital currency address(es) loaded."}
+
+
+def get_sanctions_list_status():
+    """Returns metadata about the current stored sanctions list - last refresh time/by whom, count."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT last_refreshed_at, last_refreshed_by, address_count FROM sanctions_list_metadata WHERE id = 1;")
+                row = cur.fetchone()
+                if not row:
+                    return {"last_refreshed_at": None, "last_refreshed_by": None, "address_count": 0}
+                return {
+                    "last_refreshed_at": row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else None,
+                    "last_refreshed_by": row[1],
+                    "address_count": row[2] or 0,
+                }
+    except Exception as error:
+        print(f"⚠️  Could not read sanctions list status: {error}")
+        return {"last_refreshed_at": None, "last_refreshed_by": None, "address_count": 0}
+
+
 def parse_amount_from_label(amount_label):
     """
     PLAIN ENGLISH: Pulls the plain number back out of an amount_label
@@ -3352,10 +3501,22 @@ def _lookup_bithomp_service(address):
 
 
 def check_known_entity(address):
-    """Returns {"name":..., "type":...} if address is a known exchange/mixer/
-    custodial wallet, otherwise None. For XRP addresses specifically, falls
-    back to a live Bithomp label lookup if not already in known_entities
-    and BITHOMP_API_KEY is set - see _lookup_bithomp_service()."""
+    """Returns {"name":..., "type":...} if address is OFAC-sanctioned, a
+    known exchange/mixer/custodial wallet, otherwise None. Sanctions are
+    checked FIRST and can never be masked by an existing known-entity
+    label - a sanctions hit is the most consequential possible finding,
+    so it always takes priority even if the same address also happens
+    to be separately registered as a known exchange. See
+    check_sanctions() above. For XRP addresses specifically, falls back
+    to a live Bithomp label lookup if nothing else matched and
+    BITHOMP_API_KEY is set - see _lookup_bithomp_service()."""
+    sanctions_result = check_sanctions(address)
+    if sanctions_result.get("sanctioned"):
+        return {
+            "name": f"OFAC Sanctioned Address ({sanctions_result['ofac_asset_symbol']})",
+            "type": "sanctioned",
+            "source": "ofac",
+        }
     entity = KNOWN_ENTITIES.get(address.lower())
     if entity:
         return entity
