@@ -333,6 +333,40 @@ def get_evm_chains(_auth=Depends(require_read)):
 
 
 # ====================================================================
+# SECTION 1B: OFAC SANCTIONS SCREENING
+# ====================================================================
+# See link_tracer.py's module docstring above check_sanctions() for
+# the full explanation. Refreshing hits the ~80MB OFAC source file
+# directly and can take 30-90 seconds - admin-only (require_write)
+# given it's a heavier, consequential operation. Individual checks are
+# fast, in-memory lookups available to any logged-in user.
+
+class SanctionsCheckRequest(BaseModel):
+    address: str
+
+
+@app.get("/api/sanctions/status")
+def get_sanctions_status(_auth=Depends(require_read)):
+    return lt.get_sanctions_list_status()
+
+
+@app.post("/api/sanctions/refresh")
+def refresh_sanctions_list(_admin=Depends(require_write)):
+    result = lt.refresh_ofac_sanctions_list(_admin["username"])
+    if not result["success"]:
+        raise HTTPException(503, result["message"])
+    auth.log_action(_admin["username"], "sanctions_list_refreshed", detail=f"count={result['count']}")
+    return result
+
+
+@app.post("/api/sanctions/check")
+def check_sanctions_endpoint(req: SanctionsCheckRequest, _auth=Depends(require_read)):
+    result = lt.check_sanctions(req.address)
+    auth.log_action(_auth["username"], "sanctions_check", target=req.address)
+    return result
+
+
+# ====================================================================
 # SECTION 2B: AUTH ENDPOINTS (login/logout/whoami/user management)
 # ====================================================================
 
