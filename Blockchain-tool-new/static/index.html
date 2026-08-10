@@ -324,7 +324,6 @@
       Every finding is labeled by confidence - confirmed, heuristic, or lead - nothing is
       ever presented as proof it isn't.
     </p>
-    <button class="btn" id="landingSignInBtn" style="margin-top:22px; padding:12px 28px; font-size:14px;">Sign In</button>
   </div>
 </div>
 
@@ -426,7 +425,6 @@
     <p class="landing-lede" style="font-size:12.5px; margin-top:26px;">
       Not legal or financial advice. Get in touch to discuss which tier fits your work.
     </p>
-    <button class="btn" id="pricingSignInBtn" style="margin-top:14px; padding:12px 28px; font-size:14px;">Sign In</button>
   </div>
 </div>
 
@@ -665,15 +663,7 @@ document.getElementById("preLoginTabLogin").onclick = () => {
   showView("loginView");
 };
 document.getElementById("preLoginTabPricing").onclick = () => showView("pricingView");
-document.getElementById("pricingSignInBtn").onclick = () => {
-  document.getElementById("loginStatus").textContent = "";
-  showView("loginView");
-};
 
-document.getElementById("landingSignInBtn").onclick = () => {
-  document.getElementById("loginStatus").textContent = "";
-  showView("loginView");
-};
 document.getElementById("backToLandingBtn").onclick = () => showView("landingView");
 
 let pendingTotpToken = null;
