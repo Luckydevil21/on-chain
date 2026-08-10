@@ -3399,10 +3399,20 @@ def refresh_ofac_sanctions_list(username):
 
     try:
         response.raw.decode_content = True
-        # tag=("{*}FeatureType", "{*}Feature"): only fire events for these two
-        # element types (any namespace) - everything else streams past
-        # without ever being fully materialized as a Python object.
-        context = LET.iterparse(response.raw, events=("end",), tag=("{*}FeatureType", "{*}Feature"))
+        # IMPORTANT: the tag filter below only controls which elements get
+        # YIELDED to this loop for processing - it does NOT stop lxml from
+        # building the tree for everything else in the document. The first
+        # version of this function only listened for FeatureType/Feature
+        # and cleared just those - but a real SDN entry (DistinctParty)
+        # contains far more than that (names, aliases, addresses, birth
+        # dates, remarks...), none of which was ever being cleared, so it
+        # kept accumulating in memory ungoverned for the whole parse. This
+        # is what caused a second real out-of-memory crash even after the
+        # first memory fix. Explicitly listening for DistinctParty closes
+        # too, and clearing THAT container, frees everything inside it
+        # (everything we extract plus everything we don't care about)
+        # once we're done with each entry.
+        context = LET.iterparse(response.raw, events=("end",), tag=("{*}FeatureType", "{*}Feature", "{*}DistinctParty"))
 
         for _event, elem in context:
             local_tag = LET.QName(elem).localname
@@ -3420,14 +3430,18 @@ def refresh_ofac_sanctions_list(username):
                     for child in elem.iter():
                         if LET.QName(child).localname == "VersionDetail" and child.text:
                             found.append((child.text.strip(), asset))
+            # local_tag == "DistinctParty": nothing to extract here directly -
+            # its Feature children already fired their own "end" events (and
+            # were processed above) before this DistinctParty's own "end"
+            # fires, since child elements always close before their parent.
+            # This branch exists purely to trigger the clear below, freeing
+            # the WHOLE entry - names, aliases, addresses, everything.
 
             # THE memory-bounded step: drop this element's contents and
             # unlink it (plus any now-empty preceding siblings) from its
-            # parent. Without this, lxml/ElementTree keep building up the
-            # full tree in memory as the file streams past, which is
-            # exactly what caused a real out-of-memory crash in production
-            # on an 80MB source file - this keeps memory roughly constant
-            # regardless of the document's total size.
+            # parent. Clearing DistinctParty cascades to free every
+            # descendant it still holds, not just the specific sub-elements
+            # this loop directly inspects.
             elem.clear(keep_tail=True)
             while elem.getprevious() is not None:
                 del elem.getparent()[0]
