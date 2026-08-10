@@ -4,6 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>On-Chain Investigations</title>
+<script>
+  // Set the theme BEFORE anything paints, so there's no flash of the
+  // wrong theme while the rest of the page loads - kept intentionally
+  // tiny and separate from the main app script, which runs much later.
+  (function () {
+    var saved = localStorage.getItem("theme");
+    var theme = (saved === "light" || saved === "dark")
+      ? saved
+      : (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -28,6 +40,57 @@
     --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
     --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Arial, sans-serif;
   }
+
+  /* ---------- Light theme ----------
+     Values chosen against GitHub's Primer design system (independently
+     verified WCAG AA text contrast), not guessed - the same discipline
+     used everywhere else in this app for anything safety/accuracy-critical. */
+  html[data-theme="light"] {
+    --ink: #ffffff;
+    --panel: #f6f8fa;
+    --panel-alt: #eaeef2;
+    --line: #d0d7de;
+    --text: #1f2328;
+    --text-dim: #59636e;
+    --accent: #0969da;
+    --accent-dim: #b6e3ff;
+    --accent-bg: #ddf4ff;
+    --flag: #cf222e;
+    --flag-bg: #fff1f0;
+    --entity: #116750;
+    --entity-bg: #dafbe1;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --warn-bg: #fff8c5;
+  }
+
+  /* ---------- Accessibility: visible focus indicator ----------
+     A border-color change alone (the previous focus style) is a weak
+     indicator for anyone with low vision - this adds a real, visible
+     ring around whatever's focused, keyboard-navigable throughout. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* ---------- Accessibility: respect reduced-motion preference ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .theme-toggle-btn {
+    background: transparent; border: 1px solid var(--line); border-radius: 7px;
+    width: 34px; height: 34px; font-size: 15px; cursor: pointer; color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .theme-toggle-btn:hover { background: var(--panel-alt); border-color: var(--accent); }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
@@ -143,7 +206,7 @@
   }
   select { font-family: var(--sans); }
   textarea { min-height: 70px; resize: vertical; }
-  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   .radio-row { display: flex; gap: 16px; }
   .radio-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); font-weight: 400; }
 
@@ -268,6 +331,7 @@
 <div id="preLoginTabBar" style="display:none;">
   <button id="preLoginTabLogin">Login</button>
   <button id="preLoginTabPricing">Pricing</button>
+  <button class="theme-toggle-btn" id="preLoginThemeToggleBtn" type="button" style="margin-left:8px;" aria-pressed="false" aria-label="Switch to light mode">🌙</button>
 </div>
 
 <!-- ============================================================
@@ -482,7 +546,7 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <div class="brand-title">On-Chain Investigations</div>
   </div>
-  <div class="nav" id="nav"></div>
+  <nav class="nav" id="nav" aria-label="Main navigation"></nav>
   <div class="sidebar-foot">
     <div class="conn-pill"><span class="conn-dot ok"></span><span id="whoamiLabel">-</span></div>
     <button class="btn secondary" id="security2faBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">🔐 Two-Factor Auth</button>
@@ -500,13 +564,14 @@
       </div>
     </div>
     <div style="display:flex; align-items:center; gap:14px;">
+      <button class="theme-toggle-btn" id="themeToggleBtn" type="button" aria-pressed="false" aria-label="Switch to light mode">🌙</button>
       <div class="style-toggle" id="styleToggle">
         <button data-style="technical">🎓 Technical</button>
         <button data-style="simple">👤 Simple</button>
       </div>
     </div>
   </div>
-  <div class="content" id="content"></div>
+  <main class="content" id="content"></main>
 </div>
 </div>
 
@@ -630,6 +695,50 @@ document.getElementById("styleToggle").addEventListener("click", (e) => {
   state.reportStyle = btn.dataset.style;
   refreshStyleToggle();
 });
+// ============================================================
+// THEME (light/dark) - accessibility: respects an explicit saved
+// choice first, then the OS-level prefers-color-scheme setting, so
+// nobody is forced into a theme that's uncomfortable for them
+// (e.g. photosensitivity, low vision) just because a default was
+// picked for them. Applied immediately on load, before anything
+// else renders, to avoid a flash of the wrong theme.
+// ============================================================
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const isLight = theme === "light";
+  ["themeToggleBtn", "preLoginThemeToggleBtn"].forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.textContent = isLight ? "☀️" : "🌙";
+    btn.setAttribute("aria-pressed", String(isLight));
+    btn.setAttribute("aria-label", isLight ? "Switch to dark mode" : "Switch to light mode");
+  });
+}
+
+function initTheme() {
+  const saved = localStorage.getItem("theme");
+  if (saved === "light" || saved === "dark") {
+    applyTheme(saved);
+    return;
+  }
+  const systemPrefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+  applyTheme(systemPrefersLight ? "light" : "dark");
+}
+initTheme();
+
+document.addEventListener("DOMContentLoaded", () => {
+  const toggle = () => {
+    const current = document.documentElement.getAttribute("data-theme") || "dark";
+    const next = current === "light" ? "dark" : "light";
+    applyTheme(next);
+    localStorage.setItem("theme", next);
+  };
+  ["themeToggleBtn", "preLoginThemeToggleBtn"].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.onclick = toggle;
+  });
+});
+
 function refreshStyleToggle() {
   document.querySelectorAll("#styleToggle button").forEach(b => b.classList.toggle("active", b.dataset.style === state.reportStyle));
   // Re-render whatever's currently on screen using cached last results, so the toggle is instant.
