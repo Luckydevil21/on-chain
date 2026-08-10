@@ -114,6 +114,11 @@ import json
 import time
 import requests
 import xml.etree.ElementTree as ET
+from lxml import etree as LET  # only for OFAC's large-file streaming parse (see refresh_ofac_sanctions_list) -
+                                 # lxml supports safely unlinking processed elements from their parent as we
+                                 # go, which stdlib ElementTree cannot do, keeping memory bounded regardless
+                                 # of the source file's size (an 80MB XML parsed the naive way can balloon to
+                                 # 500MB-1GB+ in memory, which caused a real out-of-memory crash in production)
 import auth  # only for _get_db_connection - reuses the same DB connection setup as auth.py
 from datetime import datetime, timezone, timedelta
 
@@ -3378,33 +3383,66 @@ def refresh_ofac_sanctions_list(username):
     SANCTIONS_REFRESH_LAST_ERROR = None
 
     try:
-        response = requests.get(OFAC_SDN_XML_URL, timeout=180)
+        # stream=True: the HTTP response body is consumed incrementally by
+        # the parser below, rather than requests buffering the full ~80MB
+        # into memory first (which response.content would do).
+        response = requests.get(OFAC_SDN_XML_URL, timeout=180, stream=True)
         response.raise_for_status()
     except requests.exceptions.RequestException as error:
         SANCTIONS_REFRESH_LAST_ERROR = f"Could not download the OFAC SDN list: {error}"
         SANCTIONS_REFRESH_IN_PROGRESS = False
         return {"success": False, "message": SANCTIONS_REFRESH_LAST_ERROR}
 
+    wanted_labels = {f"Digital Currency Address - {asset}": asset for asset in OFAC_TRACKED_ASSETS}
+    id_to_asset = {}  # "501" -> "XBT", populated as we pass ReferenceValueSets (appears early in the file)
+    found = []        # (address, asset_symbol)
+
     try:
-        root = ET.fromstring(response.content)
-    except ET.ParseError as error:
+        response.raw.decode_content = True
+        # tag=("{*}FeatureType", "{*}Feature"): only fire events for these two
+        # element types (any namespace) - everything else streams past
+        # without ever being fully materialized as a Python object.
+        context = LET.iterparse(response.raw, events=("end",), tag=("{*}FeatureType", "{*}Feature"))
+
+        for _event, elem in context:
+            local_tag = LET.QName(elem).localname
+            if local_tag == "FeatureType":
+                label = (elem.text or "").strip()
+                asset = wanted_labels.get(label)
+                if asset:
+                    feature_id = elem.get("ID")
+                    if feature_id:
+                        id_to_asset[feature_id] = asset
+            elif local_tag == "Feature":
+                feature_type_id = elem.get("FeatureTypeID")
+                asset = id_to_asset.get(feature_type_id)
+                if asset:
+                    for child in elem.iter():
+                        if LET.QName(child).localname == "VersionDetail" and child.text:
+                            found.append((child.text.strip(), asset))
+
+            # THE memory-bounded step: drop this element's contents and
+            # unlink it (plus any now-empty preceding siblings) from its
+            # parent. Without this, lxml/ElementTree keep building up the
+            # full tree in memory as the file streams past, which is
+            # exactly what caused a real out-of-memory crash in production
+            # on an 80MB source file - this keeps memory roughly constant
+            # regardless of the document's total size.
+            elem.clear(keep_tail=True)
+            while elem.getprevious() is not None:
+                del elem.getparent()[0]
+
+        del context
+    except LET.XMLSyntaxError as error:
         SANCTIONS_REFRESH_LAST_ERROR = f"Could not parse the OFAC SDN list: {error}"
         SANCTIONS_REFRESH_IN_PROGRESS = False
         return {"success": False, "message": SANCTIONS_REFRESH_LAST_ERROR}
-
-    found = []  # (address, asset_symbol)
-    for asset in OFAC_TRACKED_ASSETS:
-        feature_type = root.find(
-            f"sdn:ReferenceValueSets/sdn:FeatureTypeValues/*[.='Digital Currency Address - {asset}']",
-            OFAC_NAMESPACE,
-        )
-        if feature_type is None:
-            continue
-        address_id = feature_type.attrib.get("ID")
-        for feature in root.findall(f"sdn:DistinctParties//*[@FeatureTypeID='{address_id}']", OFAC_NAMESPACE):
-            for version_detail in feature.findall(".//sdn:VersionDetail", OFAC_NAMESPACE):
-                if version_detail.text:
-                    found.append((version_detail.text.strip(), asset))
+    except requests.exceptions.RequestException as error:
+        SANCTIONS_REFRESH_LAST_ERROR = f"Connection dropped while downloading the OFAC SDN list: {error}"
+        SANCTIONS_REFRESH_IN_PROGRESS = False
+        return {"success": False, "message": SANCTIONS_REFRESH_LAST_ERROR}
+    finally:
+        response.close()
 
     seen_lower = set()
     deduped = []
