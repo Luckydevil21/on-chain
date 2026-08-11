@@ -372,8 +372,8 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <h1>On-Chain Investigations</h1>
     <p class="landing-lede">
-      A blockchain forensics toolkit for tracing cryptocurrency and building court-ready
-      evidence - built for investigators, solicitors and law enforcement. Covers Ethereum,
+      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
+      evidence - built for investigators working with law enforcement. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
     <div class="landing-grid">
@@ -595,6 +595,7 @@ const SECTIONS = [
   { id: "swap-correlation", icon: "⇄", label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
   { id: "token-risk", icon: "⚠", label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
   { id: "sanctions", icon: "⛔", label: "Sanctions Screening", sub: "Check an address against the current OFAC SDN digital currency list", adminOnly: false, group: "Investigate" },
+  { id: "poisoning", icon: "🎣", label: "Address Poisoning Check", sub: "Check a wallet's own history for lookalike scam addresses", adminOnly: false, group: "Investigate" },
   { id: "saved-cases", icon: "▤", label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, group: "Case Data" },
   { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
   { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
@@ -1039,6 +1040,7 @@ function enterApp() {
   renderSwapCorrelationSection();
   renderTokenRiskSection();
   renderSanctionsSection();
+  renderPoisoningCheckSection();
   if (isAdmin()) renderUsersSection();
 
   buildNav();
@@ -1565,6 +1567,30 @@ function renderLinkTraceResults(data, meta) {
       </div>
     `;
     container.appendChild(fanoutCard);
+  }
+
+  if (data.poisoning_alert && data.poisoning_alert.length) {
+    const poisonCard = el("div", "card");
+    poisonCard.style.borderColor = "var(--flag)";
+    let poisonHtml = `<h3 style="color:var(--flag);">🎣 Possible address poisoning detected</h3>
+      <div class="hint" style="margin-bottom:10px;">
+        An address seen in this trace shares a suspiciously matching prefix/suffix with an address already
+        saved in the selected case - the kind of collision a scam lookalike relies on, and astronomically
+        unlikely to happen by coincidence. This tool doesn't guess which address is genuine; review both
+        below.
+      </div>`;
+    data.poisoning_alert.forEach((cluster, index) => {
+      poisonHtml += `<div class="footnote" style="margin-top:10px; font-weight:600;">Match ${index + 1} - shared prefix/suffix: <span class="mono">${escapeHtml(cluster.shared_prefix)}...${escapeHtml(cluster.shared_suffix)}</span></div>`;
+      for (const member of cluster.members) {
+        const sourceLabel = member.source === "saved_case"
+          ? '<span class="pill" style="background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent);">From saved case</span>'
+          : '<span class="pill" style="background:var(--panel-alt); color:var(--text-dim); border:1px solid var(--line);">Seen in this trace</span>';
+        poisonHtml += `<div style="margin-top:4px; margin-left:12px;">${escapeHtml(member.address)} ${sourceLabel}</div>`;
+      }
+    });
+    poisonHtml += `<div class="footnote" style="margin-top:10px;"><a href="#" onclick="switchSection('poisoning'); return false;">Open the full Address Poisoning Check for details →</a></div>`;
+    poisonCard.innerHTML = poisonHtml;
+    container.appendChild(poisonCard);
   }
 
   if (data.cross_chain_continuation) {
@@ -2644,6 +2670,104 @@ async function pollSanctionsRefresh() {
   setTimeout(poll, 4000);
 }
 
+// ============================================================
+// ADDRESS POISONING CHECK
+// ============================================================
+function renderPoisoningCheckSection() {
+  const section = el("div", "section", "");
+  section.id = "section-poisoning";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Check a wallet for poisoning attempts</h3>
+      <div class="field hint" style="margin-bottom:14px;">
+        A common scam: an attacker generates a lookalike address sharing a target's first few and last
+        few characters - the part people actually glance at when copy-pasting - then sends a tiny or
+        zero-value transaction so it shows up in the victim's own history, hoping they later copy the
+        WRONG address by mistake. This checks a wallet's own recent transaction history for exactly
+        that pattern. A match this specific is astronomically unlikely to be coincidence - but this tool
+        never guesses which address in a pair is the real one; it shows you the actual transaction
+        context for both so you can judge.
+      </div>
+      <div class="field"><label>Wallet address</label><input type="text" id="poisonWallet" placeholder="Any Bitcoin, Ethereum, XRP, Tron, or Solana address"></div>
+      <div class="field"><label>If this is an 0x... address, which EVM chain?</label>
+        <select id="poisonEvmChain"><option value="ethereum">Ethereum (default)</option></select>
+      </div>
+      <div class="field"><label>Also compare against a saved case's wallets (optional)</label>
+        <select id="poisonCaseId"><option value="">— none —</option></select>
+      </div>
+      <button class="btn" id="poisonCheckBtn">Check</button>
+    </div>
+    <div class="status-line" id="poisonStatus"></div>
+    <div id="poisonResult" class="result-box"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  const evmSelect = document.getElementById("poisonEvmChain");
+  apiFetch("/api/evm-chains").then(chains => {
+    evmSelect.innerHTML = chains.map(c => `<option value="${escapeHtml(c.key)}">${escapeHtml(c.name)}${c.key === "ethereum" ? " (default)" : ""}</option>`).join("");
+  }).catch(() => {});
+
+  const caseSelect = document.getElementById("poisonCaseId");
+  apiFetch("/api/cases").then(cases => {
+    caseSelect.innerHTML = `<option value="">— none —</option>` +
+      cases.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} (${c.wallet_count} wallet${c.wallet_count === 1 ? "" : "s"})</option>`).join("");
+  }).catch(() => {});
+
+  document.getElementById("poisonCheckBtn").onclick = async () => {
+    const wallet = document.getElementById("poisonWallet").value.trim();
+    const evmChain = evmSelect.value;
+    const caseId = caseSelect.value;
+    const statusEl = document.getElementById("poisonStatus");
+    const resultEl = document.getElementById("poisonResult");
+    if (!wallet) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Checking recent history...";
+    statusEl.className = "status-line";
+    resultEl.innerHTML = "";
+    try {
+      const body = { wallet, evm_chain: evmChain };
+      if (caseId) body.case_id = caseId;
+      const data = await apiFetch("/api/address-poisoning-check", { method: "POST", body: JSON.stringify(body) });
+      statusEl.textContent = `${data.counterparties_checked} counterpart(y/ies) checked${caseId ? " (plus the saved case's wallets)" : ""}.`;
+      renderPoisoningResults(data, resultEl);
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
+function renderPoisoningResults(data, container) {
+  if (!data.suspected_clusters.length) {
+    container.innerHTML = `<div class="empty-state">No suspected lookalike pairs found in this wallet's recent history (${data.counterparties_checked} counterpart(y/ies) checked). This doesn't rule out poisoning outside this sample - see the check's own note on scope.</div>`;
+    return;
+  }
+
+  data.suspected_clusters.forEach((cluster, index) => {
+    const card = el("div", "card");
+    card.style.borderColor = "var(--flag)";
+    let html = `<h3 style="color:var(--flag);">🎣 Suspected poisoning pair ${index + 1}</h3>
+      <div class="hint" style="margin-bottom:10px;">Shared prefix/suffix: <span class="mono">${escapeHtml(cluster.shared_prefix)}...${escapeHtml(cluster.shared_suffix)}</span></div>`;
+
+    for (const member of cluster.members) {
+      const sourceLabel = member.source === "saved_case"
+        ? '<span class="pill" style="background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent);">From saved case</span>'
+        : '<span class="pill" style="background:var(--panel-alt); color:var(--text-dim); border:1px solid var(--line);">This wallet\'s history</span>';
+      html += `<div class="footnote" style="margin-top:10px; font-weight:600;">${escapeHtml(member.address)} ${sourceLabel}</div>`;
+      if (member.occurrences.length) {
+        html += `<table class="data-table" style="margin-top:4px;"><tr><th>Direction</th><th>Amount</th><th>Tx Hash</th></tr>`;
+        for (const occ of member.occurrences) {
+          html += `<tr><td>${escapeHtml(occ.direction)}</td><td>${escapeHtml(occ.amount_label)}</td>
+            <td>${occ.explorer_url ? `<a href="${occ.explorer_url}" target="_blank">${escapeHtml((occ.tx_hash || "").slice(0, 14))}...</a>` : escapeHtml(occ.tx_hash || "")}</td></tr>`;
+        }
+        html += `</table>`;
+      } else {
+        html += `<div class="hint" style="margin-top:2px;">Saved to this case, but not necessarily ever seen interacting with this specific wallet.</div>`;
+      }
+    }
+    card.innerHTML = html;
+    container.appendChild(card);
+  });
+}
 
 // INIT
 // ============================================================
