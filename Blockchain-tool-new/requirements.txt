@@ -1,18 +1,25 @@
+# Pinned to exact versions, verified against pip-audit (no known
+# vulnerabilities) on 11 Aug 2026. Previously unpinned entirely -
+# meaning every deploy could silently resolve to a different version,
+# including a future one with a newly discovered vulnerability, with
+# zero warning. Re-run `pip-audit -r requirements.txt` periodically
+# and bump these deliberately, rather than leaving them to drift.
+
 # link_tracer.py
-requests
+requests==2.33.1
 
 # api_server.py
-fastapi
-uvicorn[standard]
-bcrypt
-pyjwt
-pyotp
-qrcode
-pillow
-psycopg2-binary
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+bcrypt==5.0.0
+pyjwt==2.7.0
+pyotp==2.10.0
+qrcode==8.2
+pillow==12.1.1
+psycopg2-binary==2.9.12
 
 # evidence_pack.py
-opentimestamps-client
-reportlab
-pytest
-lxml
+opentimestamps-client==0.7.2
+reportlab==4.4.10
+pytest==9.1.1
+lxml==6.0.2
