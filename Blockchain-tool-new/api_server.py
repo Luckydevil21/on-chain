@@ -94,7 +94,7 @@ import time
 import secrets
 import threading
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 import requests
@@ -134,10 +134,10 @@ if not _configured_api_key:
     print("=" * 70)
     print("⚠️  TOOLKIT_API_KEY was not set - generated a TEMPORARY one for")
     print("    this run only (it will be different next time you start the")
-    print("    server, and anyone reading these logs can see it):")
-    print(f"        {_configured_api_key}")
-    print("    Set the TOOLKIT_API_KEY environment variable before relying")
-    print("    on this, and definitely before deploying it anywhere.")
+    print("    server, and it is NOT printed here - logs shouldn't hold live")
+    print("    secrets, even temporary ones). Set the TOOLKIT_API_KEY")
+    print("    environment variable before relying on this, and definitely")
+    print("    before deploying it anywhere.")
     print("=" * 70)
 
 auth.bootstrap_admin_from_env()
@@ -170,6 +170,42 @@ def _check_rate_limit(client_ip):
 
 def _record_auth_failure(client_ip):
     _failed_auth_attempts[client_ip].append(time.time())
+
+
+# --------------------------------------------------------------
+# GENERAL-PURPOSE PER-USER RATE LIMITING for expensive endpoints
+# beyond just login. Nothing was stopping an authenticated user from
+# hammering trace/evidence-pack/sanctions-check endpoints - harmless
+# for one legitimate person doing real casework, but a real risk on a
+# shared multi-seat instance (one runaway script degrading things for
+# the whole team) or against third-party API quotas (Etherscan etc.)
+# shared across the whole deployment. Same in-memory, per-process
+# approach as the auth limiter above, and the same caveat applies -
+# move to a shared store (e.g. Redis) if this ever runs as multiple
+# replicas. Keyed by USERNAME (not IP) since these are already
+# authenticated endpoints - multiple people can legitimately share an
+# office IP, but each account's own usage should be tracked separately.
+# --------------------------------------------------------------
+_general_rate_limit_buckets = defaultdict(list)  # {"category:username": [timestamp, ...]}
+
+
+def _check_general_rate_limit(category, username, window_seconds, max_requests):
+    """Raises 429 if this user has made too many requests of this
+    category recently. Call once, right after auth, before doing the
+    actual (expensive) work - records this attempt regardless of
+    whether the work itself later succeeds or fails, since the cost
+    (API calls, CPU) was already spent either way."""
+    key = f"{category}:{username}"
+    now = time.time()
+    recent = [t for t in _general_rate_limit_buckets[key] if now - t < window_seconds]
+    if len(recent) >= max_requests:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many {category} requests - please wait a few minutes before trying again "
+                   f"(limit: {max_requests} per {window_seconds // 60} minutes).",
+        )
+    recent.append(now)
+    _general_rate_limit_buckets[key] = recent
 
 
 def require_read(request: Request):
@@ -372,12 +408,18 @@ def refresh_sanctions_list(background_tasks: BackgroundTasks, _admin=Depends(req
     """
     if lt.SANCTIONS_REFRESH_IN_PROGRESS:
         return {"started": False, "message": "A refresh is already in progress - check status for when it completes."}
+    # A separate COOLDOWN on top of the in-progress lock above - that lock
+    # only stops overlapping refreshes, not someone repeatedly starting one
+    # right after the last finished (each one is a genuinely expensive
+    # download+parse against OFAC's own servers, worth throttling).
+    _check_general_rate_limit("sanctions-refresh", _admin["username"], window_seconds=600, max_requests=3)
     background_tasks.add_task(_run_sanctions_refresh_and_log, _admin["username"])
     return {"started": True, "message": "Refresh started in the background - this can take 30-90 seconds. Check status below."}
 
 
 @app.post("/api/sanctions/check")
 def check_sanctions_endpoint(req: SanctionsCheckRequest, _auth=Depends(require_read)):
+    _check_general_rate_limit("sanctions-check", _auth["username"], window_seconds=300, max_requests=60)
     result = lt.check_sanctions(req.address)
     auth.log_action(_auth["username"], "sanctions_check", target=req.address)
     return result
@@ -676,15 +718,32 @@ def _swap_candidates_for_flagged_path(path, search_direction):
     )
 
 
-@app.post("/api/link-trace")
-def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
-    """
-    Traces forward (who did this wallet send to, hop by hop) or backward
-    (who funded this wallet, hop by hop) looking for a link to a flagged
-    wallet. Every branch is reported, not just matches - see
-    flagged_end_paths (hit a known exchange/mixer or high fan-out wallet)
-    and amount_filtered_paths (didn't match a tracked starting_amount).
-    """
+import uuid
+
+# In-memory job store for trace requests - safe given this app runs with
+# WEB_CONCURRENCY=1 (a single worker process, confirmed in Render's own
+# logs), same reasoning already used for the sanctions-refresh background
+# task. A trace on a genuinely active wallet can take well past most
+# reverse proxies' request timeout (Render included) once you account for
+# multiple hops, real fan-out, and the deliberate rate-limit-respecting
+# delays between chain API calls - exactly the same root cause that
+# caused the earlier OFAC 502, just not yet fixed here until now. Jobs
+# older than 15 minutes are swept on each new request/status check so
+# this doesn't grow unbounded.
+_TRACE_JOBS = {}
+
+
+def _cleanup_old_trace_jobs():
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    expired = [job_id for job_id, job in _TRACE_JOBS.items() if job["created_at"] < cutoff]
+    for job_id in expired:
+        del _TRACE_JOBS[job_id]
+
+
+def _execute_link_trace(req: "LinkTraceRequest", username: str):
+    """The actual trace logic - unchanged from before, just extracted
+    into its own function so it can be run as a background task instead
+    of blocking the HTTP request that started it."""
     if req.direction not in ("forward", "backward"):
         raise HTTPException(400, 'direction must be "forward" or "backward".')
     if req.seed_tx_hash and req.direction != "forward":
@@ -695,30 +754,22 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     seed_hops_capped = False
     if req.seed_tx_hash:
         if req.seed_sender_address:
-            # Bitcoin path - multiple inputs possible, so the person must
-            # confirm which input address is "the sender" for this trace.
             seed_hops, error_message, seed_hops_capped = lt.build_seed_hops_from_bitcoin_tx(req.seed_tx_hash, req.seed_sender_address)
             if error_message:
                 raise HTTPException(400, error_message)
-            seed_hop = seed_hops  # a list - trace_forward accepts either a single hop or a list
+            seed_hop = seed_hops
             actual_wallet = req.seed_sender_address
         else:
             single_hop, seed_chain, error_message = lt.build_seed_hop_from_tx_hash(req.seed_tx_hash)
             if error_message:
                 raise HTTPException(400, error_message)
             seed_hop = single_hop
-            actual_wallet = single_hop["from"]  # the trace's real root is this transaction's sender
+            actual_wallet = single_hop["from"]
 
     chain = lt.detect_chain(actual_wallet)
     if chain is None:
         raise HTTPException(400, "Not a recognized Ethereum, Bitcoin, XRP, or Tron address.")
 
-    # If the wallet being traced FROM is itself a registered known
-    # entity, the trace correctly refuses to expand into its (likely
-    # huge, unrelated) customer base - but without this, that produces
-    # silently empty results with no explanation. Surface it plainly
-    # instead, so it reads as "you searched the entity itself" rather
-    # than "the tool found nothing."
     root_known_entity = lt.check_known_entity(actual_wallet)
 
     targets = list(req.target_wallets or [])
@@ -744,11 +795,6 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
             seed_hop=seed_hop, evm_chain=evm_chain,
         )
 
-    # Automatic address-poisoning check against the selected case - only
-    # runs when a case is actually chosen (no case = nothing new to compare
-    # against, so nothing to silently check). Reuses the same detection as
-    # the standalone Address Poisoning Check tab, but surfaced automatically
-    # here so nobody has to remember to run it separately.
     poisoning_alert = None
     if req.case_id:
         poisoning_result = lt.detect_address_poisoning(actual_wallet, evm_chain, req.case_id)
@@ -767,30 +813,9 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
 
     search_direction = "incoming" if req.direction == "backward" else "outgoing"
 
-    # Sort every list of paths by when each one actually LEFT the
-    # traced wallet (the FIRST hop's real transaction time) - not the
-    # order the BFS happened to discover them in, and NOT the last
-    # hop's time either. Every one of these paths starts from the same
-    # wallet, so a reader scanning top-to-bottom expects the date on
-    # the FIRST box of each row to increase steadily. Sorting by the
-    # last hop instead would put a multi-hop chain's position based on
-    # when its trail concluded, which can be completely disconnected
-    # from when it actually started - producing exactly the same
-    # "jumps around" confusion this sort was meant to fix in the first
-    # place, just for a different reason.
     def _first_hop_time(path):
         return path[0]["tx_time"] if path else datetime.min.replace(tzinfo=timezone.utc)
 
-    # When continue_past_match extends a matched lineage across several
-    # hops, EVERY stopping point along the way gets recorded (see
-    # link_tracer.py's is_post_match tracking) - correct data, but
-    # showing the 1-hop match AND the 2-hop extension AND the 3-hop
-    # extension as separate boxes means the same early hop(s) appear
-    # redundantly in more than one place. A shorter path here is
-    # always a strict PREFIX of the longer one it belongs to (same
-    # hops, same order, just fewer of them) - so it adds nothing a
-    # reader doesn't already see in the longer version. Keep only the
-    # longest path per lineage.
     def _drop_prefix_paths(paths):
         def is_strict_prefix(shorter, longer):
             if len(shorter) >= len(longer):
@@ -808,7 +833,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
     flagged_end_paths.sort(key=lambda item: _first_hop_time(item[0]))
     amount_filtered_paths.sort(key=lambda item: _first_hop_time(item[0]))
 
-    auth.log_action(_auth["username"], "link_trace", target=actual_wallet, detail=f"direction={req.direction}" + (f", seeded_from_tx={req.seed_tx_hash}" if req.seed_tx_hash else ""))
+    auth.log_action(username, "link_trace", target=actual_wallet, detail=f"direction={req.direction}" + (f", seeded_from_tx={req.seed_tx_hash}" if req.seed_tx_hash else ""))
     return {
         "wallet": actual_wallet,
         "direction": req.direction,
@@ -827,6 +852,48 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
         "amount_filtered_paths": [_path_out(path, reason) for path, reason in amount_filtered_paths],
         "clean_summary": clean_summary,
     }
+
+
+def _run_link_trace_job(job_id, req, username):
+    try:
+        result = _execute_link_trace(req, username)
+        _TRACE_JOBS[job_id] = {"status": "done", "result": result, "message": None, "created_at": datetime.now(timezone.utc), "username": username}
+    except HTTPException as error:
+        _TRACE_JOBS[job_id] = {"status": "error", "result": None, "message": error.detail, "created_at": datetime.now(timezone.utc), "username": username}
+    except Exception as error:
+        _TRACE_JOBS[job_id] = {"status": "error", "result": None, "message": f"Unexpected error: {error}", "created_at": datetime.now(timezone.utc), "username": username}
+
+
+@app.post("/api/link-trace")
+def link_trace(req: LinkTraceRequest, background_tasks: BackgroundTasks, _auth=Depends(require_read)):
+    """
+    Starts a trace in the BACKGROUND and returns a job_id immediately -
+    a trace on a genuinely active wallet, across multiple hops with real
+    fan-out, can take well past most reverse proxies' request timeout
+    (confirmed in production). Poll GET /api/link-trace/{job_id} for the
+    result. See _execute_link_trace for the actual trace logic
+    (unchanged - forward/backward, seeding, known-entity/high-fanout
+    checks, automatic poisoning check, everything is identical to
+    before, just no longer blocking the request that started it).
+    """
+    _check_general_rate_limit("link-trace", _auth["username"], window_seconds=300, max_requests=30)
+    _cleanup_old_trace_jobs()
+    job_id = str(uuid.uuid4())
+    _TRACE_JOBS[job_id] = {"status": "running", "result": None, "message": None, "created_at": datetime.now(timezone.utc), "username": _auth["username"]}
+    background_tasks.add_task(_run_link_trace_job, job_id, req, _auth["username"])
+    return {"job_id": job_id}
+
+
+@app.get("/api/link-trace/{job_id}")
+def get_link_trace_result(job_id: str, _auth=Depends(require_read)):
+    job = _TRACE_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "No trace job with that id - it may have expired (jobs are kept for 15 minutes).")
+    if _auth["role"] != "admin" and job.get("username") != _auth["username"]:
+        raise HTTPException(403, "You can only view your own trace results.")
+    if job["status"] == "error":
+        raise HTTPException(400, job["message"])
+    return job
 
 
 # ====================================================================
@@ -1160,6 +1227,7 @@ class CreateEvidencePackRequest(BaseModel):
 
 @app.post("/api/evidence-pack")
 def create_evidence_pack_endpoint(req: CreateEvidencePackRequest, _auth=Depends(require_read)):
+    _check_general_rate_limit("evidence-pack", _auth["username"], window_seconds=300, max_requests=10)
     try:
         result = evidence_pack.create_evidence_pack(
             _auth["username"], req.trace_data, req.case_reference,
@@ -1235,6 +1303,7 @@ class TokenRiskCheckRequest(BaseModel):
 
 @app.post("/api/token-risk-check")
 def check_token_risk(req: TokenRiskCheckRequest, _auth=Depends(require_read)):
+    _check_general_rate_limit("token-risk-check", _auth["username"], window_seconds=300, max_requests=30)
     chain = lt.detect_chain(req.address)
     if chain == "solana":
         result = lt.check_solana_token_risk(req.address)
@@ -1261,6 +1330,7 @@ def check_address_poisoning(req: PoisoningCheckRequest, _auth=Depends(require_re
     """Checks a wallet's own recent transaction history (and optionally a
     saved case's wallets) for suspected address-poisoning lookalikes -
     see link_tracer.py's detect_address_poisoning()."""
+    _check_general_rate_limit("poisoning-check", _auth["username"], window_seconds=300, max_requests=30)
     result = lt.detect_address_poisoning(req.wallet, req.evm_chain or lt.DEFAULT_EVM_CHAIN, req.case_id)
     if "error" in result:
         raise HTTPException(400, result["error"])
