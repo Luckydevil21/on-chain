@@ -1361,6 +1361,13 @@ function renderLinkTraceSection() {
       rows += `<tr><td class="label">Verify</td><td><a href="${data.explorer_url}" target="_blank">view on block explorer</a></td></tr>`;
       let html = `<h3>Transaction found</h3><table class="legend-table">${rows}</table>`;
 
+      if (data.pattern_match) {
+        html += `<div class="card" style="border-color:var(--entity); margin-top:12px;">
+          <h3 style="color:var(--entity);">🏷️ Matched: ${escapeHtml(data.pattern_match.name)} (${escapeHtml(data.pattern_match.type)})</h3>
+          <div class="hint">Decoded memo/OP_RETURN text: <span class="mono">${escapeHtml(data.pattern_match.decoded_text || "")}</span></div>
+        </div>`;
+      }
+
       if (data.inputs && data.outputs) {
         html += `<div class="footnote" style="margin-top:12px;">Inputs (${data.inputs.length}):</div>
           <table class="data-table" style="margin-top:6px;"><tr><th>Address</th><th>Amount</th></tr>` +
@@ -1372,6 +1379,15 @@ function renderLinkTraceSection() {
           `</table>`;
       }
       card.innerHTML = html;
+      if (data.pattern_match && data.pattern_match.embedded_destination_address) {
+        const embedBtn = el("button", "btn secondary",
+          `⇢ Trace forward on ${data.pattern_match.embedded_destination_chain} from here (memo-stated destination)`);
+        embedBtn.style.cssText = "margin-top:12px; margin-right:8px; font-size:12px; padding:7px 14px;";
+        embedBtn.title = "The service's own memo states this exact destination address - the service's own " +
+          "stated routing, not a timing/amount heuristic.";
+        embedBtn.onclick = () => runForwardTraceFrom(data.pattern_match.embedded_destination_address);
+        card.appendChild(embedBtn);
+      }
       if (data.from) {
         const traceBtn = el("button", "btn secondary", "⇢ Trace forward from this transaction");
         traceBtn.style.cssText = "margin-top:12px; font-size:12px; padding:7px 14px;";
@@ -1385,7 +1401,9 @@ function renderLinkTraceSection() {
         const uniqueInputs = [...new Set(data.inputs.map(i => i.address).filter(Boolean))];
         const picker = el("div");
         picker.style.cssText = "margin-top:12px;";
-        const label = el("div", "hint", "This Bitcoin transaction has multiple inputs - pick which address to trace forward from:");
+        const label = el("div", "hint", uniqueInputs.length > 1
+          ? "This Bitcoin transaction has multiple inputs - pick which address to trace forward from:"
+          : "Trace forward from this transaction's input:");
         label.style.marginBottom = "6px";
         picker.appendChild(label);
         const select = document.createElement("select");
