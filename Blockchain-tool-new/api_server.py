@@ -744,6 +744,17 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
             seed_hop=seed_hop, evm_chain=evm_chain,
         )
 
+    # Automatic address-poisoning check against the selected case - only
+    # runs when a case is actually chosen (no case = nothing new to compare
+    # against, so nothing to silently check). Reuses the same detection as
+    # the standalone Address Poisoning Check tab, but surfaced automatically
+    # here so nobody has to remember to run it separately.
+    poisoning_alert = None
+    if req.case_id:
+        poisoning_result = lt.detect_address_poisoning(actual_wallet, evm_chain, req.case_id)
+        if poisoning_result.get("suspected_clusters"):
+            poisoning_alert = poisoning_result["suspected_clusters"]
+
     all_paths_for_summary = (
         matched_paths
         + [path for path, _reason in flagged_end_paths]
@@ -805,6 +816,7 @@ def link_trace(req: LinkTraceRequest, _auth=Depends(require_read)):
         "root_known_entity": root_known_entity,
         "seed_hops_capped": seed_hops_capped,
         "root_high_fanout": root_high_fanout,
+        "poisoning_alert": poisoning_alert,
         "targets_checked": len(targets),
         "addresses_visited": addresses_visited,
         "matched_paths": [_path_out(path) for path in matched_paths],
@@ -1235,6 +1247,25 @@ def check_token_risk(req: TokenRiskCheckRequest, _auth=Depends(require_read)):
         raise HTTPException(400, "Not a recognized Solana or Ethereum address.")
 
     auth.log_action(_auth["username"], "token_risk_check", target=req.address, detail=f"chain={chain}")
+    return result
+
+
+class PoisoningCheckRequest(BaseModel):
+    wallet: str
+    evm_chain: Optional[str] = None
+    case_id: Optional[str] = Field(default=None, description="Optional - also compare against this saved case's wallet addresses.")
+
+
+@app.post("/api/address-poisoning-check")
+def check_address_poisoning(req: PoisoningCheckRequest, _auth=Depends(require_read)):
+    """Checks a wallet's own recent transaction history (and optionally a
+    saved case's wallets) for suspected address-poisoning lookalikes -
+    see link_tracer.py's detect_address_poisoning()."""
+    result = lt.detect_address_poisoning(req.wallet, req.evm_chain or lt.DEFAULT_EVM_CHAIN, req.case_id)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    auth.log_action(_auth["username"], "address_poisoning_check", target=req.wallet,
+                     detail=f"clusters_found={len(result['suspected_clusters'])}")
     return result
 
 
