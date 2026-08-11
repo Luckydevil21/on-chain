@@ -3580,6 +3580,148 @@ def _lookup_bithomp_service(address):
     return result
 
 
+# ====================================================================
+# ADDRESS POISONING DETECTION. A real, well-documented scam: an
+# attacker generates a lookalike address that shares a target's first
+# few and last few characters (the part people actually glance at
+# when copy-pasting an address), then sends a zero-value or dust
+# transaction to the victim so the lookalike shows up in their
+# transaction history - hoping the victim later copies the WRONG
+# address from their own history by mistake.
+#
+# This checks a wallet's OWN transaction history (not the whole
+# blockchain, which isn't feasible without a dedicated address index -
+# see the conversation this was scoped from) for pairs of DIFFERENT
+# addresses that suspiciously share the same prefix+suffix - a
+# collision astronomically unlikely to happen by chance, so any match
+# found this way is a near-certain deliberate attempt, not
+# coincidence. The tool does NOT guess which address in a flagged
+# pair is "the real one" - it presents both with their actual
+# transaction context (value, count, direction) so the investigator
+# can judge, consistent with never overstating confidence.
+# ====================================================================
+
+def _poisoning_signature(address, chain):
+    """
+    PLAIN ENGLISH: Strips each chain's own FIXED literal prefix
+    (shared by every address on that chain, so comparing it would
+    cause false matches) and returns (first_chars, last_chars) as the
+    comparison key. Two DIFFERENT addresses sharing this same
+    signature are a suspected poisoning pair.
+    """
+    addr = address
+    if chain == "ethereum" and addr.lower().startswith("0x"):
+        addr = addr[2:]
+    elif chain == "bitcoin":
+        if addr.lower().startswith("bc1q") or addr.lower().startswith("bc1p"):
+            addr = addr[4:]
+        elif addr and addr[0] in ("1", "3"):
+            addr = addr[1:]
+    elif chain == "xrp" and addr.startswith("r"):
+        addr = addr[1:]
+    elif chain == "tron" and addr.startswith("T"):
+        addr = addr[1:]
+    # solana: no fixed literal prefix character, compare as-is
+
+    prefix_len, suffix_len = 6, 4
+    if len(addr) < prefix_len + suffix_len:
+        return None  # too short to meaningfully compare
+    return (addr[:prefix_len].lower(), addr[-suffix_len:].lower())
+
+
+def detect_address_poisoning(wallet, evm_chain=DEFAULT_EVM_CHAIN, case_id=None):
+    """
+    PLAIN ENGLISH: Fetches this wallet's own recent outgoing AND
+    incoming counterparties, groups them by their poisoning signature
+    (see _poisoning_signature), and returns any group containing 2+
+    DIFFERENT addresses - each such group is a suspected poisoning
+    pair/cluster, presented with the actual transaction context for
+    each member so the investigator can judge which is genuine.
+
+    If case_id is given, that saved case's own wallet addresses (see
+    Saved Cases) are ALSO added to the comparison pool - so a
+    poisoning attempt targeting this specific investigation gets
+    caught even if the lookalike doesn't appear in THIS wallet's own
+    history, but instead mimics an address you've already confirmed
+    and saved from earlier work on the same case. Each member of a
+    flagged cluster is labeled with WHERE it came from (this wallet's
+    live history, or the saved case) so the investigator can judge
+    accordingly - a case-saved address wasn't necessarily ever seen
+    interacting with this specific wallet at all.
+
+    HONEST LIMITATION: only checks the same capped sample (up to 15
+    outgoing + 15 incoming counterparties) the rest of this app uses
+    per direction - a wallet with far more activity than that may have
+    a poisoning attempt outside this sample. This is a real, useful
+    check, not an exhaustive guarantee.
+    """
+    chain = detect_chain(wallet)
+    if chain is None:
+        return {"error": "Not a recognized address on any supported chain."}
+
+    outgoing, _ = get_outgoing_counterparties(chain, wallet, evm_chain)
+    incoming, _ = get_incoming_counterparties(chain, wallet, evm_chain)
+
+    signature_groups = {}  # signature -> list of {"address", "source", "direction", "amount_label", "tx_hash", "tx_time"}
+    for direction, hops in [("outgoing", outgoing), ("incoming", incoming)]:
+        for hop in hops:
+            counterparty = hop.get("counterparty")
+            if not counterparty:
+                continue
+            signature = _poisoning_signature(counterparty, chain)
+            if signature is None:
+                continue
+            signature_groups.setdefault(signature, []).append({
+                "address": counterparty,
+                "source": "wallet_history",
+                "direction": direction,
+                "amount_label": hop.get("amount_label", ""),
+                "tx_hash": hop.get("tx_hash"),
+                "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
+                "explorer_url": hop.get("explorer_url"),
+            })
+
+    if case_id:
+        for case_address in load_case_wallet_addresses(case_id):
+            signature = _poisoning_signature(case_address, chain)
+            if signature is None:
+                continue
+            signature_groups.setdefault(signature, []).append({
+                "address": case_address,
+                "source": "saved_case",
+                "direction": None,
+                "amount_label": None,
+                "tx_hash": None,
+                "tx_time_utc": None,
+                "explorer_url": None,
+            })
+
+    suspected_clusters = []
+    for signature, members in signature_groups.items():
+        distinct_addresses = {m["address"].lower(): m for m in members}
+        if len(distinct_addresses) < 2:
+            continue  # only one real address has this signature - no collision, nothing suspicious
+        cluster_members = {}
+        for m in members:
+            key = m["address"].lower()
+            cluster_members.setdefault(key, {"address": m["address"], "source": m["source"], "occurrences": []})
+            if m["direction"] is not None:  # skip the placeholder-only entry a saved-case address gets
+                cluster_members[key]["occurrences"].append({
+                    "direction": m["direction"], "amount_label": m["amount_label"],
+                    "tx_hash": m["tx_hash"], "tx_time_utc": m["tx_time_utc"], "explorer_url": m["explorer_url"],
+                })
+        suspected_clusters.append({
+            "shared_prefix": signature[0], "shared_suffix": signature[1],
+            "members": list(cluster_members.values()),
+        })
+
+    return {
+        "wallet": wallet, "chain": chain,
+        "counterparties_checked": len(outgoing) + len(incoming),
+        "suspected_clusters": suspected_clusters,
+    }
+
+
 def check_known_entity(address):
     """Returns {"name":..., "type":...} if address is OFAC-sanctioned, a
     known exchange/mixer/custodial wallet, otherwise None. Sanctions are
@@ -4194,7 +4336,7 @@ def trace_backward(start_wallet, target_lowercase_set, max_hops, starting_amount
         # Hop limit reached with wallets still un-traced - report
         # those as trail ends too (the trail may continue further
         # back than MAX_HOPS allowed).
-        for address, path_so_far, _tracked_amount in frontier:
+        for address, path_so_far, _tracked_amount, _is_post_match in frontier:
             if path_so_far:
                 trail_end_paths.append((path_so_far, "hop limit reached - trail may continue further back"))
 
