@@ -20,6 +20,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/vis-network.min.js"></script>
 <style>
   :root {
     --ink: #0d1117;
@@ -2250,6 +2251,22 @@ async function openCase(caseId) {
       </div>
       <div class="status-line" id="cwStatus"></div>` : ""}
       <div class="card"><h3>Wallets in this case</h3><div id="cwList"></div></div>
+      <div class="card">
+        <h3>Case graph</h3>
+        <div class="field hint mb-md">
+          Every wallet and transaction discovered across every trace ever run against this case,
+          in one explorable network - not just this session's results. Run a new trace next week that
+          reaches a wallet found today, and it connects into the same graph automatically.
+        </div>
+        <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+          <div class="field" style="margin-bottom:0;"><label>From date (optional)</label><input type="date" id="graphFromDate"></div>
+          <div class="field" style="margin-bottom:0;"><label>To date (optional)</label><input type="date" id="graphToDate"></div>
+          <button class="btn" id="graphLoadBtn">Load graph</button>
+        </div>
+        <div class="status-line" id="graphStatus"></div>
+        <div id="graphContainer" style="display:none; height:520px; margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+        <div id="graphNodeDetail"></div>
+      </div>
     `;
 
     document.getElementById("caseBackBtn").onclick = () => {
@@ -2257,6 +2274,8 @@ async function openCase(caseId) {
       document.getElementById("casesListView").style.display = "block";
       savedCasesState.openCaseId = null;
     };
+
+    document.getElementById("graphLoadBtn").onclick = () => loadCaseGraph(caseId);
 
     renderCaseWalletsTable(caseData.wallets);
 
@@ -2280,6 +2299,115 @@ async function openCase(caseId) {
     }
   } catch (err) {
     detailView.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadCaseGraph(caseId) {
+  const statusEl = document.getElementById("graphStatus");
+  const containerEl = document.getElementById("graphContainer");
+  const detailEl = document.getElementById("graphNodeDetail");
+  statusEl.textContent = "Loading...";
+  statusEl.className = "status-line";
+  detailEl.innerHTML = "";
+
+  try {
+    const graph = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/graph`);
+
+    // Density management: an optional date range narrows what's shown,
+    // since a case with many traces run against it over time could
+    // otherwise accumulate into an unreadable tangle - the growing-graph
+    // idea is only useful if it stays readable as it grows.
+    const fromDate = document.getElementById("graphFromDate").value;
+    const toDate = document.getElementById("graphToDate").value;
+    let edges = graph.edges;
+    if (fromDate) edges = edges.filter(e => e.tx_time_utc && e.tx_time_utc >= fromDate);
+    if (toDate) edges = edges.filter(e => e.tx_time_utc && e.tx_time_utc <= toDate + " 23:59:59");
+
+    if (!graph.edges.length) {
+      statusEl.textContent = "";
+      containerEl.style.display = "none";
+      detailEl.innerHTML = `<div class="empty-state">No graph data yet - run a trace with this case selected to start building it.</div>`;
+      return;
+    }
+    if (!edges.length) {
+      statusEl.textContent = `${graph.edges.length} total edge(s) in this case, none in the selected date range.`;
+      statusEl.className = "status-line error";
+      containerEl.style.display = "none";
+      return;
+    }
+
+    // Only include nodes actually touched by the (possibly date-filtered) edges.
+    const activeAddresses = new Set();
+    edges.forEach(e => { activeAddresses.add(e.from.toLowerCase()); activeAddresses.add(e.to.toLowerCase()); });
+    const activeNodes = graph.nodes.filter(n => activeAddresses.has(n.id.toLowerCase()));
+
+    const nodeColor = (node) => {
+      if (node.is_case_wallet) return { border: "#4f8cc9", background: "#142331" };
+      if (node.entity_type === "sanctioned") return { border: "#e0666c", background: "#2a1416" };
+      if (node.entity_name) return { border: "#4fb3a3", background: "#12211f" };
+      return { border: "#5a6472", background: "#1c232c" };
+    };
+
+    const visNodes = new vis.DataSet(activeNodes.map(n => ({
+      id: n.id,
+      label: n.entity_name || truncateAddress(n.id),
+      title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
+      shape: n.is_case_wallet ? "box" : "dot",
+      size: n.is_case_wallet ? 22 : 14,
+      color: nodeColor(n),
+      font: { color: "#c9d1d9", size: 12 },
+    })));
+
+    const visEdges = new vis.DataSet(edges.map((e, i) => ({
+      id: i,
+      from: e.from, to: e.to, arrows: "to",
+      label: e.amount_label || "",
+      font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+      color: { color: e.is_change ? "#4f8cc9" : "#3d5a78", opacity: e.is_change ? 0.5 : 0.8 },
+      dashes: e.is_change,
+      tx: e,
+    })));
+
+    statusEl.textContent = `${activeNodes.length} address(es), ${edges.length} transaction(s) shown${edges.length !== graph.edges.length ? ` (of ${graph.edges.length} total)` : ""}.`;
+    statusEl.className = "status-line";
+    containerEl.style.display = "block";
+    containerEl.innerHTML = "";
+
+    const network = new vis.Network(containerEl, { nodes: visNodes, edges: visEdges }, {
+      physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 120 } },
+      interaction: { hover: true, tooltipDelay: 150 },
+      layout: { improvedLayout: true },
+    });
+
+    network.on("click", (params) => {
+      detailEl.innerHTML = "";
+      if (params.nodes.length) {
+        const node = activeNodes.find(n => n.id === params.nodes[0]);
+        const card = el("div", "card");
+        card.style.marginTop = "10px";
+        card.innerHTML = `
+          <div class="mono" style="font-weight:600;">${escapeHtml(node.id)}</div>
+          ${node.entity_name ? `<div class="hint">${escapeHtml(node.entity_name)} (${escapeHtml(node.entity_type)})</div>` : `<div class="footnote">No known-entity attribution yet.</div>`}
+          ${node.is_case_wallet ? `<div class="footnote">One of this case's own saved wallets.</div>` : ""}
+        `;
+        detailEl.appendChild(card);
+      } else if (params.edges.length) {
+        const edge = visEdges.get(params.edges[0]);
+        const tx = edge.tx;
+        const card = el("div", "card");
+        card.style.marginTop = "10px";
+        card.innerHTML = `
+          <div class="footnote"><strong>${escapeHtml(tx.amount_label || "")}</strong> - ${escapeHtml(tx.tx_time_utc || "unknown time")}</div>
+          <div class="mono footnote">${escapeHtml(tx.from)} → ${escapeHtml(tx.to)}</div>
+          ${tx.is_change ? `<div class="hint">Flagged as likely change (heuristic).</div>` : ""}
+          ${tx.explorer_url ? `<a href="${escapeHtml(tx.explorer_url)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
+        `;
+        detailEl.appendChild(card);
+      }
+    });
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    statusEl.className = "status-line error";
   }
 }
 
