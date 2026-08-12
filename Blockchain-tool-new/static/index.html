@@ -20,7 +20,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/vis-network.min.js"></script>
+<script src="/static/vis-network.min.js"></script>
 <style>
   :root {
     --ink: #0d1117;
@@ -1920,8 +1920,12 @@ function renderLinkTraceResults(data, meta, containerId) {
       linearViewContainer.style.display = showGraph ? "none" : "";
       graphViewContainer.style.display = showGraph ? "" : "none";
       if (showGraph && !graphInitialized) {
-        graphInitialized = true;
-        renderTraceGraph(data, allPaths, graphViewContainer);
+        try {
+          renderTraceGraph(data, allPaths, graphViewContainer);
+          graphInitialized = true;  // only on genuine success - a failed attempt can be retried
+        } catch (err) {
+          graphViewContainer.innerHTML = `<div class="status-line error">Could not load the graph view: ${escapeHtml(err.message)}. The linear view above is unaffected.</div>`;
+        }
       }
     };
   });
