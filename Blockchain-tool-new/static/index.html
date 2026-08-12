@@ -739,6 +739,7 @@ function addressExplorerUrl(address, chain, evmChain) {
 
 const SECTIONS = [
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, essential: true, group: "Investigate" },
+  { id: "find-connection", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="10" r="2.5"/><circle cx="16" cy="10" r="2.5"/><path d="M6.5 10 H13.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Find Connection", sub: "Does money from one wallet ever reach another?", adminOnly: false, essential: true, group: "Investigate" },
   { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
   { id: "swap-correlation", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 H15 M15 6 L12 3 M15 6 L12 9"/><path d="M17 14 H5 M5 14 L8 11 M5 14 L8 17"/></svg>`, label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
   { id: "token-risk", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18.5 17 H1.5 Z"/><line x1="10" y1="8" x2="10" y2="12"/><circle cx="10" cy="14.5" r="0.7" fill="currentColor"/></svg>`, label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
@@ -1227,6 +1228,7 @@ function enterApp() {
   const contentEl = document.getElementById("content");
   contentEl.innerHTML = "";
   renderLinkTraceSection();
+  renderFindConnectionSection();
   renderSavedCasesSection();
   renderKnownEntitiesSection();
   renderDepositMapSection();
@@ -1339,6 +1341,26 @@ async function runAIAssist(kind, traceData, meta) {
     statusEl.className = "status-line error";
   } finally {
     button.disabled = false;
+  }
+}
+
+// Starts a trace as a background job and polls until it's done - a
+// trace on a genuinely active wallet can take well past what most
+// reverse proxies (Render included) will hold a single request open
+// for, confirmed in production. Polling avoids ever needing one long
+// connection at all. statusEl gets progress text; returns the final
+// result or throws with the real error message on failure. Top-level
+// (not nested in any one section) since Find Connection uses it too.
+async function runTraceAsJob(body, statusEl) {
+  const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+  const jobId = started.job_id;
+  let pollCount = 0;
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    pollCount++;
+    const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
+    if (job.status === "done") return job.result;
+    if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
   }
 }
 
@@ -1494,25 +1516,6 @@ function renderLinkTraceSection() {
     if (mode === "txhash") return runTxHashLookup();
     if (mode === "walletdate") return runWalletDateSearch();
   };
-
-  // Starts a trace as a background job and polls until it's done - a
-  // trace on a genuinely active wallet can take well past what most
-  // reverse proxies (Render included) will hold a single request open
-  // for, confirmed in production. Polling avoids ever needing one long
-  // connection at all. statusEl gets progress text; returns the final
-  // result or throws with the real error message on failure.
-  async function runTraceAsJob(body, statusEl) {
-    const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
-    const jobId = started.job_id;
-    let pollCount = 0;
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      pollCount++;
-      const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
-      if (job.status === "done") return job.result;
-      if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
-    }
-  }
 
   async function runWalletTrace() {
     const wallet = document.getElementById("ltWallet").value.trim();
@@ -1759,8 +1762,8 @@ async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress, priorH
   }
 }
 
-function renderLinkTraceResults(data, meta) {
-  const container = document.getElementById("ltResults");
+function renderLinkTraceResults(data, meta, containerId) {
+  const container = document.getElementById(containerId || "ltResults");
   container.innerHTML = "";
   const simple = state.reportStyle === "simple";
 
@@ -3089,6 +3092,73 @@ async function pollSanctionsRefresh() {
 // ============================================================
 // ADDRESS POISONING CHECK
 // ============================================================
+// ============================================================
+// FIND CONNECTION - a simple, focused front door for a question every
+// solicitor genuinely asks: "does money from this wallet ever reach
+// that one?" Not a new backend capability - this is the exact same
+// trace + target_wallets logic Link Tracer's "Extra target wallet(s)"
+// field already does, just given its own clear, single-purpose entry
+// point instead of being a secondary field on a bigger form.
+// ============================================================
+function renderFindConnectionSection() {
+  const section = el("div", "section", "");
+  section.id = "section-find-connection";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Does money from one wallet ever reach another?</h3>
+      <div class="field hint mb-md">
+        Enter two wallet addresses - this searches hop by hop for a real, on-chain path connecting
+        them. If they connect, you'll see the exact transaction trail; if not, that's genuine evidence
+        of no direct link within that search depth, not proof of no connection at all (see the tool's
+        documented limitations).
+      </div>
+      <div class="field"><label>Starting wallet</label><input type="text" id="fcWalletA" placeholder="e.g. the victim's wallet"></div>
+      <div class="field"><label>Suspected connection</label><input type="text" id="fcWalletB" placeholder="e.g. a wallet you suspect received the funds"></div>
+      <div class="field">
+        <label>Direction</label>
+        <div style="display:flex; gap:20px; margin-top:6px;">
+          <label style="font-weight:normal; display:flex; align-items:center; gap:6px;"><input type="radio" name="fcDirection" value="forward" checked style="width:auto;"> Did the starting wallet's money reach the other one?</label>
+          <label style="font-weight:normal; display:flex; align-items:center; gap:6px;"><input type="radio" name="fcDirection" value="backward" style="width:auto;"> Did the starting wallet's money come FROM the other one?</label>
+        </div>
+      </div>
+      <button class="btn" id="fcSearchBtn">Find connection</button>
+    </div>
+    <div class="status-line" id="fcStatus"></div>
+    <div id="fcResults"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("fcSearchBtn").onclick = async () => {
+    const walletA = document.getElementById("fcWalletA").value.trim();
+    const walletB = document.getElementById("fcWalletB").value.trim();
+    const direction = document.querySelector('input[name="fcDirection"]:checked').value;
+    const statusEl = document.getElementById("fcStatus");
+    const resultsEl = document.getElementById("fcResults");
+    if (!walletA || !walletB) { statusEl.textContent = "Enter both wallet addresses first."; statusEl.className = "status-line error"; return; }
+
+    statusEl.textContent = "Searching...";
+    statusEl.className = "status-line";
+    resultsEl.innerHTML = "";
+    try {
+      const body = { wallet: walletA, direction, target_wallets: [walletB] };
+      const data = await runTraceAsJob(body, statusEl);
+      lastResults.linkTrace = data;
+      lastResults.linkTraceMeta = { wallet: walletA, direction };
+
+      if (data.matched_paths && data.matched_paths.length) {
+        statusEl.textContent = `✅ Yes - a connection was found. ${data.addresses_visited} wallet(s) checked.`;
+      } else {
+        statusEl.textContent = `No direct connection found within the search depth (${data.addresses_visited} wallet(s) checked). This doesn't prove there's no connection at all - see the results below for why the trail may have stopped.`;
+      }
+      statusEl.className = "status-line";
+      renderLinkTraceResults(data, lastResults.linkTraceMeta, "fcResults");
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+}
+
 function renderPoisoningCheckSection() {
   const section = el("div", "section", "");
   section.id = "section-poisoning";
