@@ -3771,8 +3771,83 @@ def build_target_set(include_case_watchlist=True):
 
 
 # ====================================================================
-# SECTION 5: THE FORWARD TRACE (breadth-first search)
+# FLAGGED ADDRESSES - "flag for review" queue. When a trace hits an
+# address with no known-entity attribution, anyone can flag it for an
+# admin/specialist to research and confirm later - turning every real
+# "we don't know who this is" moment from actual usage into something
+# that grows Known Entities sustainably, prioritized by what solicitors
+# are genuinely hitting in real cases, rather than trying to guess at a
+# comprehensive database upfront (see the conversation this was scoped
+# from - scraping Etherscan/Blockchair's proprietary labels was
+# considered and rejected on both ToS and business-continuity grounds).
 # ====================================================================
+
+def flag_address_for_review(address, chain, context, username):
+    """Adds an address to the review queue. Returns a dict describing
+    what happened - including the case where it's already pending
+    (the DB's own partial unique index prevents true duplicates, this
+    just gives a clean, specific message instead of a raw DB error)."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM flagged_addresses WHERE lower(address) = lower(%s) AND status = 'pending';",
+                    (address,)
+                )
+                if cur.fetchone():
+                    return {"success": True, "already_pending": True, "message": "Already flagged and awaiting review."}
+                cur.execute(
+                    "INSERT INTO flagged_addresses (address, chain, context, flagged_by) VALUES (%s, %s, %s, %s);",
+                    (address, chain, context, username)
+                )
+                conn.commit()
+        return {"success": True, "already_pending": False, "message": "Flagged for review."}
+    except Exception as error:
+        print(f"⚠️  Could not flag address for review: {error}")
+        return {"success": False, "message": f"Could not save the flag: {error}"}
+
+
+def load_flagged_addresses(status="pending"):
+    """Returns every flagged address with the given status (default:
+    pending), most recently flagged first."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, address, chain, context, flagged_by, flagged_at, status, "
+                    "resolved_by, resolved_at, resolution_notes "
+                    "FROM flagged_addresses WHERE status = %s ORDER BY flagged_at DESC;",
+                    (status,)
+                )
+                columns = ["id", "address", "chain", "context", "flagged_by", "flagged_at",
+                           "status", "resolved_by", "resolved_at", "resolution_notes"]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+    except Exception as error:
+        print(f"⚠️  Could not read flagged addresses from the database: {error}")
+        return []
+
+
+def resolve_flagged_address(flag_id, username, resolution_notes, dismiss=False):
+    """Marks a flagged address as resolved (an entity was confirmed and
+    added) or dismissed (reviewed, but nothing worth adding - e.g. a
+    duplicate or a personal/unrelated wallet, not a service)."""
+    status = "dismissed" if dismiss else "resolved"
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE flagged_addresses SET status = %s, resolved_by = %s, "
+                    "resolved_at = now(), resolution_notes = %s WHERE id = %s;",
+                    (status, username, resolution_notes, flag_id)
+                )
+                conn.commit()
+        return {"success": True}
+    except Exception as error:
+        print(f"⚠️  Could not resolve flagged address: {error}")
+        return {"success": False, "message": str(error)}
+
+
+
 
 def build_seed_hop_from_tx_hash(tx_hash):
     """
