@@ -335,10 +335,20 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 @app.get("/", include_in_schema=False)
 def serve_frontend():
-    """Serves the web frontend (static/index.html) at the root URL."""
+    """Serves the web frontend (static/index.html) at the root URL.
+    Explicit no-cache headers force the browser to always revalidate
+    against the server before using any cached copy - without this,
+    browsers apply their own default heuristic caching, which can hold
+    onto a stale version for a meaningful period after a real deploy,
+    with no visible sign anything is wrong. This doesn't disable
+    caching entirely (a 304 response is still small/fast when nothing
+    changed) - it just guarantees a genuinely fresh check every time,
+    rather than trusting the browser's own guess about freshness."""
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.isfile(index_path):
-        return FileResponse(index_path)
+        response = FileResponse(index_path)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
     return {
         "service": "On-Chain Investigations Toolkit API",
         "note": "static/index.html not found - place the frontend file there to serve it here.",
