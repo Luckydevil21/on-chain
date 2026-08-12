@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>On-Chain Investigations</title>
+<title>On-Chain Investigations Toolkit</title>
+<meta name="description" content="Blockchain forensics and fund-tracing toolkit for investigators, expert witnesses, and legal casework.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODQiIGhlaWdodD0iODQiIHZpZXdCb3g9IjAgMCA4NCA4NCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iODQiIGhlaWdodD0iODQiIHJ4PSIxNiIgZmlsbD0iIzBkMTExNyIvPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJsb2dvR3JhZEZhdjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjN2JiOGYwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzRmOGNjOSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPGxpbmUgeDE9IjUyIiB5MT0iNTIiIHgyPSI3MCIgeTI9IjcwIiBzdHJva2U9InVybCgjbG9nb0dyYWRGYXYyKSIgc3Ryb2tlLXdpZHRoPSI5IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzMyIgY3k9IjMzIiByPSIyNCIgZmlsbD0iIzBkMTExNyIgc3Ryb2tlPSJ1cmwoI2xvZ29HcmFkRmF2MikiIHN0cm9rZS13aWR0aD0iNiIvPgogIDxsaW5lIHgxPSIyMiIgeTE9IjM4IiB4Mj0iMzMiIHkyPSIyMiIgc3Ryb2tlPSJ1cmwoI2xvZ29HcmFkRmF2MikiIHN0cm9rZS13aWR0aD0iMy41IiBvcGFjaXR5PSIwLjkiLz4KICA8bGluZSB4MT0iMzMiIHkxPSIyMiIgeDI9IjQ0IiB5Mj0iMzgiIHN0cm9rZT0idXJsKCNsb2dvR3JhZEZhdjIpIiBzdHJva2Utd2lkdGg9IjMuNSIgb3BhY2l0eT0iMC45Ii8+CiAgPGNpcmNsZSBjeD0iMjIiIGN5PSIzOCIgcj0iNS41IiBmaWxsPSJ1cmwoI2xvZ29HcmFkRmF2MikiLz4KICA8Y2lyY2xlIGN4PSIzMyIgY3k9IjIyIiByPSI1LjUiIGZpbGw9InVybCgjbG9nb0dyYWRGYXYyKSIvPgogIDxjaXJjbGUgY3g9IjQ0IiBjeT0iMzgiIHI9IjUuNSIgZmlsbD0idXJsKCNsb2dvR3JhZEZhdjIpIi8+Cjwvc3ZnPgo=">
 <script>
   // Set the theme BEFORE anything paints, so there's no flash of the
   // wrong theme while the rest of the page loads - kept intentionally
@@ -91,6 +93,25 @@
     transition: background 0.15s, border-color 0.15s;
   }
   .theme-toggle-btn:hover { background: var(--panel-alt); border-color: var(--accent); }
+
+  /* ---------- Utility classes ----------
+     Extracted from inline styles that were genuinely repeated 4+ times
+     across the app (confirmed by directly analyzing the file, not
+     guessed) - consolidating these into named classes rather than
+     leaving every occurrence as its own one-off inline style. Patterns
+     that only appeared once or twice were deliberately left as inline
+     styles - not every repeated pixel value needs a class, only the
+     ones that reflect a genuine, systematic design pattern. */
+  .btn-full-primary { width: 100%; padding: 11px; margin-top: 6px; }
+  .btn-full-secondary { width: 100%; margin-top: 8px; }
+  .btn-table-action { padding: 4px 9px; font-size: 11px; }
+  .select-mono { font-family: var(--mono); font-size: 12px; }
+  .mb-sm { margin-bottom: 10px; }
+  .mb-md { margin-bottom: 14px; }
+  .mt-sm { margin-top: 10px; }
+  .text-warn { color: var(--warn); }
+  .text-flag { color: var(--flag); }
+  .pill-accent { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent); }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
@@ -124,7 +145,8 @@
   }
   .nav-item:hover { background: var(--panel-alt); color: var(--text); }
   .nav-item.active { background: var(--accent-bg); color: var(--text); border-left: 2px solid var(--accent); }
-  .nav-icon { font-family: var(--mono); font-size: 12px; width: 18px; text-align: center; color: var(--text-dim); }
+  .nav-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--text-dim); }
+  .nav-icon svg { width: 100%; height: 100%; display: block; }
   .nav-item.active .nav-icon { color: var(--accent); }
   .nav-group-label {
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
@@ -339,7 +361,7 @@
      ============================================================ -->
 <div id="landingView" class="landing">
   <div class="landing-inner">
-    <svg width="84" height="84" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" style="margin-bottom:14px;">
+    <svg width="84" height="84" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" class="mb-md">
       <defs>
         <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stop-color="#7bb8f0"/>
@@ -347,7 +369,7 @@
         </linearGradient>
       </defs>
       <line x1="60" y1="60" x2="76" y2="76" stroke="url(#logoGrad)" stroke-width="6" stroke-linecap="round"/>
-      <circle cx="35" cy="35" r="27" fill="#0d1117" stroke="url(#logoGrad)" stroke-width="4"/>
+      <circle cx="35" cy="35" r="27" fill="var(--ink)" stroke="url(#logoGrad)" stroke-width="4"/>
       <g stroke="url(#logoGrad)" stroke-width="1.6" opacity="0.85">
         <line x1="25" y1="22" x2="40" y2="17"/>
         <line x1="25" y1="22" x2="18" y2="35"/>
@@ -360,13 +382,13 @@
         <line x1="31" y1="37" x2="41" y2="45"/>
       </g>
       <g stroke="url(#logoGrad)" stroke-width="2.4">
-        <circle cx="25" cy="22" r="4.5" fill="#0d1117"/>
-        <circle cx="40" cy="17" r="4" fill="#0d1117"/>
-        <circle cx="18" cy="35" r="4" fill="#0d1117"/>
-        <circle cx="46" cy="28" r="4" fill="#0d1117"/>
+        <circle cx="25" cy="22" r="4.5" fill="var(--ink)"/>
+        <circle cx="40" cy="17" r="4" fill="var(--ink)"/>
+        <circle cx="18" cy="35" r="4" fill="var(--ink)"/>
+        <circle cx="46" cy="28" r="4" fill="var(--ink)"/>
         <circle cx="31" cy="37" r="5" fill="url(#logoGrad)"/>
-        <circle cx="25" cy="49" r="4.5" fill="#0d1117"/>
-        <circle cx="41" cy="45" r="4" fill="#0d1117"/>
+        <circle cx="25" cy="49" r="4.5" fill="var(--ink)"/>
+        <circle cx="41" cy="45" r="4" fill="var(--ink)"/>
       </g>
     </svg>
     <div class="brand-mark">CASE TOOLKIT</div>
@@ -396,7 +418,7 @@
      ============================================================ -->
 <div id="loginView" class="landing" style="display:none;">
   <div class="landing-inner" style="max-width:360px;">
-    <svg width="64" height="64" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" style="margin-bottom:10px;">
+    <svg width="64" height="64" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" class="mb-sm">
       <defs>
         <linearGradient id="logoGradLogin" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stop-color="#7bb8f0"/>
@@ -404,7 +426,7 @@
         </linearGradient>
       </defs>
       <line x1="60" y1="60" x2="76" y2="76" stroke="url(#logoGradLogin)" stroke-width="6" stroke-linecap="round"/>
-      <circle cx="35" cy="35" r="27" fill="#0d1117" stroke="url(#logoGradLogin)" stroke-width="4"/>
+      <circle cx="35" cy="35" r="27" fill="var(--ink)" stroke="url(#logoGradLogin)" stroke-width="4"/>
       <g stroke="url(#logoGradLogin)" stroke-width="1.6" opacity="0.85">
         <line x1="25" y1="22" x2="40" y2="17"/>
         <line x1="25" y1="22" x2="18" y2="35"/>
@@ -417,13 +439,13 @@
         <line x1="31" y1="37" x2="41" y2="45"/>
       </g>
       <g stroke="url(#logoGradLogin)" stroke-width="2.4">
-        <circle cx="25" cy="22" r="4.5" fill="#0d1117"/>
-        <circle cx="40" cy="17" r="4" fill="#0d1117"/>
-        <circle cx="18" cy="35" r="4" fill="#0d1117"/>
-        <circle cx="46" cy="28" r="4" fill="#0d1117"/>
+        <circle cx="25" cy="22" r="4.5" fill="var(--ink)"/>
+        <circle cx="40" cy="17" r="4" fill="var(--ink)"/>
+        <circle cx="18" cy="35" r="4" fill="var(--ink)"/>
+        <circle cx="46" cy="28" r="4" fill="var(--ink)"/>
         <circle cx="31" cy="37" r="5" fill="url(#logoGradLogin)"/>
-        <circle cx="25" cy="49" r="4.5" fill="#0d1117"/>
-        <circle cx="41" cy="45" r="4" fill="#0d1117"/>
+        <circle cx="25" cy="49" r="4.5" fill="var(--ink)"/>
+        <circle cx="41" cy="45" r="4" fill="var(--ink)"/>
       </g>
     </svg>
     <div class="brand-mark">CASE TOOLKIT</div>
@@ -431,7 +453,7 @@
     <div class="field" style="text-align:left; margin-top:24px;"><label>Username</label><input type="text" id="loginUsername"></div>
     <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="loginPassword"></div>
     <div class="status-line error" id="loginStatus" style="min-height:16px;"></div>
-    <button class="btn" id="loginSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Sign In</button>
+    <button class="btn btn-full-primary" id="loginSubmitBtn" >Sign In</button>
     <button class="btn secondary" id="forgotPasswordLinkBtn" style="width:100%; padding:9px; margin-top:8px; background:transparent; border:none; color:var(--accent);">Forgot password?</button>
     <button class="btn secondary" id="backToLandingBtn" style="width:100%; padding:9px; margin-top:4px;">Back</button>
   </div>
@@ -503,7 +525,7 @@
     <p class="landing-lede" style="font-size:13px;">Open your authenticator app and enter the current 6-digit code.</p>
     <div class="field" style="text-align:left; margin-top:16px;"><label>Code</label><input type="text" id="totpCode" inputmode="numeric" maxlength="6" placeholder="123456"></div>
     <div class="status-line error" id="totpStatus" style="min-height:16px;"></div>
-    <button class="btn" id="totpSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Verify</button>
+    <button class="btn btn-full-primary" id="totpSubmitBtn" >Verify</button>
     <button class="btn secondary" id="totpBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
   </div>
 </div>
@@ -518,7 +540,7 @@
     <p class="landing-lede" style="font-size:13px;">Enter your username or email - if your account has an email on file, we'll send a reset link.</p>
     <div class="field" style="text-align:left; margin-top:16px;"><label>Username or email</label><input type="text" id="forgotIdentifier"></div>
     <div class="status-line" id="forgotStatus" style="min-height:16px;"></div>
-    <button class="btn" id="forgotSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Send reset link</button>
+    <button class="btn btn-full-primary" id="forgotSubmitBtn" >Send reset link</button>
     <button class="btn secondary" id="forgotBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
   </div>
 </div>
@@ -532,7 +554,7 @@
     <h1 style="font-size:22px;">Set a new password</h1>
     <div class="field" style="text-align:left; margin-top:16px;"><label>New password (min. 8 characters)</label><input type="password" id="resetNewPassword"></div>
     <div class="status-line" id="resetStatus" style="min-height:16px;"></div>
-    <button class="btn" id="resetSubmitBtn" style="width:100%; padding:11px; margin-top:6px;">Set new password</button>
+    <button class="btn btn-full-primary" id="resetSubmitBtn" >Set new password</button>
   </div>
 </div>
 
@@ -543,6 +565,36 @@
 <div class="sidebar-overlay" id="sidebarOverlay"></div>
 <div class="sidebar" id="sidebar">
   <div class="brand">
+    <svg width="34" height="34" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" style="margin-bottom:8px;">
+      <defs>
+        <linearGradient id="logoGradSidebar" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#7bb8f0"/>
+          <stop offset="100%" stop-color="#4f8cc9"/>
+        </linearGradient>
+      </defs>
+      <line x1="60" y1="60" x2="76" y2="76" stroke="url(#logoGradSidebar)" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="35" cy="35" r="27" fill="none" stroke="url(#logoGradSidebar)" stroke-width="4"/>
+      <g stroke="url(#logoGradSidebar)" stroke-width="1.6" opacity="0.85">
+        <line x1="25" y1="22" x2="40" y2="17"/>
+        <line x1="25" y1="22" x2="18" y2="35"/>
+        <line x1="25" y1="22" x2="31" y2="37"/>
+        <line x1="40" y1="17" x2="46" y2="28"/>
+        <line x1="31" y1="37" x2="46" y2="28"/>
+        <line x1="31" y1="37" x2="18" y2="35"/>
+        <line x1="31" y1="37" x2="25" y2="49"/>
+        <line x1="46" y1="28" x2="41" y2="45"/>
+        <line x1="31" y1="37" x2="41" y2="45"/>
+      </g>
+      <g stroke="url(#logoGradSidebar)" stroke-width="2.4">
+        <circle cx="25" cy="22" r="4.5" fill="var(--panel)"/>
+        <circle cx="40" cy="17" r="4" fill="var(--panel)"/>
+        <circle cx="18" cy="35" r="4" fill="var(--panel)"/>
+        <circle cx="46" cy="28" r="4" fill="var(--panel)"/>
+        <circle cx="31" cy="37" r="5" fill="url(#logoGradSidebar)"/>
+        <circle cx="25" cy="49" r="4.5" fill="var(--panel)"/>
+        <circle cx="41" cy="45" r="4" fill="var(--panel)"/>
+      </g>
+    </svg>
     <div class="brand-mark">CASE TOOLKIT</div>
     <div class="brand-title">On-Chain Investigations</div>
   </div>
@@ -590,15 +642,15 @@ const state = {
 const lastResults = { linkTrace: null, linkTraceMeta: null };
 
 const SECTIONS = [
-  { id: "link-trace", icon: "⇢", label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, group: "Investigate" },
-  { id: "deposit-map", icon: "⛃", label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
-  { id: "swap-correlation", icon: "⇄", label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
-  { id: "token-risk", icon: "⚠", label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
-  { id: "sanctions", icon: "⛔", label: "Sanctions Screening", sub: "Check an address against the current OFAC SDN digital currency list", adminOnly: false, group: "Investigate" },
-  { id: "poisoning", icon: "🎣", label: "Address Poisoning Check", sub: "Check a wallet's own history for lookalike scam addresses", adminOnly: false, group: "Investigate" },
-  { id: "saved-cases", icon: "▤", label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, group: "Case Data" },
-  { id: "known-entities", icon: "▥", label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
-  { id: "users", icon: "⚉", label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
+  { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, group: "Investigate" },
+  { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
+  { id: "swap-correlation", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 H15 M15 6 L12 3 M15 6 L12 9"/><path d="M17 14 H5 M5 14 L8 11 M5 14 L8 17"/></svg>`, label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
+  { id: "token-risk", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18.5 17 H1.5 Z"/><line x1="10" y1="8" x2="10" y2="12"/><circle cx="10" cy="14.5" r="0.7" fill="currentColor"/></svg>`, label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
+  { id: "sanctions", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="8"/><line x1="4.5" y1="4.5" x2="15.5" y2="15.5"/></svg>`, label: "Sanctions Screening", sub: "Check an address against the current OFAC SDN digital currency list", adminOnly: false, group: "Investigate" },
+  { id: "poisoning", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><circle cx="12.5" cy="12.5" r="5.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Address Poisoning Check", sub: "Check a wallet's own history for lookalike scam addresses", adminOnly: false, group: "Investigate" },
+  { id: "saved-cases", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5 A2 2 0 0 1 4.5 3.5 H8 L9.5 5.5 H15.5 A2 2 0 0 1 17.5 7.5 V14 A2 2 0 0 1 15.5 16 H4.5 A2 2 0 0 1 2.5 14 Z"/></svg>`, label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, group: "Case Data" },
+  { id: "known-entities", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5 H16.5 A1 1 0 0 1 17.5 3.5 V9.5 A1 1 0 0 1 17.2 10.2 L10.2 17.2 A1 1 0 0 1 8.8 17.2 L2.8 11.2 A1 1 0 0 1 2.8 9.8 L9.8 2.8 A1 1 0 0 1 10.5 2.5 Z"/><circle cx="13.5" cy="6.5" r="1.4" fill="currentColor"/></svg>`, label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
+  { id: "users", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="6.5" r="3"/><path d="M2 17 C2 12.5 4.5 10.5 7.5 10.5 C10.5 10.5 13 12.5 13 17"/><circle cx="14.5" cy="7.5" r="2.3"/><path d="M13 17 C13 13.5 14.5 12.2 16 12.2 C17.7 12.2 18.5 13.7 18.5 17" opacity="0.7"/></svg>`, label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
 ];
 
 // ============================================================
@@ -886,7 +938,7 @@ function openQuickSaveEntityModal(address) {
   overlay.innerHTML = `
     <div class="card" style="width:380px;">
       <h3>Save to Known Entities</h3>
-      <div class="field"><label>Address</label><input type="text" value="${escapeHtml(address)}" readonly style="font-family:var(--mono); font-size:12px;"></div>
+      <div class="field"><label>Address</label><input type="text" value="${escapeHtml(address)}" readonly class="select-mono"></div>
       <div class="field"><label>Name</label><input type="text" id="qsName" placeholder="e.g. ChangeNOW"></div>
       <div class="field"><label>Type</label>
         <select id="qsType">
@@ -898,7 +950,7 @@ function openQuickSaveEntityModal(address) {
       </div>
       <div class="status-line error" id="qsStatus"></div>
       <button class="btn" id="qsSave" style="width:100%;">Save</button>
-      <button class="btn secondary" id="qsCancel" style="width:100%; margin-top:8px;">Cancel</button>
+      <button class="btn secondary btn-full-secondary" id="qsCancel" >Cancel</button>
     </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector("#qsCancel").onclick = () => closeModal(overlay);
@@ -947,12 +999,12 @@ function renderEnable2FAStart(overlay) {
   overlay.innerHTML = `
     <div class="card" style="width:380px;">
       <h3>Enable Two-Factor Auth</h3>
-      <div class="hint" style="margin-bottom:14px;">
+      <div class="hint mb-md" >
         Adds a second step to signing in - after your password, you'll also need a 6-digit
         code from an authenticator app (Google Authenticator, Authy, 1Password, etc.).
       </div>
       <button class="btn" id="start2FASetupBtn" style="width:100%;">Get started</button>
-      <button class="btn secondary" id="cancel2FABtn" style="width:100%; margin-top:8px;">Cancel</button>
+      <button class="btn secondary btn-full-secondary" id="cancel2FABtn" >Cancel</button>
     </div>`;
   overlay.querySelector("#cancel2FABtn").onclick = () => closeModal(overlay);
   overlay.querySelector("#start2FASetupBtn").onclick = async () => {
@@ -985,7 +1037,7 @@ function renderEnable2FAConfirm(overlay, data) {
       </div>
       <div class="status-line error" id="confirm2FAStatus"></div>
       <button class="btn" id="confirm2FABtn" style="width:100%;">Confirm &amp; enable</button>
-      <button class="btn secondary" id="cancel2FABtn2" style="width:100%; margin-top:8px;">Cancel</button>
+      <button class="btn secondary btn-full-secondary" id="cancel2FABtn2" >Cancel</button>
     </div>`;
   overlay.querySelector("#cancel2FABtn2").onclick = () => closeModal(overlay);
   overlay.querySelector("#confirm2FABtn").onclick = async () => {
@@ -1005,11 +1057,11 @@ function renderDisable2FA(overlay) {
   overlay.innerHTML = `
     <div class="card" style="width:380px;">
       <h3>Disable Two-Factor Auth</h3>
-      <div class="hint" style="margin-bottom:14px;">Enter your password to confirm.</div>
+      <div class="hint mb-md" >Enter your password to confirm.</div>
       <div class="field"><label>Password</label><input type="password" id="disable2FAPassword"></div>
       <div class="status-line error" id="disable2FAStatus"></div>
       <button class="btn" id="confirmDisable2FABtn" style="width:100%;">Disable</button>
-      <button class="btn secondary" id="cancelDisable2FABtn" style="width:100%; margin-top:8px;">Cancel</button>
+      <button class="btn secondary btn-full-secondary" id="cancelDisable2FABtn" >Cancel</button>
     </div>`;
   overlay.querySelector("#cancelDisable2FABtn").onclick = () => closeModal(overlay);
   overlay.querySelector("#confirmDisable2FABtn").onclick = async () => {
@@ -1153,14 +1205,14 @@ function renderLinkTraceSection() {
   section.innerHTML = `
     <div class="card">
       <h3>Search by</h3>
-      <div class="radio-row" style="margin-bottom:14px;">
+      <div class="radio-row mb-md" >
         <label><input type="radio" name="searchMode" value="txhash" checked> Transaction hash</label>
         <label><input type="radio" name="searchMode" value="wallet"> Wallet address (full trace)</label>
         <label><input type="radio" name="searchMode" value="walletdate"> Wallet + date</label>
       </div>
 
       <div id="modeFieldsTxHash">
-        <div class="field hint" style="margin-bottom:14px;">
+        <div class="field hint mb-md" >
           If you already know the exact transaction (from another tool, a screenshot, a colleague),
           get its full details directly - no need to rediscover it via a trace. Ethereum hashes (0x...)
           are unambiguous. Bitcoin/XRP/Tron hashes look identical (64 hex characters, no prefix) - this
@@ -1191,7 +1243,7 @@ function renderLinkTraceSection() {
       </div>
 
       <div id="modeFieldsWalletDate" style="display:none;">
-        <div class="field hint" style="margin-bottom:14px;">
+        <div class="field hint mb-md" >
           The full trace only checks a wallet's MOST RECENT activity - for a very high-volume wallet
           (a major exchange's hot wallet, say), an old transaction can be buried behind millions of
           newer ones and never get reached that way. If you already know roughly WHEN it happened,
@@ -1214,7 +1266,7 @@ function renderLinkTraceSection() {
 
     <div class="card" style="margin-top:24px;">
       <h3>Check for a shared funding source</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         Many wallets need a small amount of native currency before they can do anything else - ETH for
         gas, or XRP to meet the ledger's reserve requirement. Someone controlling several "unrelated"
         wallets often funds each one's first activity from the SAME source - if two or more addresses
@@ -1252,9 +1304,9 @@ function renderLinkTraceSection() {
         const card = el("div", "card");
         card.innerHTML = `<h3>⚠️ Shared funding source (${escapeHtml(cluster.chain)})</h3>
           <div class="footnote" style="margin-bottom:8px;">Heuristic lead - verify manually before relying on it.</div>
-          <div class="field"><label>Funding address</label><div style="font-family:var(--mono); font-size:12px;">${escapeHtml(cluster.funding_address)}${saveEntityButtonHtml(cluster.funding_address)}</div></div>
+          <div class="field"><label>Funding address</label><div class="select-mono">${escapeHtml(cluster.funding_address)}${saveEntityButtonHtml(cluster.funding_address)}</div></div>
           <div class="field"><label>Addresses it funded (in this check)</label>
-            <div style="font-family:var(--mono); font-size:12px;">${cluster.addresses.map(escapeHtml).join("<br>")}</div>
+            <div class="select-mono">${cluster.addresses.map(escapeHtml).join("<br>")}</div>
           </div>`;
         resultsEl.appendChild(card);
       }
@@ -1300,6 +1352,25 @@ function renderLinkTraceSection() {
     if (mode === "walletdate") return runWalletDateSearch();
   };
 
+  // Starts a trace as a background job and polls until it's done - a
+  // trace on a genuinely active wallet can take well past what most
+  // reverse proxies (Render included) will hold a single request open
+  // for, confirmed in production. Polling avoids ever needing one long
+  // connection at all. statusEl gets progress text; returns the final
+  // result or throws with the real error message on failure.
+  async function runTraceAsJob(body, statusEl) {
+    const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+    const jobId = started.job_id;
+    let pollCount = 0;
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      pollCount++;
+      const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
+      if (job.status === "done") return job.result;
+      if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
+    }
+  }
+
   async function runWalletTrace() {
     const wallet = document.getElementById("ltWallet").value.trim();
     const direction = document.querySelector('input[name="ltDirection"]:checked').value;
@@ -1323,7 +1394,7 @@ function renderLinkTraceSection() {
     statusEl.className = "status-line";
     resultsEl.innerHTML = "";
     try {
-      const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+      const data = await runTraceAsJob(body, statusEl);
       lastResults.linkTrace = data;
       lastResults.linkTraceMeta = { wallet, direction };
       statusEl.textContent = `${data.addresses_visited} wallet(s) visited. ${data.matched_paths.length} direct link(s) found.`;
@@ -1375,7 +1446,7 @@ function renderLinkTraceSection() {
           `</table>
           <div class="footnote" style="margin-top:12px;">Outputs (${data.outputs.length}) - outputs highlighted in blue pay back to one of this transaction's own inputs, so are likely change returning to the sender rather than a genuine payment (heuristic, not certain):</div>
           <table class="data-table" style="margin-top:6px;"><tr><th>Address</th><th>Amount</th></tr>` +
-          data.outputs.map(o => `<tr style="${o.is_change ? "background:var(--accent-bg);" : ""}"><td>${escapeHtml(o.address || "(none)")}${o.is_change ? ` <span class="pill" style="background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent);">${o.change_confidence === "confirmed" ? "Change" : "Likely change"}</span>` : ""}${o.address ? saveEntityButtonHtml(o.address) : ""}</td><td>${escapeHtml(o.amount)}</td></tr>`).join("") +
+          data.outputs.map(o => `<tr style="${o.is_change ? "background:var(--accent-bg);" : ""}"><td>${escapeHtml(o.address || "(none)")}${o.is_change ? ` <span class="pill pill-accent" >${o.change_confidence === "confirmed" ? "Change" : "Likely change"}</span>` : ""}${o.address ? saveEntityButtonHtml(o.address) : ""}</td><td>${escapeHtml(o.amount)}</td></tr>`).join("") +
           `</table>`;
       }
       card.innerHTML = html;
@@ -1452,7 +1523,7 @@ function renderLinkTraceSection() {
 
       if (data.message) {
         const warnCard = el("div", "card");
-        warnCard.innerHTML = `<div class="footnote" style="color:var(--warn);">⚠️ ${escapeHtml(data.message)}</div>`;
+        warnCard.innerHTML = `<div class="footnote text-warn" >⚠️ ${escapeHtml(data.message)}</div>`;
         resultsEl.appendChild(warnCard);
       }
       if (data.matches && data.matches.length) {
@@ -1514,7 +1585,7 @@ async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress, priorH
   if (seedSenderAddress) body.seed_sender_address = seedSenderAddress;
 
   try {
-    const data = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+    const data = await runTraceAsJob(body, statusEl);
 
     if (priorHops && priorHops.length) {
       // Stitch the prior leg onto the FRONT of every path this new trace found,
@@ -1554,7 +1625,7 @@ function renderLinkTraceResults(data, meta) {
     const warnCard = el("div", "card");
     warnCard.style.borderColor = "var(--warn)";
     warnCard.innerHTML = `
-      <h3 style="color:var(--warn);">⚠️ You're tracing FROM a known entity itself</h3>
+      <h3 class="text-warn">⚠️ You're tracing FROM a known entity itself</h3>
       <div class="hint">
         <strong>${escapeHtml(meta.wallet)}</strong> is registered as <strong>${escapeHtml(data.root_known_entity.name)}
         (${escapeHtml(data.root_known_entity.type)})</strong>. The trace deliberately does NOT expand into a known
@@ -1572,7 +1643,7 @@ function renderLinkTraceResults(data, meta) {
     const fanoutCard = el("div", "card");
     fanoutCard.style.borderColor = "var(--warn)";
     fanoutCard.innerHTML = `
-      <h3 style="color:var(--warn);">⚠️ Starting wallet is a high fan-out/fan-in wallet</h3>
+      <h3 class="text-warn">⚠️ Starting wallet is a high fan-out/fan-in wallet</h3>
       <div class="hint">
         <strong>${escapeHtml(meta.wallet)}</strong> has ${data.root_high_fanout.fanout_count}+ distinct
         counterparties (threshold: ${data.root_high_fanout.threshold}) - likely an exchange or other custodial
@@ -1590,8 +1661,8 @@ function renderLinkTraceResults(data, meta) {
   if (data.poisoning_alert && data.poisoning_alert.length) {
     const poisonCard = el("div", "card");
     poisonCard.style.borderColor = "var(--flag)";
-    let poisonHtml = `<h3 style="color:var(--flag);">🎣 Possible address poisoning detected</h3>
-      <div class="hint" style="margin-bottom:10px;">
+    let poisonHtml = `<h3 class="text-flag">🎣 Possible address poisoning detected</h3>
+      <div class="hint mb-sm" >
         An address seen in this trace shares a suspiciously matching prefix/suffix with an address already
         saved in the selected case - the kind of collision a scam lookalike relies on, and astronomically
         unlikely to happen by coincidence. This tool doesn't guess which address is genuine; review both
@@ -1601,12 +1672,12 @@ function renderLinkTraceResults(data, meta) {
       poisonHtml += `<div class="footnote" style="margin-top:10px; font-weight:600;">Match ${index + 1} - shared prefix/suffix: <span class="mono">${escapeHtml(cluster.shared_prefix)}...${escapeHtml(cluster.shared_suffix)}</span></div>`;
       for (const member of cluster.members) {
         const sourceLabel = member.source === "saved_case"
-          ? '<span class="pill" style="background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent);">From saved case</span>'
+          ? '<span class="pill pill-accent" >From saved case</span>'
           : '<span class="pill" style="background:var(--panel-alt); color:var(--text-dim); border:1px solid var(--line);">Seen in this trace</span>';
         poisonHtml += `<div style="margin-top:4px; margin-left:12px;">${escapeHtml(member.address)} ${sourceLabel}</div>`;
       }
     });
-    poisonHtml += `<div class="footnote" style="margin-top:10px;"><a href="#" onclick="switchSection('poisoning'); return false;">Open the full Address Poisoning Check for details →</a></div>`;
+    poisonHtml += `<div class="footnote mt-sm" ><a href="#" onclick="switchSection('poisoning'); return false;">Open the full Address Poisoning Check for details →</a></div>`;
     poisonCard.innerHTML = poisonHtml;
     container.appendChild(poisonCard);
   }
@@ -1630,7 +1701,7 @@ function renderLinkTraceResults(data, meta) {
     const capCard = el("div", "card");
     capCard.style.borderColor = "var(--warn)";
     capCard.innerHTML = `
-      <h3 style="color:var(--warn);">⚠️ Some outputs of this transaction were not traced</h3>
+      <h3 class="text-warn">⚠️ Some outputs of this transaction were not traced</h3>
       <div class="hint">
         The seeded transaction paid out to more addresses than this trace follows per hop - only the first
         set are shown below. This does not affect the accuracy of what IS shown, only its completeness for
@@ -1650,7 +1721,7 @@ function renderLinkTraceResults(data, meta) {
   const aiCard = el("div", "card");
   aiCard.innerHTML = `
     <h3>AI-assisted drafting</h3>
-    <div class="hint" style="margin-bottom:10px;">
+    <div class="hint mb-sm" >
       Drafts text from the trace results above - grounded strictly in what was actually found, nothing invented.
       Always a starting draft to review and verify, never a finished or authoritative conclusion.
     </div>
@@ -1801,7 +1872,7 @@ function renderEvidencePackCard(traceData, meta, container) {
   const card = el("div", "card");
   card.innerHTML = `
     <h3>📄 Evidence Pack</h3>
-    <div class="hint" style="margin-bottom:10px;">
+    <div class="hint mb-sm" >
       Generates a full expert-report-style PDF from the trace above - report particulars, methodology,
       chain of custody, transaction trail, and a SHA-256 hash proving the data hasn't changed since
       capture. The declaration and expert conclusions sections are left as templates for you to complete
@@ -1858,7 +1929,7 @@ function renderEvidencePackCard(traceData, meta, container) {
       statusEl.textContent = "";
 
       resultEl.innerHTML = `
-        <div class="footnote" style="margin-top:10px;">
+        <div class="footnote mt-sm" >
           Evidence pack created - SHA-256: <span class="mono">${escapeHtml(result.sha256_hash)}</span>
         </div>
         <div class="footnote">${escapeHtml(result.note || "")}</div>
@@ -1939,7 +2010,7 @@ function renderSavedCasesSection() {
       <div class="field"><label>Notes (optional)</label><input type="text" id="caseNewNotes"></div>
       <button class="btn" id="caseCreateBtn">Create case</button>
     </div>
-    <div class="status-line" id="caseCreateStatus"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
+    <div class="status-line" id="caseCreateStatus"></div>` : `<div class="hint mb-md" >You have read-only access - viewing only.</div>`}
     <div id="casesListView">
       <div class="card"><h3>Your saved cases</h3><div id="casesList"></div></div>
     </div>
@@ -1980,7 +2051,7 @@ async function loadCases() {
         <td>${c.wallet_count}</td>
         <td>${escapeHtml(c.created_by)}</td>
         <td>${escapeHtml(c.created_at || "")}</td>
-        <td>${isAdmin() ? `<button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCase('${escapeHtml(c.id)}')">Delete</button>` : ""}</td>
+        <td>${isAdmin() ? `<button class="btn secondary btn-table-action"  onclick="deleteCase('${escapeHtml(c.id)}')">Delete</button>` : ""}</td>
       </tr>`
     ).join("");
     listEl.appendChild(table);
@@ -2006,10 +2077,10 @@ async function openCase(caseId) {
   try {
     const caseData = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
     detailView.innerHTML = `
-      <button class="btn secondary" id="caseBackBtn" style="margin-bottom:14px;">← All cases</button>
+      <button class="btn secondary mb-md" id="caseBackBtn" >← All cases</button>
       <div class="card">
         <h3>${escapeHtml(caseData.name)}</h3>
-        ${caseData.notes ? `<div class="hint" style="margin-bottom:10px;">${escapeHtml(caseData.notes)}</div>` : ""}
+        ${caseData.notes ? `<div class="hint mb-sm" >${escapeHtml(caseData.notes)}</div>` : ""}
         <div class="footnote">Created by ${escapeHtml(caseData.created_by)} on ${escapeHtml(caseData.created_at || "")}</div>
       </div>
       ${isAdmin() ? `<div class="card">
@@ -2062,7 +2133,7 @@ function renderCaseWalletsTable(wallets) {
   const table = el("table", "data-table");
   table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>Added</th><th>Source</th>${isAdmin() ? "<th></th>" : ""}</tr>` + wallets.map(w =>
     `<tr><td>${escapeHtml(w.address)}</td><td>${escapeHtml(w.chain || "")}</td><td>${escapeHtml(w.added_at || "")}</td><td>${escapeHtml(w.source || "")}</td>
-     ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteCaseWallet('${escapeHtml(w.address)}')">Remove</button></td>` : ""}</tr>`
+     ${isAdmin() ? `<td><button class="btn secondary btn-table-action"  onclick="deleteCaseWallet('${escapeHtml(w.address)}')">Remove</button></td>` : ""}</tr>`
   ).join("");
   listEl.appendChild(table);
 }
@@ -2101,7 +2172,7 @@ function renderKnownEntitiesSection() {
     <div class="status-line" id="keStatus"></div>
     <div class="card" id="keBulkCard" style="display:none;">
       <h3>Bulk add (paste a list)</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         Paste many addresses at once - one per line (works with a pasted CSV column too). They'll all be added
         under the SAME name and type below. Chain is auto-detected per address, so a batch can freely mix chains.
       </div>
@@ -2118,12 +2189,12 @@ function renderKnownEntitiesSection() {
       <button class="btn" id="keBulkAdd">Add all</button>
     </div>
     <div class="status-line" id="keBulkStatus"></div>
-    <div id="keBulkResults"></div>` : `<div class="hint" style="margin-bottom:14px;">You have read-only access - viewing only.</div>`}
+    <div id="keBulkResults"></div>` : `<div class="hint mb-md" >You have read-only access - viewing only.</div>`}
     <div class="card"><h3>Known entities</h3><div id="keList"></div></div>
 
     ${isAdmin() ? `<div class="card" style="margin-top:24px;">
       <h3>Known message patterns (Ethereum, Bitcoin, XRP)</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         For services that use a NEW receiving address every transaction (so the address list above
         can never keep up), recognize the service by a consistent message it embeds in the
         transaction instead - Bitcoin's OP_RETURN output, Ethereum's transaction input data, or XRP's
@@ -2226,7 +2297,7 @@ async function loadKnownEntities() {
     const table = el("table", "data-table");
     table.innerHTML = `<tr><th>Address</th><th>Name</th><th>Chain</th><th>Type</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
       `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.chain || "?")}</td><td><span class="pill ${(e.type === 'instant_swap' || e.type === 'bridge') ? 'entity' : e.type === 'mixer' ? 'flag' : 'warn'}">${escapeHtml(e.type)}</span></td>
-       ${isAdmin() ? `<td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
+       ${isAdmin() ? `<td><button class="btn secondary btn-table-action"  onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
     ).join("");
     listEl.appendChild(table);
   } catch (err) {
@@ -2247,9 +2318,9 @@ async function loadOpReturnPatterns() {
     if (!patterns.length) { listEl.innerHTML = `<div class="empty-state">No message patterns registered yet.</div>`; return; }
     const table = el("table", "data-table");
     table.innerHTML = `<tr><th>Pattern</th><th>Name</th><th>Type</th><th></th></tr>` + patterns.map((p, index) =>
-      `<tr><td style="font-family:var(--mono); font-size:12px;">${escapeHtml(p.pattern)}</td><td>${escapeHtml(p.name)}</td>
+      `<tr><td class="select-mono">${escapeHtml(p.pattern)}</td><td>${escapeHtml(p.name)}</td>
        <td><span class="pill entity">${escapeHtml(p.type)}</span></td>
-       <td><button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteOpReturnPattern(${index})">Remove</button></td></tr>`
+       <td><button class="btn secondary btn-table-action"  onclick="deleteOpReturnPattern(${index})">Remove</button></td></tr>`
     ).join("");
     listEl.appendChild(table);
   } catch (err) {
@@ -2270,7 +2341,7 @@ function renderDepositMapSection() {
   section.innerHTML = `
     <div class="card">
       <h3>Confirm a deposit address</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         Checks whether this address has swept funds into a KNOWN exchange OR instant-swap wallet
         (from Known Entities) - i.e. confirms it as a genuine deposit address for that service. Many
         instant-swap services consolidate per-user deposit addresses into their own treasury the same
@@ -2303,7 +2374,7 @@ function renderDepositMapSection() {
         card.innerHTML = `
           <h3>${data.already_known ? "Already known" : "🏦 Confirmed deposit address"}</h3>
           <div class="status-line">${escapeHtml(data.message)}</div>
-          ${data.consolidation_tx_hash ? `<table class="legend-table" style="margin-top:10px;">
+          ${data.consolidation_tx_hash ? `<table class="legend-table mt-sm" >
             <tr><td class="label">Exchange</td><td>${escapeHtml(data.exchange_name)}</td></tr>
             <tr><td class="label">Chain</td><td>${escapeHtml(data.chain)}</td></tr>
             <tr><td class="label">Swept via tx</td><td>${escapeHtml(data.consolidation_tx_hash)}</td></tr>
@@ -2323,7 +2394,7 @@ function renderDepositMapSection() {
                   <td><a href="${c.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
                 `</table>`;
           } else {
-            card.innerHTML += `<div class="footnote" style="margin-top:10px;">🔄 No plausible output candidate found within the correlation window - this doesn't rule one out.</div>`;
+            card.innerHTML += `<div class="footnote mt-sm" >🔄 No plausible output candidate found within the correlation window - this doesn't rule one out.</div>`;
           }
           card.innerHTML += `
             <button class="btn secondary" id="dmDraftBtn" style="font-size:12px; padding:7px 14px; margin-top:12px;">📝 Draft narrative (input → output)</button>
@@ -2400,7 +2471,7 @@ function renderSwapCorrelationSection() {
   section.innerHTML = `
     <div class="card">
       <h3>Check a wallet</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         Checks whether this wallet deposited into (or received a payout from) a known
         no-KYC instant-swap service or cross-chain bridge (from Known Entities) - and if so,
         looks for the correlated other side, even on a different chain. This works standalone -
@@ -2470,7 +2541,7 @@ function renderSwapCorrelationResults(data, container) {
           <td><a href="${c.explorer_url}" target="_blank">verify</a></td></tr>`).join("") +
         `</table>`;
     } else {
-      html += `<div class="footnote" style="margin-top:10px;">No plausible correlated ${kind === "deposit" ? "payout" : "deposit"} found within the correlation window - this doesn't rule one out.</div>`;
+      html += `<div class="footnote mt-sm" >No plausible correlated ${kind === "deposit" ? "payout" : "deposit"} found within the correlation window - this doesn't rule one out.</div>`;
     }
     card.innerHTML = html;
     container.appendChild(card);
@@ -2489,7 +2560,7 @@ function renderTokenRiskSection() {
   section.innerHTML = `
     <div class="card">
       <h3>Check a token or contract</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         Checks a Solana SPL token mint or an Ethereum-format contract for specific, well-understood red flags -
         mint/freeze authority still active (Solana), or ownership not renounced / upgradeable proxy pattern
         (EVM chains) - read directly from the chain itself, not a guess or prediction. A clean result does
@@ -2536,7 +2607,7 @@ function renderTokenRiskResults(data, container) {
   const card = el("div", "card");
   const hasFlags = data.flags && data.flags.length > 0;
   let html = `<h3>${hasFlags ? "⚠️ Red flag(s) found" : "✅ No known red flags found"} (${escapeHtml(data.chain)})</h3>`;
-  html += `<div class="footnote" style="margin-bottom:10px;">${escapeHtml(data.message)}</div>`;
+  html += `<div class="footnote mb-sm" >${escapeHtml(data.message)}</div>`;
 
   if (hasFlags) {
     html += `<ul style="margin:0 0 14px; padding-left:20px; color:var(--warn);">` +
@@ -2574,7 +2645,7 @@ function renderSanctionsSection() {
   section.innerHTML = `
     ${isAdmin() ? `<div class="card">
       <h3>Sanctions list status</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         Checks addresses against the US Treasury's OFAC Specially Designated Nationals (SDN) list -
         the authoritative source, downloaded and parsed directly, not a third party's interpretation.
         A refresh replaces the whole stored list (so delistings are correctly reflected too) and can
@@ -2582,7 +2653,7 @@ function renderSanctionsSection() {
         periodically, or whenever you hear of a new OFAC designation.
       </div>
       <div id="sanctionsStatus" class="footnote">Loading...</div>
-      <button class="btn" id="sanctionsRefreshBtn" style="margin-top:10px;">Refresh sanctions list now</button>
+      <button class="btn mt-sm" id="sanctionsRefreshBtn" >Refresh sanctions list now</button>
       <div class="status-line" id="sanctionsRefreshStatus"></div>
     </div>` : ""}
     <div class="card">
@@ -2630,7 +2701,7 @@ function renderSanctionsSection() {
       const card = el("div", "card");
       if (data.sanctioned) {
         card.style.borderColor = "var(--flag)";
-        card.innerHTML = `<h3 style="color:var(--flag);">⛔ SANCTIONED</h3>
+        card.innerHTML = `<h3 class="text-flag">⛔ SANCTIONED</h3>
           <div class="hint">This address appears on the current OFAC SDN digital currency address list, tagged as <strong>${escapeHtml(data.ofac_asset_symbol)}</strong>.</div>`;
       } else {
         card.innerHTML = `<h3>✅ Not on the sanctions list</h3>
@@ -2697,7 +2768,7 @@ function renderPoisoningCheckSection() {
   section.innerHTML = `
     <div class="card">
       <h3>Check a wallet for poisoning attempts</h3>
-      <div class="field hint" style="margin-bottom:14px;">
+      <div class="field hint mb-md" >
         A common scam: an attacker generates a lookalike address sharing a target's first few and last
         few characters - the part people actually glance at when copy-pasting - then sends a tiny or
         zero-value transaction so it shows up in the victim's own history, hoping they later copy the
@@ -2763,12 +2834,12 @@ function renderPoisoningResults(data, container) {
   data.suspected_clusters.forEach((cluster, index) => {
     const card = el("div", "card");
     card.style.borderColor = "var(--flag)";
-    let html = `<h3 style="color:var(--flag);">🎣 Suspected poisoning pair ${index + 1}</h3>
-      <div class="hint" style="margin-bottom:10px;">Shared prefix/suffix: <span class="mono">${escapeHtml(cluster.shared_prefix)}...${escapeHtml(cluster.shared_suffix)}</span></div>`;
+    let html = `<h3 class="text-flag">🎣 Suspected poisoning pair ${index + 1}</h3>
+      <div class="hint mb-sm" >Shared prefix/suffix: <span class="mono">${escapeHtml(cluster.shared_prefix)}...${escapeHtml(cluster.shared_suffix)}</span></div>`;
 
     for (const member of cluster.members) {
       const sourceLabel = member.source === "saved_case"
-        ? '<span class="pill" style="background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent);">From saved case</span>'
+        ? '<span class="pill pill-accent" >From saved case</span>'
         : '<span class="pill" style="background:var(--panel-alt); color:var(--text-dim); border:1px solid var(--line);">This wallet\'s history</span>';
       html += `<div class="footnote" style="margin-top:10px; font-weight:600;">${escapeHtml(member.address)} ${sourceLabel}</div>`;
       if (member.occurrences.length) {
@@ -2841,7 +2912,7 @@ async function loadUsers() {
       `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td>
        <td>${escapeHtml(u.email || "-")}</td><td>${u.totp_enabled ? '<span class="pill ok">on</span>' : '<span class="hint">off</span>'}</td>
        <td>${escapeHtml(u.created_utc || "")}</td>
-       <td>${u.username === state.currentUser.username ? "" : `<button class="btn secondary" style="padding:4px 9px; font-size:11px;" onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>`}</td></tr>`
+       <td>${u.username === state.currentUser.username ? "" : `<button class="btn secondary btn-table-action"  onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>`}</td></tr>`
     ).join("");
     listEl.appendChild(table);
   } catch (err) {
