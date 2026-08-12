@@ -303,7 +303,7 @@ def _path_group_flowables(title, paths, styles, path_key="hops"):
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1c232c")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTSIZE", (0, 0), (-1, 0), 7),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 0), (-1, 0), "EvidenceSans-Bold"),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#999999")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f5f7")]),
@@ -389,6 +389,25 @@ def generate_evidence_pack_pdf(evidence_pack_id):
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # Real embedded fonts rather than reportlab's generic built-in ones -
+    # a serif body face is the conventional, expected choice for a formal
+    # legal document (most real UK/US legal reports use a Times-style
+    # serif), paired with a clean sans-serif for headings for contrast.
+    # Embedding actual font files (rather than relying on the built-in 14
+    # standard PDF fonts) also means this renders identically across every
+    # PDF viewer, not just "whatever substitute font the viewer happens
+    # to pick".
+    _FONT_DIR = "/usr/share/fonts/truetype/liberation"
+    _fonts_registered = "EvidenceSerif" in pdfmetrics.getRegisteredFontNames()
+    if not _fonts_registered:
+        pdfmetrics.registerFont(TTFont("EvidenceSerif", f"{_FONT_DIR}/LiberationSerif-Regular.ttf"))
+        pdfmetrics.registerFont(TTFont("EvidenceSerif-Bold", f"{_FONT_DIR}/LiberationSerif-Bold.ttf"))
+        pdfmetrics.registerFont(TTFont("EvidenceSerif-Italic", f"{_FONT_DIR}/LiberationSerif-Italic.ttf"))
+        pdfmetrics.registerFont(TTFont("EvidenceSans", f"{_FONT_DIR}/LiberationSans-Regular.ttf"))
+        pdfmetrics.registerFont(TTFont("EvidenceSans-Bold", f"{_FONT_DIR}/LiberationSans-Bold.ttf"))
 
     pack = get_evidence_pack(evidence_pack_id)
     if not pack:
@@ -411,18 +430,84 @@ def generate_evidence_pack_pdf(evidence_pack_id):
     report_reference = pack.get("case_reference") or f"EP-{pack['id'][:8].upper()}"
 
     styles = getSampleStyleSheet()
+    styles["Normal"].fontName = "EvidenceSerif"
+    styles["Normal"].fontSize = 10
+    styles["Normal"].leading = 14.5
+    styles["Title"].fontName = "EvidenceSans-Bold"
+    styles["Title"].fontSize = 19
+    styles["Title"].leading = 23
+    styles["Heading2"].fontName = "EvidenceSans-Bold"
+    styles["Heading2"].textColor = colors.HexColor("#1c3d5a")
+    styles["Heading2"].spaceBefore = 10
+    styles["Heading4"].fontName = "EvidenceSans-Bold"
     styles.add(ParagraphStyle(name="Mono", fontName="Courier", fontSize=9, leading=12))
-    styles.add(ParagraphStyle(name="SmallGrey", fontSize=8, textColor=colors.HexColor("#666666")))
+    styles.add(ParagraphStyle(name="SmallGrey", fontName="EvidenceSerif", fontSize=8, textColor=colors.HexColor("#666666")))
     styles.add(ParagraphStyle(name="TableCell", fontName="Courier", fontSize=6.5, leading=8, wordWrap="CJK"))
-    styles.add(ParagraphStyle(name="CenterBold", fontName="Helvetica-Bold", fontSize=10, alignment=TA_CENTER))
-    styles.add(ParagraphStyle(name="Placeholder", fontSize=9, textColor=colors.HexColor("#b45309"), fontName="Helvetica-Oblique"))
-    styles.add(ParagraphStyle(name="WarningBanner", fontName="Helvetica-Bold", fontSize=9, textColor=colors.HexColor("#991b1b"),
+    styles.add(ParagraphStyle(name="CenterBold", fontName="EvidenceSans-Bold", fontSize=10, alignment=TA_CENTER))
+    styles.add(ParagraphStyle(name="Placeholder", fontName="EvidenceSerif-Italic", fontSize=9, textColor=colors.HexColor("#b45309")))
+    styles.add(ParagraphStyle(name="WarningBanner", fontName="EvidenceSans-Bold", fontSize=9, textColor=colors.HexColor("#991b1b"),
                                backColor=colors.HexColor("#fef2f2"), borderPadding=8, alignment=TA_CENTER))
+
+    def _draw_logo_mark(pdf_canvas, x, y, size):
+        """Vector re-drawing of the app's own magnifying-glass-over-a-
+        network logo, matching the web app's branding rather than an
+        unrelated generic report cover."""
+        pdf_canvas.saveState()
+        pdf_canvas.translate(x, y)
+        scale = size / 84.0
+        pdf_canvas.scale(scale, scale)
+        accent = colors.HexColor("#4f8cc9")
+        pdf_canvas.setStrokeColor(accent)
+        pdf_canvas.setLineCap(1)
+        pdf_canvas.setLineWidth(6)
+        pdf_canvas.line(60, 84 - 60, 76, 84 - 76)
+        pdf_canvas.setLineWidth(4)
+        pdf_canvas.setFillColor(colors.white)
+        pdf_canvas.circle(35, 84 - 35, 27, stroke=1, fill=1)
+        pdf_canvas.setLineWidth(1.6)
+        node_lines = [(25, 22, 40, 17), (25, 22, 18, 35), (25, 22, 31, 37), (40, 17, 46, 28),
+                      (31, 37, 46, 28), (31, 37, 18, 35), (31, 37, 25, 49), (46, 28, 41, 45), (31, 37, 41, 45)]
+        for x1, y1, x2, y2 in node_lines:
+            pdf_canvas.line(x1, 84 - y1, x2, 84 - y2)
+        pdf_canvas.setFillColor(accent)
+        for nx, ny, r in [(25, 22, 4.5), (40, 17, 4), (18, 35, 4), (46, 28, 4), (31, 37, 5), (25, 49, 4.5), (41, 45, 4)]:
+            pdf_canvas.circle(nx, 84 - ny, r, stroke=0, fill=1)
+        pdf_canvas.restoreState()
+
+    def _page_footer(pdf_canvas, doc_):
+        """Running footer on every page - page number and a repeated
+        confidentiality reminder, standard practice for any real legal
+        document, and previously entirely missing from this report."""
+        pdf_canvas.saveState()
+        pdf_canvas.setFont("EvidenceSans", 7.5)
+        pdf_canvas.setFillColor(colors.HexColor("#888888"))
+        pdf_canvas.drawString(16*mm, 10*mm, f"{report_reference} — Strictly Confidential — Subject to Legal Privilege")
+        pdf_canvas.drawRightString(A4[0] - 16*mm, 10*mm, f"Page {doc_.page}")
+        pdf_canvas.setStrokeColor(colors.HexColor("#dddddd"))
+        pdf_canvas.line(16*mm, 13*mm, A4[0] - 16*mm, 13*mm)
+        pdf_canvas.restoreState()
+
+    def _first_page(pdf_canvas, doc_):
+        _draw_logo_mark(pdf_canvas, 16*mm, A4[1] - 30*mm, 16*mm)
+        _page_footer(pdf_canvas, doc_)
+
+    def _later_pages(pdf_canvas, doc_):
+        pdf_canvas.saveState()
+        pdf_canvas.setFont("EvidenceSans-Bold", 8)
+        pdf_canvas.setFillColor(colors.HexColor("#4f8cc9"))
+        pdf_canvas.drawString(16*mm, A4[1] - 12*mm, "ON-CHAIN INVESTIGATIONS TOOLKIT")
+        pdf_canvas.setFont("EvidenceSans", 8)
+        pdf_canvas.setFillColor(colors.HexColor("#888888"))
+        pdf_canvas.drawRightString(A4[0] - 16*mm, A4[1] - 12*mm, report_reference)
+        pdf_canvas.setStrokeColor(colors.HexColor("#dddddd"))
+        pdf_canvas.line(16*mm, A4[1] - 14*mm, A4[0] - 16*mm, A4[1] - 14*mm)
+        pdf_canvas.restoreState()
+        _page_footer(pdf_canvas, doc_)
 
     buffer = _io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        topMargin=16*mm, bottomMargin=16*mm, leftMargin=16*mm, rightMargin=16*mm,
+        topMargin=22*mm, bottomMargin=20*mm, leftMargin=16*mm, rightMargin=16*mm,
     )
     story = []
 
@@ -435,7 +520,7 @@ def generate_evidence_pack_pdf(evidence_pack_id):
     def key_value_table(rows, col_widths=(55*mm, 115*mm)):
         table = Table(rows, colWidths=list(col_widths))
         table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME", (0, 0), (0, -1), "EvidenceSans-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), 8.5),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
@@ -689,7 +774,7 @@ def generate_evidence_pack_pdf(evidence_pack_id):
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1c232c")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTSIZE", (0, 0), (-1, 0), 7),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 0), (-1, 0), "EvidenceSans-Bold"),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#999999")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f5f7")]),
@@ -724,7 +809,7 @@ def generate_evidence_pack_pdf(evidence_pack_id):
         styles["Normal"],
     ))
 
-    doc.build(story)
+    doc.build(story, onFirstPage=_first_page, onLaterPages=_later_pages)
     return buffer.getvalue()
 
 
