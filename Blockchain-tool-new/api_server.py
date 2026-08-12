@@ -806,6 +806,11 @@ def _execute_link_trace(req: "LinkTraceRequest", username: str):
         + [path for path, _reason in flagged_end_paths]
         + [path for path, _reason in amount_filtered_paths]
     )
+
+    if req.case_id:
+        all_hops_flat = [hop for path in all_paths_for_summary for hop in path]
+        lt.save_case_graph_edges(req.case_id, all_hops_flat, chain, username)
+
     clean_summary = (
         lt.dedupe_clean_rows(lt.build_clean_rows(all_paths_for_summary, actual_wallet))
         if all_paths_for_summary else []
@@ -912,6 +917,13 @@ class CaseWalletIn(BaseModel):
     chain: Optional[str] = Field(default=None, description="Auto-detected if omitted.")
     source: Optional[str] = None
     context: Optional[str] = None
+
+
+@app.get("/api/cases/{case_id}/graph")
+def get_case_graph(case_id: str, _auth=Depends(require_read)):
+    """The full persisted graph for a case - see link_tracer.py's
+    load_case_graph() for how nodes/edges are built."""
+    return lt.load_case_graph(case_id)
 
 
 @app.get("/api/cases")
