@@ -133,6 +133,7 @@
     backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
     border-right: 1px solid var(--line); padding: 20px 0;
     display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0;
+    transition: width 0.18s ease; position: relative;
   }
   .brand { padding: 0 20px 18px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
   .brand-mark { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 0.12em; text-transform: uppercase; }
@@ -148,6 +149,30 @@
   .nav-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--text-dim); }
   .nav-icon svg { width: 100%; height: 100%; display: block; }
   .nav-item.active .nav-icon { color: var(--accent); }
+
+  /* ---------- Collapsed sidebar (desktop only - more room for wide
+     analysis results: tables, addresses, branching trail diagrams) ---------- */
+  .sidebar-collapse-toggle {
+    display: flex; position: absolute; top: 24px; right: -12px; z-index: 5;
+    width: 24px; height: 24px; border-radius: 50%; background: var(--panel-alt);
+    border: 1px solid var(--line); color: var(--text-dim); cursor: pointer;
+    align-items: center; justify-content: center; padding: 0;
+  }
+  .sidebar-collapse-toggle:hover { color: var(--accent); border-color: var(--accent); }
+  .sidebar-collapse-toggle svg { width: 12px; height: 12px; transition: transform 0.18s ease; }
+  .sidebar.collapsed .sidebar-collapse-toggle svg { transform: rotate(180deg); }
+  .sidebar.collapsed { width: 60px; }
+  .sidebar.collapsed .brand { padding: 0 0 18px; display: flex; justify-content: center; }
+  .sidebar.collapsed .brand svg { margin-bottom: 0; }
+  .sidebar.collapsed .brand-mark, .sidebar.collapsed .brand-title,
+  .sidebar.collapsed .nav-group-label, .sidebar.collapsed .nav-item span:not(.nav-icon),
+  .sidebar.collapsed .conn-pill span:not(.conn-dot), .sidebar.collapsed .sidebar-foot-label {
+    display: none;
+  }
+  .sidebar.collapsed .nav-item { justify-content: center; padding: 9px; }
+  .sidebar.collapsed .nav { padding: 4px 6px; }
+  .sidebar.collapsed .sidebar-foot { padding-left: 6px; padding-right: 6px; }
+  .sidebar.collapsed .conn-pill { justify-content: center; }
   .nav-group-label {
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--text-dim); opacity: 0.6; padding: 14px 12px 6px; user-select: none;
@@ -180,12 +205,19 @@
   @media (max-width: 860px) {
     body { flex-direction: column; }
     .hamburger-btn { display: block; }
+    .sidebar-collapse-toggle { display: none; }
 
-    .sidebar {
+    .sidebar, .sidebar.collapsed {
       position: fixed; top: 0; left: 0; z-index: 40; width: 78vw; max-width: 300px;
       transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 18px rgba(0,0,0,.4);
     }
     .sidebar.open { transform: translateX(0); }
+    .sidebar.collapsed .brand-mark, .sidebar.collapsed .brand-title,
+    .sidebar.collapsed .nav-group-label, .sidebar.collapsed .nav-item span:not(.nav-icon),
+    .sidebar.collapsed .conn-pill span:not(.conn-dot), .sidebar.collapsed .sidebar-foot-label {
+      display: revert;
+    }
+    .sidebar.collapsed .nav-item { justify-content: flex-start; padding: 9px 12px; }
 
     .sidebar-overlay.open {
       display: block; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 35;
@@ -310,7 +342,7 @@
   ::-webkit-scrollbar-track { background: transparent; }
 
   /* ---------- Landing / login ---------- */
-  .landing { width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+  .landing { width: 100%; min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; }
   .landing-inner { max-width: 820px; text-align: center; }
   .landing h1 { font-size: 30px; margin: 10px 0 14px; }
   .landing-lede { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
@@ -394,8 +426,8 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <h1>On-Chain Investigations</h1>
     <p class="landing-lede">
-      A blockchain forensics toolkit for tracing cryptocurrency and building court-ready
-      evidence, built for investigators, solicitors and law enforcement. Covers Ethereum,
+      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
+      evidence - built for investigators working with law enforcement. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
     <div class="landing-grid">
@@ -601,9 +633,12 @@
   <nav class="nav" id="nav" aria-label="Main navigation"></nav>
   <div class="sidebar-foot">
     <div class="conn-pill"><span class="conn-dot ok"></span><span id="whoamiLabel">-</span></div>
-    <button class="btn secondary" id="security2faBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">🔐 Two-Factor Auth</button>
-    <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:8px; padding:7px; font-size:12px;">Log out</button>
+    <button class="btn secondary" id="security2faBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">🔐 <span class="sidebar-foot-label">Two-Factor Auth</span></button>
+    <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:8px; padding:7px; font-size:12px;">⏻ <span class="sidebar-foot-label">Log out</span></button>
   </div>
+  <button class="sidebar-collapse-toggle" id="sidebarCollapseToggle" aria-label="Collapse sidebar" title="Collapse sidebar">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4 L6.5 10 L12.5 16"/></svg>
+  </button>
 </div>
 
 <div class="main">
@@ -707,6 +742,7 @@ function buildNav() {
     }
     const item = el("div", "nav-item" + (section.id === state.section ? " active" : ""));
     item.innerHTML = `<span class="nav-icon">${section.icon}</span><span>${section.label}</span>`;
+    item.title = section.label;
     item.onclick = () => switchSection(section.id);
     nav.appendChild(item);
   }
@@ -741,6 +777,28 @@ function closeMobileSidebar() {
 }
 document.getElementById("hamburgerBtn").onclick = openMobileSidebar;
 document.getElementById("sidebarOverlay").onclick = closeMobileSidebar;
+
+// ============================================================
+// DESKTOP SIDEBAR COLLAPSE (more room for wide analysis results -
+// tables, addresses, branching trail diagrams). Separate from the
+// mobile drawer above, which uses different show/hide mechanics
+// entirely (mobile always resets to fully expanded - see the
+// .sidebar.collapsed override inside the mobile media query).
+// ============================================================
+function applySidebarCollapsed(collapsed) {
+  const sidebar = document.getElementById("sidebar");
+  const toggleBtn = document.getElementById("sidebarCollapseToggle");
+  sidebar.classList.toggle("collapsed", collapsed);
+  toggleBtn.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  toggleBtn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+}
+function toggleSidebarCollapsed() {
+  const collapsed = !document.getElementById("sidebar").classList.contains("collapsed");
+  applySidebarCollapsed(collapsed);
+  localStorage.setItem("sidebarCollapsed", collapsed ? "1" : "0");
+}
+document.getElementById("sidebarCollapseToggle").onclick = toggleSidebarCollapsed;
+applySidebarCollapsed(localStorage.getItem("sidebarCollapsed") === "1");
 
 document.getElementById("styleToggle").addEventListener("click", (e) => {
   const btn = e.target.closest("button");
@@ -1199,30 +1257,6 @@ async function runAIAssist(kind, traceData, meta) {
   }
 }
 
-// Starts a trace as a background job and polls until it's done - a
-// trace on a genuinely active wallet can take well past what most
-// reverse proxies (Render included) will hold a single request open
-// for, confirmed in production. Polling avoids ever needing one long
-// connection at all. statusEl gets progress text; returns the final
-// result or throws with the real error message on failure.
-//
-// Top-level (not nested inside renderLinkTraceSection) so both
-// runWalletTrace/runTxHashLookup/runWalletDateSearch below AND
-// runForwardTraceFrom (also top-level, called from buttons rendered
-// elsewhere) can call it.
-async function runTraceAsJob(body, statusEl) {
-  const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
-  const jobId = started.job_id;
-  let pollCount = 0;
-  while (true) {
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    pollCount++;
-    const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
-    if (job.status === "done") return job.result;
-    if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
-  }
-}
-
 function renderLinkTraceSection() {
   const section = el("div", "section", "");
   section.id = "section-link-trace";
@@ -1375,6 +1409,25 @@ function renderLinkTraceSection() {
     if (mode === "txhash") return runTxHashLookup();
     if (mode === "walletdate") return runWalletDateSearch();
   };
+
+  // Starts a trace as a background job and polls until it's done - a
+  // trace on a genuinely active wallet can take well past what most
+  // reverse proxies (Render included) will hold a single request open
+  // for, confirmed in production. Polling avoids ever needing one long
+  // connection at all. statusEl gets progress text; returns the final
+  // result or throws with the real error message on failure.
+  async function runTraceAsJob(body, statusEl) {
+    const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+    const jobId = started.job_id;
+    let pollCount = 0;
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      pollCount++;
+      const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
+      if (job.status === "done") return job.result;
+      if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
+    }
+  }
 
   async function runWalletTrace() {
     const wallet = document.getElementById("ltWallet").value.trim();
