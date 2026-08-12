@@ -383,10 +383,13 @@ TARGET_ILLICIT_WALLETS = [
 # --------------------------------------------------------------
 # How many hops forward to follow before giving up. Each extra hop
 # multiplies the number of API calls needed (bounded by
-# MAX_FANOUT_PER_HOP below), so keep this modest - 3 is a reasonable
-# default. 4+ can take a long time and hit free-tier rate limits.
+# MAX_FANOUT_PER_HOP below), so keep this modest. Traces run as a
+# background job (see api_server.py) so a deeper search no longer
+# risks a request timeout the way it used to - the real remaining
+# constraint is respecting third-party API rate limits (Etherscan,
+# mempool.space), not this app's own timeout handling.
 # --------------------------------------------------------------
-MAX_HOPS = 4
+MAX_HOPS = 6
 
 # --------------------------------------------------------------
 # At each wallet, only follow its MOST RECENT N outgoing
@@ -395,7 +398,7 @@ MAX_HOPS = 4
 # explode combinatorially. Increase for more thoroughness, at the
 # cost of speed.
 # --------------------------------------------------------------
-MAX_FANOUT_PER_HOP = 15
+MAX_FANOUT_PER_HOP = 20
 
 SECONDS_BETWEEN_REQUESTS = 0.3
 
