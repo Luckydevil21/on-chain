@@ -281,20 +281,39 @@ _allowed_origins = (
     ["*"] if _allowed_origins_setting == "*"
     else [origin.strip() for origin in _allowed_origins_setting.split(",")]
 )
+
+# SECURITY: allow_origins=["*"] combined with allow_credentials=True is NOT
+# a safe "wide open but harmless" combination, even though the API-key path
+# is unaffected by it. Starlette's CORSMiddleware special-cases this exact
+# combination: instead of sending the literal header value "*", it reflects
+# back whatever Origin the calling site sent, together with
+# Access-Control-Allow-Credentials: true. That tells the browser it's fine
+# to attach cookies and let the calling page read the response - and this
+# app issues a real session cookie at /api/auth/login. Left as "*", ANY
+# website opened in the same browser as a logged-in user could silently
+# call this API using that user's session cookie and read back case data,
+# known entities, evidence packs, etc. - no API key or user action needed.
+# So: wildcard origins are only ever served WITHOUT credentials. Cookie-
+# based login only works once specific origin(s) are configured.
+_credentialed_cors = _allowed_origins != ["*"]
+
 if _allowed_origins == ["*"]:
     print("=" * 70)
     print("⚠️  TOOLKIT_ALLOWED_ORIGINS was not set - CORS is wide open (any")
-    print("    website can call this API from a browser, though a valid")
-    print("    X-API-Key is still required for every real endpoint). Fine")
-    print("    for local testing; before running this anywhere reachable")
-    print("    over the network, set it to your actual frontend's origin:")
+    print("    website can call this API from a browser). Because wildcard")
+    print("    origins can't safely be combined with credentialed requests,")
+    print("    cookie-based logins (/api/auth/login) are DISABLED while this")
+    print("    is unset - only the X-API-Key header will authenticate.")
+    print("    Fine for local testing/API-key-only use; before running this")
+    print("    anywhere reachable over the network (or before using session")
+    print("    logins at all), set it to your actual frontend's origin(s):")
     print("        TOOLKIT_ALLOWED_ORIGINS=https://your-app.up.railway.app")
     print("=" * 70)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_credentials=True,
+    allow_credentials=_credentialed_cors,
     allow_methods=["*"],
     allow_headers=["*"],
 )
