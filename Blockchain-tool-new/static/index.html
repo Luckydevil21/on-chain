@@ -314,6 +314,14 @@
   content: ""; position: absolute; top: -3px; left: -3px; width: 6px; height: 6px;
   border-radius: 1px; background: #3d5a78;
 }
+.wbox-explorer-link {
+  position: absolute; top: -7px; right: -7px; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text-dim);
+  font-size: 10px; text-decoration: none; opacity: 0; transition: opacity 0.12s ease;
+}
+.wbox:hover .wbox-explorer-link { opacity: 1; }
+.wbox-explorer-link:hover { color: var(--accent); border-color: var(--accent); }
 .wbox.root { border-color: var(--accent); background: var(--accent-bg); }
 .wbox.root::before { background: var(--accent); }
 .wbox.entity { border-color: var(--entity); background: var(--entity-bg); }
@@ -675,6 +683,33 @@ const state = {
 // Cached last Link Tracer result, so switching Technical/Simple view
 // instantly re-renders without a fresh API call.
 const lastResults = { linkTrace: null, linkTraceMeta: null };
+
+// Cached once at app init - which explorer each EVM chain uses (Arbiscan
+// for Arbitrum, Basescan for Base, etc. - never assume plain etherscan.io).
+let evmChainExplorers = {};
+function loadEvmChainExplorers() {
+  apiFetch("/api/evm-chains").then(chains => {
+    evmChainExplorers = Object.fromEntries(chains.map(c => [c.key, c.explorer]));
+  }).catch(() => {});
+}
+
+// Builds a direct link to an address's OWN page on its chain's block
+// explorer - lets anyone (not just a crypto specialist) check that
+// explorer's own displayed label for an address the app doesn't have in
+// Known Entities. This is a normal hyperlink to a public page, exactly
+// how these explorers intend to be used - completely different from
+// scraping their data programmatically.
+function addressExplorerUrl(address, chain, evmChain) {
+  if (chain === "ethereum") {
+    const base = evmChainExplorers[evmChain] || evmChainExplorers["ethereum"] || "https://etherscan.io";
+    return `${base}/address/${address}`;
+  }
+  if (chain === "bitcoin") return `https://mempool.space/address/${address}`;
+  if (chain === "xrp") return `https://bithomp.com/explorer/${address}`;
+  if (chain === "tron") return `https://tronscan.org/#/address/${address}`;
+  if (chain === "solana") return `https://solscan.io/account/${address}`;
+  return null;
+}
 
 const SECTIONS = [
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, group: "Investigate" },
@@ -1151,6 +1186,7 @@ function enterApp() {
   renderTokenRiskSection();
   renderSanctionsSection();
   renderPoisoningCheckSection();
+  loadEvmChainExplorers();
   if (isAdmin()) renderUsersSection();
 
   buildNav();
@@ -1871,7 +1907,7 @@ function renderLinkTraceResults(data, meta) {
       if (path.reason) row.appendChild(el("div", "trail-reason", path.reason));
       const flow = el("div", "trail-flow");
       const rootLabel = simple ? aliases[path.hops[0].from_address.toLowerCase()] : path.hops[0].from_address;
-      flow.appendChild(makeBox(rootLabel, "root"));
+      flow.appendChild(makeBox(rootLabel, "root", path.hops[0].from_address, data.chain, data.evm_chain));
       path.hops.forEach((hop, i) => {
         const isLast = i === path.hops.length - 1;
         const isMatchTarget = cls === "match" && isLast;
@@ -1892,7 +1928,7 @@ function renderLinkTraceResults(data, meta) {
         } else if (isFlaggedEnd && hop.coinjoin_match) {
           boxCls = "guess"; label = `🌀 ${label}`;
         }
-        flow.appendChild(makeBox(label, boxCls));
+        flow.appendChild(makeBox(label, boxCls, hop.to_address, data.chain, data.evm_chain));
       });
       row.appendChild(flow);
       container.appendChild(row);
@@ -2009,20 +2045,40 @@ function truncateAddress(address) {
   return address.slice(0, 10) + "…" + address.slice(-6);
 }
 
-function makeBox(label, cls) {
+function makeBox(label, cls, address, chain, evmChain) {
   const box = el("div", "wbox" + (cls ? " " + cls : ""));
   // Only truncate genuine addresses - short labels like "(swap service)"
   // or an already-friendly Simple View name should show in full.
   const looksLikeAddress = /^(0x[a-fA-F0-9]+|[13bc][a-km-zA-HJ-NP-Z0-9]{20,}|r[a-km-zA-HJ-NP-Z0-9]{20,}|T[a-km-zA-HJ-NP-Z0-9]{20,})/.test(label.replace("🚩 ", ""));
-  box.textContent = looksLikeAddress ? label.replace(label.replace("🚩 ", ""), truncateAddress(label.replace("🚩 ", ""))) : label;
+  const textSpan = document.createElement("span");
+  textSpan.textContent = looksLikeAddress ? label.replace(label.replace("🚩 ", ""), truncateAddress(label.replace("🚩 ", ""))) : label;
+  box.appendChild(textSpan);
   box.title = label + " (click to copy)";
   box.onclick = () => {
     navigator.clipboard.writeText(label.replace("🚩 ", "")).then(() => {
-      const original = box.textContent;
-      box.textContent = "Copied";
-      setTimeout(() => { box.textContent = original; }, 900);
+      const original = textSpan.textContent;
+      textSpan.textContent = "Copied";
+      setTimeout(() => { textSpan.textContent = original; }, 900);
     });
   };
+
+  // Optional "check on explorer" link - lets anyone (not just a crypto
+  // specialist) glance at that explorer's own displayed label for an
+  // address this app doesn't have in Known Entities, without leaving
+  // a dead end. A normal link to a public page - not scraping.
+  const url = address ? addressExplorerUrl(address, chain, evmChain) : null;
+  if (url) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.className = "wbox-explorer-link";
+    link.title = "Check this address on its block explorer";
+    link.textContent = "↗";
+    link.onclick = (e) => e.stopPropagation(); // don't also trigger the copy-to-clipboard click
+    box.appendChild(link);
+  }
+
   return box;
 }
 function addressCellHtml(address) {
