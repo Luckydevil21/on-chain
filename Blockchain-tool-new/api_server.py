@@ -101,6 +101,7 @@ import requests
 from fastapi import FastAPI, HTTPException, Depends, Request, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 # ---- link_tracer.py, imported as a module. Importing it does NOT run
@@ -331,6 +332,17 @@ _file_lock = threading.Lock()
 
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# Serves any file placed in static/ directly (e.g. vis-network.min.js,
+# self-hosted rather than pulled from a CDN) at /static/<filename> -
+# mounted at /static specifically, not /, so it never shadows the API
+# routes or the index.html route below. Self-hosting the graph library
+# rather than depending on cdnjs.cloudflare.com being reachable avoids
+# a real, confirmed failure mode: some networks (corporate firewalls,
+# certain ad-blockers) block common CDN domains outright, silently
+# breaking the graph view with no visible error for anyone behind one.
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", include_in_schema=False)
