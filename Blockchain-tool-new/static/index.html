@@ -1886,12 +1886,49 @@ function renderLinkTraceResults(data, meta) {
   let aliases = {};
   if (simple) aliases = buildAliases(flattenHops(allPaths), meta.wallet);
 
+  // Linear (trail diagram) vs interactive Graph view - a toggle on the
+  // RESULTS themselves, not a separate persisted feature. diagramTarget
+  // is where the linear rendering below actually appends to, instead of
+  // the main results container directly, so it can be shown/hidden as a
+  // unit alongside the graph view.
+  const viewToggleCard = el("div", "card");
+  viewToggleCard.style.cssText = "display:flex; align-items:center; gap:10px; padding:10px 16px;";
+  viewToggleCard.innerHTML = `
+    <div class="style-toggle" id="traceViewToggle">
+      <button data-view="linear" class="active">Linear</button>
+      <button data-view="graph">Graph</button>
+    </div>
+  `;
+  container.appendChild(viewToggleCard);
+
+  const linearViewContainer = el("div");
+  const graphViewContainer = el("div");
+  graphViewContainer.style.display = "none";
+  container.appendChild(linearViewContainer);
+  container.appendChild(graphViewContainer);
+  let diagramTarget = linearViewContainer;
+
+  let graphInitialized = false;
+  viewToggleCard.querySelectorAll("#traceViewToggle button").forEach(btn => {
+    btn.onclick = () => {
+      viewToggleCard.querySelectorAll("#traceViewToggle button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const showGraph = btn.dataset.view === "graph";
+      linearViewContainer.style.display = showGraph ? "none" : "";
+      graphViewContainer.style.display = showGraph ? "" : "none";
+      if (showGraph && !graphInitialized) {
+        graphInitialized = true;
+        renderTraceGraph(data, allPaths, graphViewContainer);
+      }
+    };
+  });
+
   function renderSwapLeads(path) {
     const candidates = path.swap_correlation_candidates;
     if (candidates === undefined) return; // not applicable to this path (not an instant_swap entity)
 
     if (!candidates.length) {
-      container.appendChild(el("div", "trail-reason",
+      diagramTarget.appendChild(el("div", "trail-reason",
         "🔄 No plausible correlated deposit/payout found for this service within the configured time window and value tolerance."));
       return;
     }
@@ -1909,9 +1946,9 @@ function renderLinkTraceResults(data, meta) {
     const destLabel = simple ? (aliases[best.counterparty.toLowerCase()] || best.counterparty) : best.counterparty;
     flow.appendChild(makeBox(destLabel, "guess"));
     row.appendChild(flow);
-    container.appendChild(row);
+    diagramTarget.appendChild(row);
     if (candidates.length > 1) {
-      container.appendChild(el("div", "footnote", `+${candidates.length - 1} more candidate(s) for this lead - see Technical View / raw API response for the full list.`));
+      diagramTarget.appendChild(el("div", "footnote", `+${candidates.length - 1} more candidate(s) for this lead - see Technical View / raw API response for the full list.`));
     }
   }
 
@@ -1936,21 +1973,21 @@ function renderLinkTraceResults(data, meta) {
     continueBtn.style.cssText = "margin-top:8px; font-size:12px; padding:6px 12px;";
     continueBtn.onclick = () => runForwardTraceFrom(dest.address, null, null, path.hops);
     row.appendChild(continueBtn);
-    container.appendChild(row);
+    diagramTarget.appendChild(row);
   }
 
   function renderCoinjoinStats(path) {
     const lastHop = path.hops[path.hops.length - 1];
     if (!lastHop || !lastHop.coinjoin_match) return;
     const cj = lastHop.coinjoin_match;
-    container.appendChild(el("div", "trail-reason",
+    diagramTarget.appendChild(el("div", "trail-reason",
       `🌀 Structural CoinJoin heuristic: ${cj.equal_output_count} outputs of exactly ${cj.equal_output_value_btc} BTC each, ` +
       `out of ${cj.total_outputs} total outputs and ${cj.total_inputs} inputs. This is a pattern-based indicator, not confirmed - verify the transaction independently.`));
   }
 
   function renderGroup(title, cls, paths) {
     if (!paths.length) return;
-    container.appendChild(el("div", "diagram-section-title " + cls, title));
+    diagramTarget.appendChild(el("div", "diagram-section-title " + cls, title));
     for (const path of paths) {
       const row = el("div", "trail-row");
       if (path.reason) row.appendChild(el("div", "trail-reason", path.reason));
@@ -1980,7 +2017,7 @@ function renderLinkTraceResults(data, meta) {
         flow.appendChild(makeBox(label, boxCls, hop.to_address, data.chain, data.evm_chain, !hop.to_known_entity));
       });
       row.appendChild(flow);
-      container.appendChild(row);
+      diagramTarget.appendChild(row);
       renderEmbeddedDestination(path);
       renderCoinjoinStats(path);
       renderSwapLeads(path);
@@ -1998,8 +2035,8 @@ function renderLinkTraceResults(data, meta) {
     for (const [addr, label] of Object.entries(aliases)) {
       const row = el("tr"); row.innerHTML = `<td class="label">${escapeHtml(label)}</td><td>${escapeHtml(addr)}</td>`; table.appendChild(row);
     }
-    container.appendChild(legendCard);
-    container.appendChild(el("div", "footnote", "Full technical detail - transaction references, exact addresses, raw timestamps - is available in Technical View."));
+    diagramTarget.appendChild(legendCard);
+    diagramTarget.appendChild(el("div", "footnote", "Full technical detail - transaction references, exact addresses, raw timestamps - is available in Technical View."));
   } else {
     const summaryCard = el("div", "card");
     summaryCard.innerHTML = `<h3>Clean summary</h3>`;
@@ -2007,8 +2044,102 @@ function renderLinkTraceResults(data, meta) {
     table.innerHTML = `<tr><th>From</th><th>To</th><th>Amount</th><th>Time (UTC)</th><th>Verify</th></tr>` +
   data.clean_summary.map(r => `<tr><td>${addressCellHtml(r.from)}</td><td>${addressCellHtml(r.to)}</td><td>${escapeHtml(r.amount)}</td><td>${escapeHtml(r.tx_time_utc)}</td><td><a href="${r.verify_url}" target="_blank">view</a></td></tr>`).join("");
     summaryCard.appendChild(table);
-    container.appendChild(summaryCard);
+    diagramTarget.appendChild(summaryCard);
   }
+}
+
+// Renders the SAME single-trace data the linear diagram uses as an
+// interactive node graph instead - a toggle on the results themselves,
+// not a separate persisted feature (see the conversation this was
+// rescoped from - a case-level persistent graph was built and then
+// deliberately removed in favor of this simpler, self-contained view).
+function renderTraceGraph(data, allPaths, container) {
+  const hops = [];
+  for (const path of allPaths) for (const hop of path.hops) hops.push(hop);
+
+  if (!hops.length) {
+    container.innerHTML = `<div class="empty-state">Nothing to show as a graph.</div>`;
+    return;
+  }
+
+  const nodeColor = (address, isRoot) => {
+    if (isRoot) return { border: "#4f8cc9", background: "#142331" };
+    const hop = hops.find(h => h.to_address && h.to_address.toLowerCase() === address.toLowerCase());
+    if (hop && hop.to_known_entity && hop.to_known_entity.type === "sanctioned") return { border: "#e0666c", background: "#2a1416" };
+    if (hop && hop.to_known_entity) return { border: "#4fb3a3", background: "#12211f" };
+    return { border: "#5a6472", background: "#1c232c" };
+  };
+
+  const nodeAddresses = new Set();
+  hops.forEach(h => { nodeAddresses.add(h.from_address); nodeAddresses.add(h.to_address); });
+
+  const visNodes = new vis.DataSet([...nodeAddresses].map(addr => {
+    const isRoot = addr.toLowerCase() === data.wallet.toLowerCase();
+    const hop = hops.find(h => h.to_address && h.to_address.toLowerCase() === addr.toLowerCase());
+    const entityName = hop && hop.to_known_entity ? hop.to_known_entity.name : null;
+    const entityType = hop && hop.to_known_entity ? hop.to_known_entity.type : null;
+    return {
+      id: addr,
+      label: entityName || truncateAddress(addr),
+      title: entityName ? `${entityName} (${entityType})\n${addr}` : addr,
+      shape: isRoot ? "box" : "dot",
+      size: isRoot ? 22 : 14,
+      color: nodeColor(addr, isRoot),
+      font: { color: "#c9d1d9", size: 12 },
+    };
+  }));
+
+  const visEdges = new vis.DataSet(hops.map((h, i) => ({
+    id: i,
+    from: h.from_address, to: h.to_address, arrows: "to",
+    label: h.amount || "",
+    font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+    color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
+    dashes: !!h.is_change,
+    hop: h,
+  })));
+
+  container.innerHTML = "";
+  const graphDiv = el("div");
+  graphDiv.style.cssText = "height:480px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);";
+  container.appendChild(graphDiv);
+  const detailDiv = el("div");
+  container.appendChild(detailDiv);
+
+  const network = new vis.Network(graphDiv, { nodes: visNodes, edges: visEdges }, {
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 120 } },
+    interaction: { hover: true, tooltipDelay: 150 },
+    layout: { improvedLayout: true },
+  });
+
+  network.on("click", (params) => {
+    detailDiv.innerHTML = "";
+    if (params.nodes.length) {
+      const addr = params.nodes[0];
+      const isRoot = addr.toLowerCase() === data.wallet.toLowerCase();
+      const hop = hops.find(h => h.to_address && h.to_address.toLowerCase() === addr.toLowerCase());
+      const card = el("div", "card");
+      card.style.marginTop = "10px";
+      card.innerHTML = `
+        <div class="mono" style="font-weight:600;">${escapeHtml(addr)}</div>
+        ${isRoot ? `<div class="footnote">The wallet being traced.</div>` : ""}
+        ${hop && hop.to_known_entity ? `<div class="hint">${escapeHtml(hop.to_known_entity.name)} (${escapeHtml(hop.to_known_entity.type)})</div>` : `<div class="footnote">No known-entity attribution yet.</div>`}
+      `;
+      detailDiv.appendChild(card);
+    } else if (params.edges.length) {
+      const edge = visEdges.get(params.edges[0]);
+      const h = edge.hop;
+      const card = el("div", "card");
+      card.style.marginTop = "10px";
+      card.innerHTML = `
+        <div class="footnote"><strong>${escapeHtml(h.amount || "")}</strong> - ${escapeHtml(h.tx_time_utc || "unknown time")}</div>
+        <div class="mono footnote">${escapeHtml(h.from_address)} → ${escapeHtml(h.to_address)}</div>
+        ${h.is_change ? `<div class="hint">Flagged as likely change (heuristic).</div>` : ""}
+        ${h.explorer_url ? `<a href="${escapeHtml(h.explorer_url)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
+      `;
+      detailDiv.appendChild(card);
+    }
+  });
 }
 
 function renderEvidencePackCard(traceData, meta, container) {
@@ -2288,22 +2419,6 @@ async function openCase(caseId) {
       </div>
       <div class="status-line" id="cwStatus"></div>` : ""}
       <div class="card"><h3>Wallets in this case</h3><div id="cwList"></div></div>
-      <div class="card">
-        <h3>Case graph</h3>
-        <div class="field hint mb-md">
-          Every wallet and transaction discovered across every trace ever run against this case,
-          in one explorable network - not just this session's results. Run a new trace next week that
-          reaches a wallet found today, and it connects into the same graph automatically.
-        </div>
-        <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
-          <div class="field" style="margin-bottom:0;"><label>From date (optional)</label><input type="date" id="graphFromDate"></div>
-          <div class="field" style="margin-bottom:0;"><label>To date (optional)</label><input type="date" id="graphToDate"></div>
-          <button class="btn" id="graphLoadBtn">Load graph</button>
-        </div>
-        <div class="status-line" id="graphStatus"></div>
-        <div id="graphContainer" style="display:none; height:520px; margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
-        <div id="graphNodeDetail"></div>
-      </div>
     `;
 
     document.getElementById("caseBackBtn").onclick = () => {
@@ -2311,8 +2426,6 @@ async function openCase(caseId) {
       document.getElementById("casesListView").style.display = "block";
       savedCasesState.openCaseId = null;
     };
-
-    document.getElementById("graphLoadBtn").onclick = () => loadCaseGraph(caseId);
 
     renderCaseWalletsTable(caseData.wallets);
 
@@ -2336,115 +2449,6 @@ async function openCase(caseId) {
     }
   } catch (err) {
     detailView.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
-  }
-}
-
-async function loadCaseGraph(caseId) {
-  const statusEl = document.getElementById("graphStatus");
-  const containerEl = document.getElementById("graphContainer");
-  const detailEl = document.getElementById("graphNodeDetail");
-  statusEl.textContent = "Loading...";
-  statusEl.className = "status-line";
-  detailEl.innerHTML = "";
-
-  try {
-    const graph = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/graph`);
-
-    // Density management: an optional date range narrows what's shown,
-    // since a case with many traces run against it over time could
-    // otherwise accumulate into an unreadable tangle - the growing-graph
-    // idea is only useful if it stays readable as it grows.
-    const fromDate = document.getElementById("graphFromDate").value;
-    const toDate = document.getElementById("graphToDate").value;
-    let edges = graph.edges;
-    if (fromDate) edges = edges.filter(e => e.tx_time_utc && e.tx_time_utc >= fromDate);
-    if (toDate) edges = edges.filter(e => e.tx_time_utc && e.tx_time_utc <= toDate + " 23:59:59");
-
-    if (!graph.edges.length) {
-      statusEl.textContent = "";
-      containerEl.style.display = "none";
-      detailEl.innerHTML = `<div class="empty-state">No graph data yet - run a trace with this case selected to start building it.</div>`;
-      return;
-    }
-    if (!edges.length) {
-      statusEl.textContent = `${graph.edges.length} total edge(s) in this case, none in the selected date range.`;
-      statusEl.className = "status-line error";
-      containerEl.style.display = "none";
-      return;
-    }
-
-    // Only include nodes actually touched by the (possibly date-filtered) edges.
-    const activeAddresses = new Set();
-    edges.forEach(e => { activeAddresses.add(e.from.toLowerCase()); activeAddresses.add(e.to.toLowerCase()); });
-    const activeNodes = graph.nodes.filter(n => activeAddresses.has(n.id.toLowerCase()));
-
-    const nodeColor = (node) => {
-      if (node.is_case_wallet) return { border: "#4f8cc9", background: "#142331" };
-      if (node.entity_type === "sanctioned") return { border: "#e0666c", background: "#2a1416" };
-      if (node.entity_name) return { border: "#4fb3a3", background: "#12211f" };
-      return { border: "#5a6472", background: "#1c232c" };
-    };
-
-    const visNodes = new vis.DataSet(activeNodes.map(n => ({
-      id: n.id,
-      label: n.entity_name || truncateAddress(n.id),
-      title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
-      shape: n.is_case_wallet ? "box" : "dot",
-      size: n.is_case_wallet ? 22 : 14,
-      color: nodeColor(n),
-      font: { color: "#c9d1d9", size: 12 },
-    })));
-
-    const visEdges = new vis.DataSet(edges.map((e, i) => ({
-      id: i,
-      from: e.from, to: e.to, arrows: "to",
-      label: e.amount_label || "",
-      font: { color: "#7d8590", size: 9, strokeWidth: 0 },
-      color: { color: e.is_change ? "#4f8cc9" : "#3d5a78", opacity: e.is_change ? 0.5 : 0.8 },
-      dashes: e.is_change,
-      tx: e,
-    })));
-
-    statusEl.textContent = `${activeNodes.length} address(es), ${edges.length} transaction(s) shown${edges.length !== graph.edges.length ? ` (of ${graph.edges.length} total)` : ""}.`;
-    statusEl.className = "status-line";
-    containerEl.style.display = "block";
-    containerEl.innerHTML = "";
-
-    const network = new vis.Network(containerEl, { nodes: visNodes, edges: visEdges }, {
-      physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 120 } },
-      interaction: { hover: true, tooltipDelay: 150 },
-      layout: { improvedLayout: true },
-    });
-
-    network.on("click", (params) => {
-      detailEl.innerHTML = "";
-      if (params.nodes.length) {
-        const node = activeNodes.find(n => n.id === params.nodes[0]);
-        const card = el("div", "card");
-        card.style.marginTop = "10px";
-        card.innerHTML = `
-          <div class="mono" style="font-weight:600;">${escapeHtml(node.id)}</div>
-          ${node.entity_name ? `<div class="hint">${escapeHtml(node.entity_name)} (${escapeHtml(node.entity_type)})</div>` : `<div class="footnote">No known-entity attribution yet.</div>`}
-          ${node.is_case_wallet ? `<div class="footnote">One of this case's own saved wallets.</div>` : ""}
-        `;
-        detailEl.appendChild(card);
-      } else if (params.edges.length) {
-        const edge = visEdges.get(params.edges[0]);
-        const tx = edge.tx;
-        const card = el("div", "card");
-        card.style.marginTop = "10px";
-        card.innerHTML = `
-          <div class="footnote"><strong>${escapeHtml(tx.amount_label || "")}</strong> - ${escapeHtml(tx.tx_time_utc || "unknown time")}</div>
-          <div class="mono footnote">${escapeHtml(tx.from)} → ${escapeHtml(tx.to)}</div>
-          ${tx.is_change ? `<div class="hint">Flagged as likely change (heuristic).</div>` : ""}
-          ${tx.explorer_url ? `<a href="${escapeHtml(tx.explorer_url)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
-        `;
-        detailEl.appendChild(card);
-      }
-    });
-  } catch (err) {
-    statusEl.textContent = "Error: " + err.message;
-    statusEl.className = "status-line error";
   }
 }
 
