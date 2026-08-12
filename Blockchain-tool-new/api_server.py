@@ -795,21 +795,20 @@ def _execute_link_trace(req: "LinkTraceRequest", username: str):
             seed_hop=seed_hop, evm_chain=evm_chain,
         )
 
-    poisoning_alert = None
-    if req.case_id:
-        poisoning_result = lt.detect_address_poisoning(actual_wallet, evm_chain, req.case_id)
-        if poisoning_result.get("suspected_clusters"):
-            poisoning_alert = poisoning_result["suspected_clusters"]
+    # Runs on EVERY trace, not just when a case is selected - a solicitor
+    # just tracing "where did this money go" shouldn't need to separately
+    # discover and visit the Address Poisoning Check tab to get this
+    # coverage. If a case IS selected, it still gets the extra benefit of
+    # comparing against that case's own saved addresses too (see
+    # detect_address_poisoning's own docstring).
+    poisoning_result = lt.detect_address_poisoning(actual_wallet, evm_chain, req.case_id)
+    poisoning_alert = poisoning_result["suspected_clusters"] if poisoning_result.get("suspected_clusters") else None
 
     all_paths_for_summary = (
         matched_paths
         + [path for path, _reason in flagged_end_paths]
         + [path for path, _reason in amount_filtered_paths]
     )
-
-    if req.case_id:
-        all_hops_flat = [hop for path in all_paths_for_summary for hop in path]
-        lt.save_case_graph_edges(req.case_id, all_hops_flat, chain, username)
 
     clean_summary = (
         lt.dedupe_clean_rows(lt.build_clean_rows(all_paths_for_summary, actual_wallet))
@@ -917,13 +916,6 @@ class CaseWalletIn(BaseModel):
     chain: Optional[str] = Field(default=None, description="Auto-detected if omitted.")
     source: Optional[str] = None
     context: Optional[str] = None
-
-
-@app.get("/api/cases/{case_id}/graph")
-def get_case_graph(case_id: str, _auth=Depends(require_read)):
-    """The full persisted graph for a case - see link_tracer.py's
-    load_case_graph() for how nodes/edges are built."""
-    return lt.load_case_graph(case_id)
 
 
 @app.get("/api/cases")
