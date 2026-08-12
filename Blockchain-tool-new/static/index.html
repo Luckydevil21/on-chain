@@ -1199,6 +1199,30 @@ async function runAIAssist(kind, traceData, meta) {
   }
 }
 
+// Starts a trace as a background job and polls until it's done - a
+// trace on a genuinely active wallet can take well past what most
+// reverse proxies (Render included) will hold a single request open
+// for, confirmed in production. Polling avoids ever needing one long
+// connection at all. statusEl gets progress text; returns the final
+// result or throws with the real error message on failure.
+//
+// Top-level (not nested inside renderLinkTraceSection) so both
+// runWalletTrace/runTxHashLookup/runWalletDateSearch below AND
+// runForwardTraceFrom (also top-level, called from buttons rendered
+// elsewhere) can call it.
+async function runTraceAsJob(body, statusEl) {
+  const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
+  const jobId = started.job_id;
+  let pollCount = 0;
+  while (true) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    pollCount++;
+    const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
+    if (job.status === "done") return job.result;
+    if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
+  }
+}
+
 function renderLinkTraceSection() {
   const section = el("div", "section", "");
   section.id = "section-link-trace";
@@ -1351,25 +1375,6 @@ function renderLinkTraceSection() {
     if (mode === "txhash") return runTxHashLookup();
     if (mode === "walletdate") return runWalletDateSearch();
   };
-
-  // Starts a trace as a background job and polls until it's done - a
-  // trace on a genuinely active wallet can take well past what most
-  // reverse proxies (Render included) will hold a single request open
-  // for, confirmed in production. Polling avoids ever needing one long
-  // connection at all. statusEl gets progress text; returns the final
-  // result or throws with the real error message on failure.
-  async function runTraceAsJob(body, statusEl) {
-    const started = await apiFetch("/api/link-trace", { method: "POST", body: JSON.stringify(body) });
-    const jobId = started.job_id;
-    let pollCount = 0;
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      pollCount++;
-      const job = await apiFetch(`/api/link-trace/${encodeURIComponent(jobId)}`);
-      if (job.status === "done") return job.result;
-      if (statusEl) statusEl.textContent = `Tracing... this can take a while (still running after ${pollCount * 3}s).`;
-    }
-  }
 
   async function runWalletTrace() {
     const wallet = document.getElementById("ltWallet").value.trim();
