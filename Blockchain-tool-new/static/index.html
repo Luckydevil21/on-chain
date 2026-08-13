@@ -2166,9 +2166,14 @@ function renderTraceGraph(data, allPaths, container) {
 
   const network = new vis.Network(graphDiv, { nodes: visNodes, edges: visEdges }, {
     physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 120 } },
-    interaction: { hover: true, tooltipDelay: 150 },
+    interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
+    edges: { smooth: false },  // straight lines, not curved
   });
+  // Physics only runs for the initial layout - once that settles, turn
+  // it off entirely so a dragged node stays exactly where it's placed,
+  // rather than the simulation pulling it back afterward.
+  network.once("stabilizationIterationsDone", () => network.setOptions({ physics: false }));
 
   network.on("click", (params) => {
     detailDiv.innerHTML = "";
@@ -3293,8 +3298,21 @@ async function startExploreGraph() {
 
   exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
     physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 130 } },
-    interaction: { hover: true, tooltipDelay: 150 },
+    interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
+    edges: { smooth: false },  // straight lines, not curved
+  });
+
+  // A node the user drags becomes pinned exactly where they drop it -
+  // physics keeps working normally for everything else, so a NEW node
+  // added later (via "Add to graph") still finds a sensible position,
+  // but nothing already manually placed ever gets pulled away again.
+  exploreGraphNetwork.on("dragEnd", (params) => {
+    if (params.nodes.length) {
+      const nodeId = params.nodes[0];
+      const pos = exploreGraphNetwork.getPositions([nodeId])[nodeId];
+      exploreGraphNodes.update({ id: nodeId, fixed: { x: true, y: true }, x: pos.x, y: pos.y });
+    }
   });
 
   exploreGraphNetwork.on("click", async (params) => {
