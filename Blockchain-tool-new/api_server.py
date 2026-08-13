@@ -1352,6 +1352,25 @@ class PoisoningCheckRequest(BaseModel):
     case_id: Optional[str] = Field(default=None, description="Optional - also compare against this saved case's wallet addresses.")
 
 
+class WalletConnectionsRequest(BaseModel):
+    wallet: str
+    evm_chain: Optional[str] = None
+
+
+@app.post("/api/wallet-connections")
+def get_wallet_connections(req: WalletConnectionsRequest, _auth=Depends(require_read)):
+    """A single wallet's immediate connections - the building block for
+    interactive, click-to-expand graph exploration, as opposed to the
+    fully automated multi-hop trace. See link_tracer.py's
+    get_wallet_immediate_connections()."""
+    _check_general_rate_limit("wallet-connections", _auth["username"], window_seconds=300, max_requests=60)
+    result = lt.get_wallet_immediate_connections(req.wallet, req.evm_chain or lt.DEFAULT_EVM_CHAIN)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    auth.log_action(_auth["username"], "wallet_connections_expand", target=req.wallet)
+    return result
+
+
 @app.post("/api/address-poisoning-check")
 def check_address_poisoning(req: PoisoningCheckRequest, _auth=Depends(require_read)):
     """Checks a wallet's own recent transaction history (and optionally a
