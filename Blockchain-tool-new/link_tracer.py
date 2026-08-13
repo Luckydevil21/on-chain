@@ -3632,6 +3632,60 @@ def _poisoning_signature(address, chain):
     return (addr[:prefix_len].lower(), addr[-suffix_len:].lower())
 
 
+# ====================================================================
+# INTERACTIVE GRAPH EXPLORATION. Unlike trace_forward/trace_backward
+# (a fully automated, fixed-depth breadth-first search), this fetches
+# ONE wallet's immediate connections only - the building block for a
+# human-driven "click a node to expand it" workflow, where an
+# investigator decides which branches are actually worth following,
+# one hop at a time, with no artificial depth ceiling and no wasted
+# effort exploring branches nobody was ever going to care about.
+# ====================================================================
+
+def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
+    """Returns this wallet's immediate outgoing AND incoming
+    counterparties - ONE hop only, both directions at once, with
+    entity/sanction attribution looked up live for each counterparty
+    (same as everywhere else in this app - never guessed, always
+    checked fresh)."""
+    chain = detect_chain(wallet)
+    if chain is None:
+        return {"error": "Not a recognized address on any supported chain."}
+
+    outgoing, _ = get_outgoing_counterparties(chain, wallet, evm_chain)
+    incoming, _ = get_incoming_counterparties(chain, wallet, evm_chain)
+
+    edges = []
+    counterparty_addresses = set()
+    for hop in outgoing:
+        counterparty_addresses.add(hop["counterparty"])
+        edges.append({
+            "from": wallet, "to": hop["counterparty"],
+            "amount_label": hop.get("amount_label"), "tx_hash": hop.get("tx_hash"),
+            "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
+            "explorer_url": hop.get("explorer_url"),
+        })
+    for hop in incoming:
+        counterparty_addresses.add(hop["counterparty"])
+        edges.append({
+            "from": hop["counterparty"], "to": wallet,
+            "amount_label": hop.get("amount_label"), "tx_hash": hop.get("tx_hash"),
+            "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
+            "explorer_url": hop.get("explorer_url"),
+        })
+
+    nodes = []
+    for address in counterparty_addresses:
+        entity = check_known_entity(address)
+        nodes.append({
+            "id": address,
+            "entity_name": entity["name"] if entity else None,
+            "entity_type": entity["type"] if entity else None,
+        })
+
+    return {"wallet": wallet, "chain": chain, "nodes": nodes, "edges": edges}
+
+
 def detect_address_poisoning(wallet, evm_chain=DEFAULT_EVM_CHAIN, case_id=None):
     """
     PLAIN ENGLISH: Fetches this wallet's own recent outgoing AND
