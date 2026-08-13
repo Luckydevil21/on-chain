@@ -740,6 +740,7 @@ function addressExplorerUrl(address, chain, evmChain) {
 const SECTIONS = [
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, essential: true, group: "Investigate" },
   { id: "find-connection", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="10" r="2.5"/><circle cx="16" cy="10" r="2.5"/><path d="M6.5 10 H13.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Find Connection", sub: "Does money from one wallet ever reach another?", adminOnly: false, essential: true, group: "Investigate" },
+  { id: "explore-graph", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="4" r="2.3"/><circle cx="4" cy="15" r="2.3"/><circle cx="16" cy="15" r="2.3"/><path d="M10 6.3 L5.3 13 M10 6.3 L14.7 13"/></svg>`, label: "Explore Graph", sub: "Manually build out a graph, deciding yourself what's worth following", adminOnly: false, essential: false, group: "Investigate" },
   { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
   { id: "swap-correlation", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 H15 M15 6 L12 3 M15 6 L12 9"/><path d="M17 14 H5 M5 14 L8 11 M5 14 L8 17"/></svg>`, label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
   { id: "token-risk", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18.5 17 H1.5 Z"/><line x1="10" y1="8" x2="10" y2="12"/><circle cx="10" cy="14.5" r="0.7" fill="currentColor"/></svg>`, label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
@@ -1229,6 +1230,7 @@ function enterApp() {
   contentEl.innerHTML = "";
   renderLinkTraceSection();
   renderFindConnectionSection();
+  renderExploreGraphSection();
   renderSavedCasesSection();
   renderKnownEntitiesSection();
   renderDepositMapSection();
@@ -1762,7 +1764,7 @@ async function runForwardTraceFrom(wallet, seedTxHash, seedSenderAddress, priorH
   }
 }
 
-function renderLinkTraceResults(data, meta, containerId) {
+function renderLinkTraceResults(data, meta, containerId, focusMode) {
   const container = document.getElementById(containerId || "ltResults");
   container.innerHTML = "";
   const simple = state.reportStyle === "simple";
@@ -2032,8 +2034,37 @@ function renderLinkTraceResults(data, meta, containerId) {
   }
 
   renderGroup("🚨 Direct link found", "match", data.matched_paths);
-  renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
-  renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
+
+  const otherPathsCount = data.flagged_end_paths.length + data.amount_filtered_paths.length;
+  if (focusMode && otherPathsCount > 0) {
+    // Find Connection's whole point is answering one focused question -
+    // every OTHER branch the search happened to explore along the way
+    // is real data, just not what was asked for, so it's tucked behind
+    // an explicit toggle instead of competing for attention by default.
+    const otherContainer = el("div");
+    otherContainer.style.display = "none";
+    const toggleBtn = el("button", "btn secondary",
+      `Show ${otherPathsCount} other branch${otherPathsCount === 1 ? "" : "es"} explored along the way`);
+    toggleBtn.style.cssText = "margin-top:10px; font-size:12px; padding:7px 14px;";
+    toggleBtn.onclick = () => {
+      const isHidden = otherContainer.style.display === "none";
+      otherContainer.style.display = isHidden ? "" : "none";
+      toggleBtn.textContent = isHidden
+        ? "Hide other branches"
+        : `Show ${otherPathsCount} other branch${otherPathsCount === 1 ? "" : "es"} explored along the way`;
+    };
+    diagramTarget.appendChild(toggleBtn);
+    diagramTarget.appendChild(otherContainer);
+
+    const savedTarget = diagramTarget;
+    diagramTarget = otherContainer;
+    renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
+    renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
+    diagramTarget = savedTarget;
+  } else {
+    renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
+    renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
+  }
 
   if (simple) {
     const legendCard = el("div", "card");
@@ -3155,12 +3186,173 @@ function renderFindConnectionSection() {
         statusEl.textContent = `No direct connection found within the search depth (${data.addresses_visited} wallet(s) checked). This doesn't prove there's no connection at all - see the results below for why the trail may have stopped.`;
       }
       statusEl.className = "status-line";
-      renderLinkTraceResults(data, lastResults.linkTraceMeta, "fcResults");
+      renderLinkTraceResults(data, lastResults.linkTraceMeta, "fcResults", true);
     } catch (err) {
       statusEl.textContent = "Error: " + err.message;
       statusEl.className = "status-line error";
     }
   };
+}
+
+// ============================================================
+// EXPLORE GRAPH - manual, click-to-expand graph building. Unlike
+// Link Tracer's fully automated fixed-depth search, this starts with
+// just one node and lets the investigator decide which connections
+// are actually worth following, one hop at a time, with no artificial
+// depth ceiling and no wasted effort on branches nobody was ever
+// going to care about. Same visual language as the trace-results
+// graph view (same node/edge colors) for full consistency.
+// ============================================================
+function renderExploreGraphSection() {
+  const section = el("div", "section", "");
+  section.id = "section-explore-graph";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Manually build out a graph</h3>
+      <div class="field hint mb-md">
+        Start with one wallet, then click any node to reveal its immediate connections - you decide
+        which branches are worth exploring further, one hop at a time. Dashed nodes haven't been
+        explored yet; click one to expand it.
+      </div>
+      <div class="field"><label>Starting wallet</label><input type="text" id="egWallet" placeholder="Any Bitcoin, Ethereum, XRP, Tron, or Solana address"></div>
+      <div class="field"><label>If this is an 0x... address, which EVM chain?</label>
+        <select id="egEvmChain"><option value="ethereum">Ethereum (default)</option></select>
+      </div>
+      <button class="btn" id="egStartBtn">Start exploring</button>
+    </div>
+    <div class="status-line" id="egStatus"></div>
+    <div id="egGraphContainer" style="display:none; height:560px; margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+    <div id="egNodeDetail"></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  const evmSelect = document.getElementById("egEvmChain");
+  apiFetch("/api/evm-chains").then(chains => {
+    evmSelect.innerHTML = chains.map(c => `<option value="${escapeHtml(c.key)}">${escapeHtml(c.name)}${c.key === "ethereum" ? " (default)" : ""}</option>`).join("");
+  }).catch(() => {});
+
+  document.getElementById("egStartBtn").onclick = () => startExploreGraph();
+}
+
+// Persistent across expand operations for the current session - reset
+// each time "Start exploring" is clicked fresh.
+let exploreGraphNetwork = null, exploreGraphNodes = null, exploreGraphEdges = null;
+let exploreGraphExpanded = new Set();
+
+const EXPLORE_GRAPH_COLORS = {
+  root: { border: "#4f8cc9", background: "#142331" },
+  sanctioned: { border: "#e0666c", background: "#2a1416" },
+  entity: { border: "#4fb3a3", background: "#12211f" },
+  unknown: { border: "#5a6472", background: "#1c232c" },
+};
+
+function exploreGraphNodeColor(entityType) {
+  if (entityType === "sanctioned") return EXPLORE_GRAPH_COLORS.sanctioned;
+  if (entityType) return EXPLORE_GRAPH_COLORS.entity;
+  return EXPLORE_GRAPH_COLORS.unknown;
+}
+
+async function startExploreGraph() {
+  const wallet = document.getElementById("egWallet").value.trim();
+  const evmChain = document.getElementById("egEvmChain").value;
+  const statusEl = document.getElementById("egStatus");
+  const containerEl = document.getElementById("egGraphContainer");
+  const detailEl = document.getElementById("egNodeDetail");
+  if (!wallet) { statusEl.textContent = "Enter a starting wallet first."; statusEl.className = "status-line error"; return; }
+
+  statusEl.textContent = "";
+  detailEl.innerHTML = "";
+  containerEl.style.display = "block";
+  containerEl.innerHTML = "";
+  exploreGraphExpanded = new Set();
+
+  exploreGraphNodes = new vis.DataSet([{
+    id: wallet, label: truncateAddress(wallet), title: wallet,
+    shape: "box", size: 22, color: EXPLORE_GRAPH_COLORS.root,
+    font: { color: "#c9d1d9", size: 12 },
+  }]);
+  exploreGraphEdges = new vis.DataSet([]);
+
+  exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 130 } },
+    interaction: { hover: true, tooltipDelay: 150 },
+    layout: { improvedLayout: true },
+  });
+
+  exploreGraphNetwork.on("click", async (params) => {
+    if (!params.nodes.length) {
+      if (params.edges.length) {
+        const edge = exploreGraphEdges.get(params.edges[0]);
+        const card = el("div", "card");
+        card.style.marginTop = "10px";
+        card.innerHTML = `
+          <div class="footnote"><strong>${escapeHtml(edge.amountLabel || "")}</strong> - ${escapeHtml(edge.txTimeUtc || "unknown time")}</div>
+          <div class="mono footnote">${escapeHtml(edge.from)} → ${escapeHtml(edge.to)}</div>
+          ${edge.explorerUrl ? `<a href="${escapeHtml(edge.explorerUrl)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
+        `;
+        detailEl.innerHTML = "";
+        detailEl.appendChild(card);
+      }
+      return;
+    }
+    const address = params.nodes[0];
+    await expandExploreGraphNode(address, evmChain, statusEl, detailEl);
+  });
+}
+
+async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
+  const node = exploreGraphNodes.get(address);
+
+  // Always show detail on click, whether or not it's the first time.
+  const entityLine = node.entityName ? `${node.entityName} (${node.entityType})` : "No known-entity attribution yet.";
+  const card = el("div", "card");
+  card.style.marginTop = "10px";
+  card.innerHTML = `<div class="mono" style="font-weight:600;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
+  detailEl.innerHTML = "";
+  detailEl.appendChild(card);
+
+  if (exploreGraphExpanded.has(address.toLowerCase())) return; // already expanded, nothing more to fetch
+
+  statusEl.textContent = "Expanding...";
+  statusEl.className = "status-line";
+  try {
+    const result = await apiFetch("/api/wallet-connections", { method: "POST", body: JSON.stringify({ wallet: address, evm_chain: evmChain }) });
+    exploreGraphExpanded.add(address.toLowerCase());
+
+    // Mark this node as expanded - solid border instead of dashed.
+    exploreGraphNodes.update({ id: address, shape: "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
+
+    for (const newNode of result.nodes) {
+      if (!exploreGraphNodes.get(newNode.id)) {
+        exploreGraphNodes.add({
+          id: newNode.id,
+          label: newNode.entity_name || truncateAddress(newNode.id),
+          title: newNode.entity_name ? `${newNode.entity_name} (${newNode.entity_type})\n${newNode.id}` : newNode.id,
+          shape: "dot", size: 14,
+          color: exploreGraphNodeColor(newNode.entity_type),
+          font: { color: "#c9d1d9", size: 12 },
+          shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
+          entityName: newNode.entity_name, entityType: newNode.entity_type,
+        });
+      }
+    }
+    for (const edge of result.edges) {
+      const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
+      if (!exploreGraphEdges.get(edgeId)) {
+        exploreGraphEdges.add({
+          id: edgeId, from: edge.from, to: edge.to, arrows: "to",
+          label: edge.amount_label || "",
+          font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+          color: { color: "#3d5a78", opacity: 0.8 },
+          amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
+        });
+      }
+    }
+    statusEl.textContent = `${result.nodes.length} connection(s) revealed.`;
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    statusEl.className = "status-line error";
+  }
 }
 
 function renderPoisoningCheckSection() {
