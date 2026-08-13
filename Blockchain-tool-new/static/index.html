@@ -202,6 +202,11 @@
   .topbar-sub { font-size: 12.5px; color: var(--text-dim); margin-top: 1px; }
   .content { flex: 1; overflow-y: auto; padding: 28px; }
   .section { display: none; max-width: 980px; }
+  /* Link Tracer specifically gets full width, not the general 980px cap
+     other simpler form-based sections use - both the linear trail
+     diagram and the graph views genuinely benefit from more room,
+     unlike a short form where full-width would hurt readability. */
+  #section-link-trace { max-width: none; }
   .section.active { display: block; }
 
   /* Hamburger toggle - hidden on desktop, shown only under the mobile breakpoint below */
@@ -740,7 +745,6 @@ function addressExplorerUrl(address, chain, evmChain) {
 const SECTIONS = [
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, essential: true, group: "Investigate" },
   { id: "find-connection", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="10" r="2.5"/><circle cx="16" cy="10" r="2.5"/><path d="M6.5 10 H13.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Find Connection", sub: "Does money from one wallet ever reach another?", adminOnly: false, essential: true, group: "Investigate" },
-  { id: "explore-graph", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="4" r="2.3"/><circle cx="4" cy="15" r="2.3"/><circle cx="16" cy="15" r="2.3"/><path d="M10 6.3 L5.3 13 M10 6.3 L14.7 13"/></svg>`, label: "Explore Graph", sub: "Manually build out a graph, deciding yourself what's worth following", adminOnly: false, essential: false, group: "Investigate" },
   { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
   { id: "swap-correlation", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 H15 M15 6 L12 3 M15 6 L12 9"/><path d="M17 14 H5 M5 14 L8 11 M5 14 L8 17"/></svg>`, label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
   { id: "token-risk", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18.5 17 H1.5 Z"/><line x1="10" y1="8" x2="10" y2="12"/><circle cx="10" cy="14.5" r="0.7" fill="currentColor"/></svg>`, label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
@@ -1230,7 +1234,6 @@ function enterApp() {
   contentEl.innerHTML = "";
   renderLinkTraceSection();
   renderFindConnectionSection();
-  renderExploreGraphSection();
   renderSavedCasesSection();
   renderKnownEntitiesSection();
   renderDepositMapSection();
@@ -1370,6 +1373,11 @@ function renderLinkTraceSection() {
   const section = el("div", "section", "");
   section.id = "section-link-trace";
   section.innerHTML = `
+    <div class="style-toggle" id="ltModeToggle" style="margin-bottom:16px;">
+      <button data-mode="linear" class="active">Linear</button>
+      <button data-mode="graph">Graph</button>
+    </div>
+    <div id="ltLinearTabContent">
     <div class="card">
       <h3>Search by</h3>
       <div class="radio-row mb-md" >
@@ -1446,8 +1454,20 @@ function renderLinkTraceSection() {
     </div>
     <div class="status-line" id="fsStatus"></div>
     <div id="fsResults" class="result-box"></div>
+    </div>
+    <div id="ltGraphTabContent" style="display:none;"></div>
   `;
   document.getElementById("content").appendChild(section);
+  renderExploreGraphIntoContainer(document.getElementById("ltGraphTabContent"));
+  document.getElementById("ltModeToggle").querySelectorAll("button").forEach(btn => {
+    btn.onclick = () => {
+      document.getElementById("ltModeToggle").querySelectorAll("button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const showGraph = btn.dataset.mode === "graph";
+      document.getElementById("ltLinearTabContent").style.display = showGraph ? "none" : "";
+      document.getElementById("ltGraphTabContent").style.display = showGraph ? "" : "none";
+    };
+  });
   populateCasePicker();
   populateEvmChainPicker();
 
@@ -2139,7 +2159,7 @@ function renderTraceGraph(data, allPaths, container) {
 
   container.innerHTML = "";
   const graphDiv = el("div");
-  graphDiv.style.cssText = "height:480px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);";
+  graphDiv.style.cssText = "height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);";
   container.appendChild(graphDiv);
   const detailDiv = el("div");
   container.appendChild(detailDiv);
@@ -3203,10 +3223,8 @@ function renderFindConnectionSection() {
 // going to care about. Same visual language as the trace-results
 // graph view (same node/edge colors) for full consistency.
 // ============================================================
-function renderExploreGraphSection() {
-  const section = el("div", "section", "");
-  section.id = "section-explore-graph";
-  section.innerHTML = `
+function renderExploreGraphIntoContainer(container) {
+  container.innerHTML = `
     <div class="card">
       <h3>Manually build out a graph</h3>
       <div class="field hint mb-md">
@@ -3221,10 +3239,9 @@ function renderExploreGraphSection() {
       <button class="btn" id="egStartBtn">Start exploring</button>
     </div>
     <div class="status-line" id="egStatus"></div>
-    <div id="egGraphContainer" style="display:none; height:560px; margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+    <div id="egGraphContainer" style="display:none; height:calc(100vh - 260px); min-height:420px; margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
     <div id="egNodeDetail"></div>
   `;
-  document.getElementById("content").appendChild(section);
 
   const evmSelect = document.getElementById("egEvmChain");
   apiFetch("/api/evm-chains").then(chains => {
@@ -3265,6 +3282,7 @@ async function startExploreGraph() {
   containerEl.style.display = "block";
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
+  exploreGraphPendingConnections = new Map();
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
@@ -3300,59 +3318,132 @@ async function startExploreGraph() {
   });
 }
 
+// Caches each fetched wallet's full connection list (address -> API
+// result) so re-clicking an already-expanded node re-shows its list
+// without a duplicate fetch, and so "Add to graph" can look up the
+// full edge/node detail for whichever one was picked.
+let exploreGraphPendingConnections = new Map();
+
 async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
-  const node = exploreGraphNodes.get(address);
-
-  // Always show detail on click, whether or not it's the first time.
-  const entityLine = node.entityName ? `${node.entityName} (${node.entityType})` : "No known-entity attribution yet.";
-  const card = el("div", "card");
-  card.style.marginTop = "10px";
-  card.innerHTML = `<div class="mono" style="font-weight:600;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
-  detailEl.innerHTML = "";
-  detailEl.appendChild(card);
-
-  if (exploreGraphExpanded.has(address.toLowerCase())) return; // already expanded, nothing more to fetch
-
-  statusEl.textContent = "Expanding...";
-  statusEl.className = "status-line";
-  try {
-    const result = await apiFetch("/api/wallet-connections", { method: "POST", body: JSON.stringify({ wallet: address, evm_chain: evmChain }) });
-    exploreGraphExpanded.add(address.toLowerCase());
-
-    // Mark this node as expanded - solid border instead of dashed.
-    exploreGraphNodes.update({ id: address, shape: "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
-
-    for (const newNode of result.nodes) {
-      if (!exploreGraphNodes.get(newNode.id)) {
-        exploreGraphNodes.add({
-          id: newNode.id,
-          label: newNode.entity_name || truncateAddress(newNode.id),
-          title: newNode.entity_name ? `${newNode.entity_name} (${newNode.entity_type})\n${newNode.id}` : newNode.id,
-          shape: "dot", size: 14,
-          color: exploreGraphNodeColor(newNode.entity_type),
-          font: { color: "#c9d1d9", size: 12 },
-          shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
-          entityName: newNode.entity_name, entityType: newNode.entity_type,
-        });
-      }
+  if (!exploreGraphExpanded.has(address.toLowerCase())) {
+    statusEl.textContent = "Loading connections...";
+    statusEl.className = "status-line";
+    try {
+      const result = await apiFetch("/api/wallet-connections", { method: "POST", body: JSON.stringify({ wallet: address, evm_chain: evmChain }) });
+      exploreGraphExpanded.add(address.toLowerCase());
+      exploreGraphPendingConnections.set(address.toLowerCase(), result);
+      // Mark this node as looked-at - solid border instead of dashed -
+      // regardless of how many of its connections get added to the
+      // graph itself, so it's never re-fetched needlessly.
+      exploreGraphNodes.update({ id: address, shape: "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
+      statusEl.textContent = `${result.edges.length} connection(s) found - showing money out first, most recent first.`;
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+      return;
     }
-    for (const edge of result.edges) {
-      const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
-      if (!exploreGraphEdges.get(edgeId)) {
-        exploreGraphEdges.add({
-          id: edgeId, from: edge.from, to: edge.to, arrows: "to",
-          label: edge.amount_label || "",
-          font: { color: "#7d8590", size: 9, strokeWidth: 0 },
-          color: { color: "#3d5a78", opacity: 0.8 },
-          amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
-        });
-      }
-    }
-    statusEl.textContent = `${result.nodes.length} connection(s) revealed.`;
-  } catch (err) {
-    statusEl.textContent = "Error: " + err.message;
-    statusEl.className = "status-line error";
+  } else {
+    statusEl.textContent = "";
   }
+  renderExploreGraphConnectionsList(address, detailEl);
+}
+
+function renderExploreGraphConnectionsList(address, detailEl) {
+  const node = exploreGraphNodes.get(address);
+  const entityLine = node.entityName ? `${node.entityName} (${node.entityType})` : "No known-entity attribution yet.";
+  const result = exploreGraphPendingConnections.get(address.toLowerCase());
+
+  detailEl.innerHTML = "";
+  const headerCard = el("div", "card");
+  headerCard.style.marginTop = "10px";
+  headerCard.innerHTML = `<div class="mono" style="font-weight:600;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
+  detailEl.appendChild(headerCard);
+
+  if (!result || !result.edges.length) {
+    const emptyCard = el("div", "card");
+    emptyCard.style.marginTop = "10px";
+    emptyCard.innerHTML = `<div class="footnote">No connections found for this wallet.</div>`;
+    detailEl.appendChild(emptyCard);
+    return;
+  }
+
+  const alreadyAddedIds = new Set(exploreGraphEdges.getIds());
+  // Money OUT first (more often what a "follow the funds" trace cares
+  // about), most recent first within each direction - a plain dump in
+  // fetch order isn't a meaningful reading order for choosing what's
+  // worth adding.
+  const sortedEdges = result.edges.map((edge, i) => ({ edge, i })).sort((a, b) => {
+    const aOut = a.edge.from.toLowerCase() === address.toLowerCase();
+    const bOut = b.edge.from.toLowerCase() === address.toLowerCase();
+    if (aOut !== bOut) return aOut ? -1 : 1;
+    return (b.edge.tx_time_utc || "").localeCompare(a.edge.tx_time_utc || "");
+  });
+
+  const listCard = el("div", "card");
+  listCard.style.marginTop = "10px";
+  const rowsHtml = sortedEdges.map(({ edge, i }) => {
+    const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
+    const isOut = edge.from.toLowerCase() === address.toLowerCase();
+    const counterparty = isOut ? edge.to : edge.from;
+    const alreadyAdded = alreadyAddedIds.has(edgeId);
+    return `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
+        <div>
+          <div class="mono footnote">${isOut ? "↗ out to" : "↙ in from"} ${escapeHtml(truncateAddress(counterparty))}</div>
+          <div class="footnote">${escapeHtml(edge.amount_label || "")}${edge.tx_time_utc ? " - " + escapeHtml(edge.tx_time_utc) : ""}</div>
+        </div>
+        <button class="btn secondary" data-edge-index="${i}" style="font-size:11px; padding:5px 10px; flex-shrink:0;" ${alreadyAdded ? "disabled" : ""}>${alreadyAdded ? "Added" : "Add to graph"}</button>
+      </div>
+    `;
+  }).join("");
+  listCard.innerHTML = `
+    <div class="footnote mb-sm">${result.edges.length} connection(s) - add the ones relevant to the funds being traced, or show everything at once.</div>
+    ${rowsHtml}
+    <button class="btn" id="egShowAllBtn" style="margin-top:10px; font-size:12px; padding:7px 14px;">Show all ${result.edges.length} connections</button>
+  `;
+  detailEl.appendChild(listCard);
+
+  listCard.querySelectorAll("button[data-edge-index]").forEach(btn => {
+    btn.onclick = () => {
+      addExploreGraphConnection(result.edges[parseInt(btn.dataset.edgeIndex, 10)], result.nodes);
+      renderExploreGraphConnectionsList(address, detailEl);  // refresh so this row now shows "Added"
+    };
+  });
+  document.getElementById("egShowAllBtn").onclick = () => {
+    result.edges.forEach(edge => addExploreGraphConnection(edge, result.nodes));
+    renderExploreGraphConnectionsList(address, detailEl);
+  };
+}
+
+// Adds one specific connection (its counterparty node, if not already
+// present, plus the edge itself) to the graph - shared by both the
+// individual "Add to graph" buttons and "Show all".
+function addExploreGraphConnection(edge, nodesMeta) {
+  const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
+  if (exploreGraphEdges.get(edgeId)) return;  // already added
+
+  for (const side of [edge.from, edge.to]) {
+    if (!exploreGraphNodes.get(side)) {
+      const meta = nodesMeta.find(n => n.id.toLowerCase() === side.toLowerCase());
+      exploreGraphNodes.add({
+        id: side,
+        label: (meta && meta.entity_name) || truncateAddress(side),
+        title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
+        shape: "dot", size: 14,
+        color: exploreGraphNodeColor(meta && meta.entity_type),
+        font: { color: "#c9d1d9", size: 12 },
+        shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
+        entityName: meta && meta.entity_name, entityType: meta && meta.entity_type,
+      });
+    }
+  }
+  exploreGraphEdges.add({
+    id: edgeId, from: edge.from, to: edge.to, arrows: "to",
+    label: edge.amount_label || "",
+    font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+    color: { color: "#3d5a78", opacity: 0.8 },
+    amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
+  });
 }
 
 function renderPoisoningCheckSection() {
