@@ -319,9 +319,9 @@
   font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 9px 13px; border-radius: 8px;
   border: 1.5px solid #3d5a78; background: var(--panel-alt); text-align: center;
   min-width: 96px; max-width: 172px; flex-shrink: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   position: relative; cursor: pointer;
 }
+.wbox > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wbox:hover { border-color: var(--accent); }
 .wbox::before {
   content: ""; position: absolute; top: -3px; left: -3px; width: 6px; height: 6px;
