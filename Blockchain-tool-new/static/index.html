@@ -456,8 +456,8 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <h1>On-Chain Investigations</h1>
     <p class="landing-lede">
-      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
-      evidence - built for investigators working with law enforcement. Covers Ethereum,
+      A blockchain forensics toolkit for tracing cryptocurrency and building court-ready
+      evidence, built for investigators, solicitors and law enforcement in mind. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
     <div class="landing-grid">
@@ -740,6 +740,19 @@ function addressExplorerUrl(address, chain, evmChain) {
   if (chain === "tron") return `https://tronscan.org/#/address/${address}`;
   if (chain === "solana") return `https://solscan.io/account/${address}`;
   return null;
+}
+
+// A quick visual identifier for which chain a graph node belongs to -
+// Bitcoin and Ethereum have well-recognized single-character symbols;
+// the others use their common short ticker instead of an invented or
+// unfamiliar glyph.
+function chainSymbol(chain) {
+  if (chain === "bitcoin") return "₿";
+  if (chain === "ethereum") return "Ξ";
+  if (chain === "xrp") return "XRP";
+  if (chain === "tron") return "TRX";
+  if (chain === "solana") return "SOL";
+  return "";
 }
 
 const SECTIONS = [
@@ -2130,15 +2143,17 @@ function renderTraceGraph(data, allPaths, container) {
 
   const nodeAddresses = new Set();
   hops.forEach(h => { nodeAddresses.add(h.from_address); nodeAddresses.add(h.to_address); });
+  const symbol = chainSymbol(data.chain);
 
   const visNodes = new vis.DataSet([...nodeAddresses].map(addr => {
     const isRoot = addr.toLowerCase() === data.wallet.toLowerCase();
     const hop = hops.find(h => h.to_address && h.to_address.toLowerCase() === addr.toLowerCase());
     const entityName = hop && hop.to_known_entity ? hop.to_known_entity.name : null;
     const entityType = hop && hop.to_known_entity ? hop.to_known_entity.type : null;
+    const baseLabel = entityName || truncateAddress(addr);
     return {
       id: addr,
-      label: entityName || truncateAddress(addr),
+      label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
       title: entityName ? `${entityName} (${entityType})\n${addr}` : addr,
       shape: isRoot ? "box" : "dot",
       size: isRoot ? 22 : 14,
@@ -2150,7 +2165,7 @@ function renderTraceGraph(data, allPaths, container) {
   const visEdges = new vis.DataSet(hops.map((h, i) => ({
     id: i,
     from: h.from_address, to: h.to_address, arrows: "to",
-    label: h.amount || "",
+    label: h.tx_time_utc ? `${h.amount || ""}\n${h.tx_time_utc}` : (h.amount || ""),
     font: { color: "#7d8590", size: 9, strokeWidth: 0 },
     color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
     dashes: !!h.is_change,
@@ -3260,6 +3275,7 @@ function renderExploreGraphIntoContainer(container) {
 // each time "Start exploring" is clicked fresh.
 let exploreGraphNetwork = null, exploreGraphNodes = null, exploreGraphEdges = null;
 let exploreGraphExpanded = new Set();
+let exploreGraphRootAddress = null;
 
 const EXPLORE_GRAPH_COLORS = {
   root: { border: "#4f8cc9", background: "#142331" },
@@ -3288,6 +3304,7 @@ async function startExploreGraph() {
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
+  exploreGraphRootAddress = wallet;
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
@@ -3352,8 +3369,17 @@ async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
       exploreGraphPendingConnections.set(address.toLowerCase(), result);
       // Mark this node as looked-at - solid border instead of dashed -
       // regardless of how many of its connections get added to the
-      // graph itself, so it's never re-fetched needlessly.
-      exploreGraphNodes.update({ id: address, shape: "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
+      // graph itself, so it's never re-fetched needlessly. The root
+      // node keeps its distinctive box shape rather than becoming a
+      // plain dot like everything else.
+      const isRootNode = address.toLowerCase() === (exploreGraphRootAddress || "").toLowerCase();
+      exploreGraphNodes.update({ id: address, shape: isRootNode ? "box" : "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
+      // The root node's chain isn't known until its first expand - add
+      // its symbol now that it is (every other node gets it at creation).
+      if (isRootNode) {
+        const symbol = chainSymbol(result.chain);
+        if (symbol) exploreGraphNodes.update({ id: address, label: `${symbol} ${truncateAddress(address)}` });
+      }
       statusEl.textContent = `${result.edges.length} connection(s) found - showing money out first, most recent first.`;
     } catch (err) {
       statusEl.textContent = "Error: " + err.message;
@@ -3423,12 +3449,12 @@ function renderExploreGraphConnectionsList(address, detailEl) {
 
   listCard.querySelectorAll("button[data-edge-index]").forEach(btn => {
     btn.onclick = () => {
-      addExploreGraphConnection(result.edges[parseInt(btn.dataset.edgeIndex, 10)], result.nodes);
+      addExploreGraphConnection(result.edges[parseInt(btn.dataset.edgeIndex, 10)], result.nodes, result.chain);
       renderExploreGraphConnectionsList(address, detailEl);  // refresh so this row now shows "Added"
     };
   });
   document.getElementById("egShowAllBtn").onclick = () => {
-    result.edges.forEach(edge => addExploreGraphConnection(edge, result.nodes));
+    result.edges.forEach(edge => addExploreGraphConnection(edge, result.nodes, result.chain));
     renderExploreGraphConnectionsList(address, detailEl);
   };
 }
@@ -3436,16 +3462,18 @@ function renderExploreGraphConnectionsList(address, detailEl) {
 // Adds one specific connection (its counterparty node, if not already
 // present, plus the edge itself) to the graph - shared by both the
 // individual "Add to graph" buttons and "Show all".
-function addExploreGraphConnection(edge, nodesMeta) {
+function addExploreGraphConnection(edge, nodesMeta, chain) {
   const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
   if (exploreGraphEdges.get(edgeId)) return;  // already added
+  const symbol = chainSymbol(chain);
 
   for (const side of [edge.from, edge.to]) {
     if (!exploreGraphNodes.get(side)) {
       const meta = nodesMeta.find(n => n.id.toLowerCase() === side.toLowerCase());
+      const baseLabel = (meta && meta.entity_name) || truncateAddress(side);
       exploreGraphNodes.add({
         id: side,
-        label: (meta && meta.entity_name) || truncateAddress(side),
+        label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
         title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
         shape: "dot", size: 14,
         color: exploreGraphNodeColor(meta && meta.entity_type),
@@ -3457,7 +3485,7 @@ function addExploreGraphConnection(edge, nodesMeta) {
   }
   exploreGraphEdges.add({
     id: edgeId, from: edge.from, to: edge.to, arrows: "to",
-    label: edge.amount_label || "",
+    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${edge.tx_time_utc}` : (edge.amount_label || ""),
     font: { color: "#7d8590", size: 9, strokeWidth: 0 },
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
