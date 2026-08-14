@@ -2576,6 +2576,7 @@ async function openCase(caseId) {
         <div class="field hint mb-md">Builds automatically as you explore - reopen this case any time and it's exactly as you left it.</div>
       </div>
       <div class="status-line" id="caseGraphStatus"></div>
+      <button class="btn secondary" id="caseGraphAddNoteBtn" style="margin-bottom:10px; font-size:12px; padding:7px 14px;">📝 Add note</button>
       <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
         <div id="caseGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
         <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
@@ -3344,6 +3345,7 @@ function renderExploreGraphIntoContainer(container) {
       <button class="btn" id="egStartBtn">Start exploring</button>
     </div>
     <div class="status-line" id="egStatus"></div>
+    <button class="btn secondary" id="egAddNoteBtn" style="display:none; margin-bottom:10px; font-size:12px; padding:7px 14px;">📝 Add note</button>
     <div id="egGraphRow" style="display:none; margin-top:14px; gap:14px; align-items:flex-start;">
       <div id="egGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
       <div id="egNodeDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
@@ -3356,6 +3358,11 @@ function renderExploreGraphIntoContainer(container) {
   }).catch(() => {});
 
   document.getElementById("egStartBtn").onclick = () => startExploreGraph();
+  document.getElementById("egAddNoteBtn").onclick = () => {
+    const statusEl = document.getElementById("egStatus");
+    const detailEl = document.getElementById("egNodeDetail");
+    promptAddNote(null, exploreGraphNetwork, exploreGraphNodes, statusEl);
+  };
 }
 
 // Persistent across expand operations for the current session - reset
@@ -3373,12 +3380,102 @@ const EXPLORE_GRAPH_COLORS = {
   sanctioned: { border: "#e0666c", background: "#2a1416" },
   entity: { border: "#4fb3a3", background: "#12211f" },
   unknown: { border: "#5a6472", background: "#1c232c" },
+  note: { border: "#d4a72c", background: "#2b230f" },  // amber/sticky-note - visually distinct from every wallet-node color
 };
 
 function exploreGraphNodeColor(entityType) {
   if (entityType === "sanctioned") return EXPLORE_GRAPH_COLORS.sanctioned;
   if (entityType) return EXPLORE_GRAPH_COLORS.entity;
   return EXPLORE_GRAPH_COLORS.unknown;
+}
+
+// A note is a free-floating text annotation on the graph - not a
+// wallet, no address, no entity lookup, no explorer link. Distinct
+// "note-" ID prefix so click/drag handlers can tell notes and wallet
+// nodes apart at a glance without a separate lookup.
+function buildNoteNode(id, text, x, y) {
+  return {
+    id, label: text, title: "Note - click to edit or delete",
+    shape: "box", size: 16,
+    color: EXPLORE_GRAPH_COLORS.note,
+    font: { color: "#f0d78c", size: 12 },
+    shapeProperties: { borderDashes: false },
+    isNote: true, noteText: text,
+    x, y, fixed: { x: true, y: true },  // notes always stay exactly where placed - physics never moves them
+  };
+}
+
+// Shared "Add note" flow for both standalone and case-linked graphs.
+// For a case-linked graph, waits for the backend to create the note
+// FIRST and uses its real database ID from the start - simpler than
+// creating with a temporary ID and swapping it once the save completes.
+async function promptAddNote(caseId, network, nodesDataSet, statusEl) {
+  const text = prompt("Note text:");
+  if (!text || !text.trim()) return;
+
+  const center = network.getViewPosition();
+  // Small random offset so repeated notes don't stack exactly on top of each other.
+  const x = center.x + (Math.random() * 60 - 30);
+  const y = center.y + (Math.random() * 60 - 30);
+
+  if (caseId) {
+    try {
+      const result = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/notes`, {
+        method: "POST", body: JSON.stringify({ text: text.trim(), x, y }),
+      });
+      nodesDataSet.add(buildNoteNode(`note-${result.id}`, text.trim(), x, y));
+    } catch (err) {
+      if (statusEl) { statusEl.textContent = "Could not save note: " + err.message; statusEl.className = "status-line error"; }
+    }
+  } else {
+    // Standalone graph - nothing persists, so a simple local ID is enough.
+    nodesDataSet.add(buildNoteNode(`note-local-${Date.now()}-${Math.random().toString(36).slice(2)}`, text.trim(), x, y));
+  }
+}
+
+// Shows edit/delete controls for a clicked note, reusing the same
+// detail-panel pattern already used for wallet nodes - reused by both
+// standalone and case-linked graphs.
+function renderNoteDetail(nodeId, nodesDataSet, caseId, detailEl) {
+  const node = nodesDataSet.get(nodeId);
+  detailEl.innerHTML = "";
+  const card = el("div", "card");
+  card.style.marginTop = "10px";
+  card.innerHTML = `
+    <div class="hint" style="margin-bottom:8px;">📝 Note</div>
+    <div class="field"><textarea id="noteEditText" rows="3" style="width:100%; font-family:inherit; font-size:13px;">${escapeHtml(node.noteText)}</textarea></div>
+  `;
+  const saveBtn = el("button", "btn", "Save");
+  saveBtn.style.cssText = "margin-right:8px; font-size:12px; padding:6px 12px;";
+  const deleteBtn = el("button", "btn secondary", "Delete note");
+  deleteBtn.style.cssText = "font-size:12px; padding:6px 12px;";
+
+  saveBtn.onclick = async () => {
+    const newText = document.getElementById("noteEditText").value.trim();
+    if (!newText) return;
+    nodesDataSet.update({ id: nodeId, label: newText, noteText: newText });
+    if (caseId) {
+      const realId = nodeId.replace("note-", "");
+      try {
+        await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/notes/${encodeURIComponent(realId)}`, {
+          method: "POST", body: JSON.stringify({ text: newText }),
+        });
+      } catch (err) { alert("Could not save changes: " + err.message); }
+    }
+  };
+  deleteBtn.onclick = async () => {
+    if (caseId) {
+      const realId = nodeId.replace("note-", "");
+      try {
+        await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/notes/${encodeURIComponent(realId)}`, { method: "DELETE" });
+      } catch (err) { alert("Could not delete note: " + err.message); return; }
+    }
+    nodesDataSet.remove(nodeId);
+    detailEl.innerHTML = "";
+  };
+  card.appendChild(saveBtn);
+  card.appendChild(deleteBtn);
+  detailEl.appendChild(card);
 }
 
 // Launched when a Saved Case is opened - restores its graph exactly as
@@ -3432,6 +3529,9 @@ async function loadCaseExploreGraph(caseId) {
       ...(savedPos ? { x: savedPos.x, y: savedPos.y, fixed: { x: true, y: true } } : {}),
     };
   }));
+  (graph.notes || []).forEach(note => {
+    exploreGraphNodes.add(buildNoteNode(`note-${note.id}`, note.text, note.x, note.y));
+  });
   exploreGraphEdges = new vis.DataSet(graph.edges.map(edge => {
     const fiatLabel = formatFiatLabel(edge.amount_gbp, edge.amount_usd);
     return {
@@ -3455,14 +3555,27 @@ async function loadCaseExploreGraph(caseId) {
       const nodeId = params.nodes[0];
       const pos = exploreGraphNetwork.getPositions([nodeId])[nodeId];
       exploreGraphNodes.update({ id: nodeId, fixed: { x: true, y: true }, x: pos.x, y: pos.y });
-      apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/position`, {
-        method: "POST", body: JSON.stringify({ address: nodeId, x: pos.x, y: pos.y }),
-      }).catch(err => console.error("Could not save this position to the case:", err.message));
+      const draggedNode = exploreGraphNodes.get(nodeId);
+      if (draggedNode.isNote) {
+        const realId = nodeId.replace("note-", "");
+        apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/notes/${encodeURIComponent(realId)}`, {
+          method: "POST", body: JSON.stringify({ x: pos.x, y: pos.y }),
+        }).catch(err => console.error("Could not save this note's position:", err.message));
+      } else {
+        apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/position`, {
+          method: "POST", body: JSON.stringify({ address: nodeId, x: pos.x, y: pos.y }),
+        }).catch(err => console.error("Could not save this position to the case:", err.message));
+      }
     }
   });
 
   exploreGraphNetwork.on("click", async (params) => {
     if (params.nodes.length) {
+      const clickedNode = exploreGraphNodes.get(params.nodes[0]);
+      if (clickedNode.isNote) {
+        renderNoteDetail(params.nodes[0], exploreGraphNodes, caseId, detailEl);
+        return;
+      }
       await expandExploreGraphNode(params.nodes[0], evmChain, statusEl, detailEl);
     } else if (params.edges.length) {
       const edge = exploreGraphEdges.get(params.edges[0]);
@@ -3479,6 +3592,10 @@ async function loadCaseExploreGraph(caseId) {
   });
 
   statusEl.textContent = `${graph.nodes.length} address(es), ${graph.edges.length} transaction(s) restored.`;
+
+  document.getElementById("caseGraphAddNoteBtn").onclick = () => {
+    promptAddNote(caseId, exploreGraphNetwork, exploreGraphNodes, statusEl);
+  };
 }
 
 async function startExploreGraph() {
@@ -3493,6 +3610,7 @@ async function startExploreGraph() {
   statusEl.textContent = "";
   detailEl.innerHTML = "";
   rowEl.style.display = "flex";
+  document.getElementById("egAddNoteBtn").style.display = "inline-block";
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
@@ -3547,6 +3665,11 @@ async function startExploreGraph() {
       return;
     }
     const address = params.nodes[0];
+    const clickedNode = exploreGraphNodes.get(address);
+    if (clickedNode.isNote) {
+      renderNoteDetail(address, exploreGraphNodes, null, detailEl);
+      return;
+    }
     await expandExploreGraphNode(address, evmChain, statusEl, detailEl);
   });
 }
