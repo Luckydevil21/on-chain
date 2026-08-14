@@ -456,8 +456,8 @@
     <div class="brand-mark">CASE TOOLKIT</div>
     <h1>On-Chain Investigations</h1>
     <p class="landing-lede">
-      A blockchain forensics toolkit for tracing cryptocurrency and building court-ready
-      evidence, built for investigators, solicitors and law enforcement in mind. Covers Ethereum,
+      A blockchain forensics toolkit for tracing stolen crypto and building court-ready
+      evidence - built for investigators working with law enforcement. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
     <div class="landing-grid">
@@ -3259,8 +3259,10 @@ function renderExploreGraphIntoContainer(container) {
       <button class="btn" id="egStartBtn">Start exploring</button>
     </div>
     <div class="status-line" id="egStatus"></div>
-    <div id="egGraphContainer" style="display:none; height:calc(100vh - 260px); min-height:420px; margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
-    <div id="egNodeDetail"></div>
+    <div id="egGraphRow" style="display:none; margin-top:14px; gap:14px; align-items:flex-start;">
+      <div id="egGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+      <div id="egNodeDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
+    </div>
   `;
 
   const evmSelect = document.getElementById("egEvmChain");
@@ -3294,13 +3296,14 @@ async function startExploreGraph() {
   const wallet = document.getElementById("egWallet").value.trim();
   const evmChain = document.getElementById("egEvmChain").value;
   const statusEl = document.getElementById("egStatus");
+  const rowEl = document.getElementById("egGraphRow");
   const containerEl = document.getElementById("egGraphContainer");
   const detailEl = document.getElementById("egNodeDetail");
   if (!wallet) { statusEl.textContent = "Enter a starting wallet first."; statusEl.className = "status-line error"; return; }
 
   statusEl.textContent = "";
   detailEl.innerHTML = "";
-  containerEl.style.display = "block";
+  rowEl.style.display = "flex";
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
@@ -3430,10 +3433,12 @@ function renderExploreGraphConnectionsList(address, detailEl) {
     const isOut = edge.from.toLowerCase() === address.toLowerCase();
     const counterparty = isOut ? edge.to : edge.from;
     const alreadyAdded = alreadyAddedIds.has(edgeId);
+    const badgeColor = isOut ? "var(--flag)" : "var(--ok)";
     return `
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
-        <div>
-          <div class="mono footnote">${isOut ? "↗ out to" : "↙ in from"} ${escapeHtml(truncateAddress(counterparty))}</div>
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
+        <div style="flex-shrink:0; width:34px; text-align:center; font-size:9px; font-weight:700; letter-spacing:0.04em; color:#fff; background:${badgeColor}; border-radius:4px; padding:3px 0;">${isOut ? "OUT" : "IN"}</div>
+        <div style="flex:1; min-width:0;">
+          <div class="mono footnote">${escapeHtml(truncateAddress(counterparty))}</div>
           <div class="footnote">${escapeHtml(edge.amount_label || "")}${edge.tx_time_utc ? " - " + escapeHtml(edge.tx_time_utc) : ""}</div>
         </div>
         <button class="btn secondary" data-edge-index="${i}" style="font-size:11px; padding:5px 10px; flex-shrink:0;" ${alreadyAdded ? "disabled" : ""}>${alreadyAdded ? "Added" : "Add to graph"}</button>
