@@ -360,6 +360,7 @@
   }
   .warrow .line.heuristic::after { color: var(--warn); }
   .warrow .alabel { font-size: 10.5px; text-align: center; color: var(--text); font-family: var(--mono); }
+  .warrow .afiat { font-size: 9px; text-align: center; color: var(--text-dim); font-family: var(--mono); margin-top: 1px; }
   .warrow .adate { font-size: 10px; color: var(--text-dim); }
   .legend-table td { font-family: var(--mono); font-size: 11.5px; }
   .legend-table td.label { font-family: var(--sans); font-weight: 600; }
@@ -1988,7 +1989,7 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
       `${pctMatch}% USD value match, ${Math.abs(best.minutes_diff).toFixed(1)} min ${timingWord}, on ${best.chain}.`));
     const flow = el("div", "trail-flow");
     flow.appendChild(makeBox("(swap service)", "entity"));
-    flow.appendChild(makeArrow(best.amount, formatFriendlyDate(best.tx_time_utc), true));
+    flow.appendChild(makeArrow(best.amount, formatFriendlyDate(best.tx_time_utc), true, formatFiatLabel(best.amount_gbp, best.amount_usd)));
     const destLabel = simple ? (aliases[best.counterparty.toLowerCase()] || best.counterparty) : best.counterparty;
     flow.appendChild(makeBox(destLabel, "guess"));
     row.appendChild(flow);
@@ -2044,7 +2045,7 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
         const isLast = i === path.hops.length - 1;
         const isMatchTarget = cls === "match" && isLast;
         const isFlaggedEnd = cls === "flagged" && isLast;
-        flow.appendChild(makeArrow(hop.amount, formatFriendlyDate(hop.tx_time_utc), false));
+        flow.appendChild(makeArrow(hop.amount, formatFriendlyDate(hop.tx_time_utc), false, formatFiatLabel(hop.amount_gbp, hop.amount_usd)));
         let label = simple ? (aliases[hop.to_address.toLowerCase()] || hop.to_address) : hop.to_address;
         let boxCls = "";
         if (hop.is_change) {
@@ -2195,15 +2196,18 @@ function renderTraceGraph(data, allPaths, container) {
     }
   });
 
-  const visEdges = new vis.DataSet(hops.map((h, i) => ({
-    id: i,
-    from: h.from_address, to: h.to_address, arrows: "to",
-    label: h.tx_time_utc ? `${h.amount || ""}\n${formatFriendlyDate(h.tx_time_utc)}` : (h.amount || ""),
-    font: { color: "#7d8590", size: 9, strokeWidth: 0 },
-    color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
-    dashes: !!h.is_change,
-    hop: h,
-  })));
+  const visEdges = new vis.DataSet(hops.map((h, i) => {
+    const fiatLabel = formatFiatLabel(h.amount_gbp, h.amount_usd);
+    return {
+      id: i,
+      from: h.from_address, to: h.to_address, arrows: "to",
+      label: h.tx_time_utc ? `${h.amount || ""}${fiatLabel ? " (" + fiatLabel + ")" : ""}\n${formatFriendlyDate(h.tx_time_utc)}` : (h.amount || ""),
+      font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+      color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
+      dashes: !!h.is_change,
+      hop: h,
+    };
+  }));
 
   crossChainHints.forEach((hint, i) => {
     visEdges.add({
@@ -2436,10 +2440,22 @@ function addressCellHtml(address) {
   const short = truncateAddress(address);
   return `<span class="addr-cell mono" title="${escapeHtml(address)} (click to copy)" onclick="navigator.clipboard.writeText('${escapeHtml(address)}'); this.textContent='Copied'; setTimeout(()=>{this.textContent='${escapeHtml(short)}';}, 900);">${escapeHtml(short)}</span>`;
 }
-function makeArrow(amount, dateLabel, heuristic) {
+function makeArrow(amount, dateLabel, heuristic, fiatLabel) {
   const wrap = el("div", "warrow");
-  wrap.innerHTML = `<div class="alabel">${escapeHtml(amount)}</div><div class="line${heuristic ? " heuristic" : ""}"></div><div class="adate">${escapeHtml(dateLabel)}</div>`;
+  wrap.innerHTML = `<div class="alabel">${escapeHtml(amount)}</div>${fiatLabel ? `<div class="afiat">${escapeHtml(fiatLabel)}</div>` : ""}<div class="line${heuristic ? " heuristic" : ""}"></div><div class="adate">${escapeHtml(dateLabel)}</div>`;
   return wrap;
+}
+
+// Historical fiat value AT THE TIME OF THE TRANSACTION, not current
+// price - deliberately, since a trace from months ago showing today's
+// conversion could be genuinely misleading in a legal context. Returns
+// "" (nothing to show) when pricing wasn't available - an unrecognized
+// coin or a failed lookup - rather than cluttering the view with "N/A".
+function formatFiatLabel(gbp, usd) {
+  if (gbp == null && usd == null) return "";
+  const fmt = (n, symbol) => n == null ? null : symbol + n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const parts = [fmt(gbp, "£"), fmt(usd, "$")].filter(Boolean);
+  return "≈ " + parts.join(" / ");
 }
 
 // ============================================================
@@ -3416,13 +3432,16 @@ async function loadCaseExploreGraph(caseId) {
       ...(savedPos ? { x: savedPos.x, y: savedPos.y, fixed: { x: true, y: true } } : {}),
     };
   }));
-  exploreGraphEdges = new vis.DataSet(graph.edges.map(edge => ({
-    id: `${edge.from}->${edge.to}->${edge.tx_hash}`, from: edge.from, to: edge.to, arrows: "to",
-    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
-    font: { color: "#7d8590", size: 9, strokeWidth: 0 },
-    color: { color: "#3d5a78", opacity: 0.8 },
-    amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
-  })));
+  exploreGraphEdges = new vis.DataSet(graph.edges.map(edge => {
+    const fiatLabel = formatFiatLabel(edge.amount_gbp, edge.amount_usd);
+    return {
+      id: `${edge.from}->${edge.to}->${edge.tx_hash}`, from: edge.from, to: edge.to, arrows: "to",
+      label: edge.tx_time_utc ? `${edge.amount_label || ""}${fiatLabel ? " (" + fiatLabel + ")" : ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
+      font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+      color: { color: "#3d5a78", opacity: 0.8 },
+      amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
+    };
+  }));
 
   exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
     physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 130 } },
@@ -3671,9 +3690,10 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
       });
     }
   }
+  const liveFiatLabel = formatFiatLabel(edge.amount_gbp, edge.amount_usd);
   exploreGraphEdges.add({
     id: edgeId, from: edge.from, to: edge.to, arrows: "to",
-    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
+    label: edge.tx_time_utc ? `${edge.amount_label || ""}${liveFiatLabel ? " (" + liveFiatLabel + ")" : ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
     font: { color: "#7d8590", size: 9, strokeWidth: 0 },
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
