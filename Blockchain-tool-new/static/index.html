@@ -790,8 +790,11 @@ function formatFriendlyDate(isoLike) {
   // Input like "2026-05-06 15:28:40" (UTC, space-separated as returned by the API)
   const d = new Date(isoLike.replace(" ", "T") + "Z");
   if (isNaN(d.getTime())) return isoLike;
-  const opts = { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" };
-  return d.toLocaleString("en-GB", opts).replace(",", " at") + " UTC";
+  // Localized to the VIEWER'S OWN timezone, not fixed UTC - but always
+  // shows WHICH timezone (timeZoneName), since precise timing can
+  // matter for evidentiary work and ambiguity isn't acceptable there.
+  const opts = { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZoneName: "short" };
+  return d.toLocaleString("en-GB", opts).replace(",", " at");
 }
 
 function el(tag, className, text) {
@@ -2134,6 +2137,18 @@ function renderTraceGraph(data, allPaths, container) {
     return;
   }
 
+  // Cross-chain memo-stated destinations (e.g. a Bitcoin tx whose own
+  // memo names a Tron address) - only ever checked on a path's LAST hop,
+  // same place the linear view looks. These previously never made it
+  // into either graph view at all - only the linear diagram had them.
+  const crossChainHints = [];
+  for (const path of allPaths) {
+    const lastHop = path.hops[path.hops.length - 1];
+    if (lastHop && lastHop.embedded_destination) {
+      crossChainHints.push({ fromAddress: lastHop.to_address, dest: lastHop.embedded_destination });
+    }
+  }
+
   const nodeColor = (address, isRoot) => {
     if (isRoot) return { border: "#4f8cc9", background: "#142331" };
     const hop = hops.find(h => h.to_address && h.to_address.toLowerCase() === address.toLowerCase());
@@ -2163,15 +2178,44 @@ function renderTraceGraph(data, allPaths, container) {
     };
   }));
 
+  // Add each cross-chain destination as its own node, using ITS OWN
+  // chain's symbol (not the main trace's chain) so it's immediately
+  // visually distinguishable as "this jumps to a different chain".
+  crossChainHints.forEach(hint => {
+    const destSymbol = chainSymbol(hint.dest.chain);
+    if (!visNodes.get(hint.dest.address)) {
+      visNodes.add({
+        id: hint.dest.address,
+        label: destSymbol ? `${destSymbol} ${truncateAddress(hint.dest.address)}` : truncateAddress(hint.dest.address),
+        title: `Memo-stated destination on ${hint.dest.chain}\n${hint.dest.address}`,
+        shape: "dot", size: 14,
+        color: { border: "#a371f7", background: "#241a33" },  // distinct purple - "this is a chain jump, not a normal hop"
+        font: { color: "#c9d1d9", size: 12 },
+      });
+    }
+  });
+
   const visEdges = new vis.DataSet(hops.map((h, i) => ({
     id: i,
     from: h.from_address, to: h.to_address, arrows: "to",
-    label: h.tx_time_utc ? `${h.amount || ""}\n${h.tx_time_utc}` : (h.amount || ""),
+    label: h.tx_time_utc ? `${h.amount || ""}\n${formatFriendlyDate(h.tx_time_utc)}` : (h.amount || ""),
     font: { color: "#7d8590", size: 9, strokeWidth: 0 },
     color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
     dashes: !!h.is_change,
     hop: h,
   })));
+
+  crossChainHints.forEach((hint, i) => {
+    visEdges.add({
+      id: `crosschain-${i}`,
+      from: hint.fromAddress, to: hint.dest.address, arrows: "to",
+      label: `→ ${hint.dest.chain}`,
+      font: { color: "#a371f7", size: 9, strokeWidth: 0 },
+      color: { color: "#a371f7", opacity: 0.8 },
+      dashes: [6, 4],  // distinct dash pattern from the change-edge dashing
+      crossChainHint: hint,
+    });
+  });
 
   container.innerHTML = "";
   const graphDiv = el("div");
@@ -2213,15 +2257,23 @@ function renderTraceGraph(data, allPaths, container) {
       detailDiv.appendChild(card);
     } else if (params.edges.length) {
       const edge = visEdges.get(params.edges[0]);
-      const h = edge.hop;
       const card = el("div", "card");
       card.style.marginTop = "10px";
-      card.innerHTML = `
-        <div class="footnote"><strong>${escapeHtml(h.amount || "")}</strong> - ${escapeHtml(h.tx_time_utc || "unknown time")}</div>
-        <div class="mono footnote">${escapeHtml(h.from_address)} → ${escapeHtml(h.to_address)}</div>
-        ${h.is_change ? `<div class="hint">Flagged as likely change (heuristic).</div>` : ""}
-        ${h.explorer_url ? `<a href="${escapeHtml(h.explorer_url)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
-      `;
+      if (edge.crossChainHint) {
+        const hint = edge.crossChainHint;
+        card.innerHTML = `
+          <div class="hint">📍 This transaction's own memo states its destination directly on ${escapeHtml(hint.dest.chain)} - the service's own stated routing, not a timing/amount guess. Still worth independently verifying.</div>
+          <div class="mono footnote">${escapeHtml(hint.fromAddress)} → ${escapeHtml(hint.dest.address)} (${escapeHtml(hint.dest.chain)})</div>
+        `;
+      } else {
+        const h = edge.hop;
+        card.innerHTML = `
+          <div class="footnote"><strong>${escapeHtml(h.amount || "")}</strong> - ${escapeHtml(h.tx_time_utc ? formatFriendlyDate(h.tx_time_utc) : "unknown time")}</div>
+          <div class="mono footnote">${escapeHtml(h.from_address)} → ${escapeHtml(h.to_address)}</div>
+          ${h.is_change ? `<div class="hint">Flagged as likely change (heuristic).</div>` : ""}
+          ${h.explorer_url ? `<a href="${escapeHtml(h.explorer_url)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
+        `;
+      }
       detailDiv.appendChild(card);
     }
   });
@@ -3366,7 +3418,7 @@ async function loadCaseExploreGraph(caseId) {
   }));
   exploreGraphEdges = new vis.DataSet(graph.edges.map(edge => ({
     id: `${edge.from}->${edge.to}->${edge.tx_hash}`, from: edge.from, to: edge.to, arrows: "to",
-    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${edge.tx_time_utc}` : (edge.amount_label || ""),
+    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
     font: { color: "#7d8590", size: 9, strokeWidth: 0 },
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
@@ -3398,7 +3450,7 @@ async function loadCaseExploreGraph(caseId) {
       const card = el("div", "card");
       card.style.marginTop = "10px";
       card.innerHTML = `
-        <div class="footnote"><strong>${escapeHtml(edge.amountLabel || "")}</strong> - ${escapeHtml(edge.txTimeUtc || "unknown time")}</div>
+        <div class="footnote"><strong>${escapeHtml(edge.amountLabel || "")}</strong> - ${escapeHtml(edge.txTimeUtc ? formatFriendlyDate(edge.txTimeUtc) : "unknown time")}</div>
         <div class="mono footnote">${escapeHtml(edge.from)} → ${escapeHtml(edge.to)}</div>
         ${edge.explorerUrl ? `<a href="${escapeHtml(edge.explorerUrl)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
       `;
@@ -3466,7 +3518,7 @@ async function startExploreGraph() {
         const card = el("div", "card");
         card.style.marginTop = "10px";
         card.innerHTML = `
-          <div class="footnote"><strong>${escapeHtml(edge.amountLabel || "")}</strong> - ${escapeHtml(edge.txTimeUtc || "unknown time")}</div>
+          <div class="footnote"><strong>${escapeHtml(edge.amountLabel || "")}</strong> - ${escapeHtml(edge.txTimeUtc ? formatFriendlyDate(edge.txTimeUtc) : "unknown time")}</div>
           <div class="mono footnote">${escapeHtml(edge.from)} → ${escapeHtml(edge.to)}</div>
           ${edge.explorerUrl ? `<a href="${escapeHtml(edge.explorerUrl)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
         `;
@@ -3570,7 +3622,7 @@ function renderExploreGraphConnectionsList(address, detailEl) {
         <div style="flex-shrink:0; width:34px; text-align:center; font-size:9px; font-weight:700; letter-spacing:0.04em; color:#fff; background:${badgeColor}; border-radius:4px; padding:3px 0;">${isOut ? "OUT" : "IN"}</div>
         <div style="flex:1; min-width:0;">
           <div class="mono footnote">${escapeHtml(truncateAddress(counterparty))}</div>
-          <div class="footnote">${escapeHtml(edge.amount_label || "")}${edge.tx_time_utc ? " - " + escapeHtml(edge.tx_time_utc) : ""}</div>
+          <div class="footnote">${escapeHtml(edge.amount_label || "")}${edge.tx_time_utc ? " - " + escapeHtml(formatFriendlyDate(edge.tx_time_utc)) : ""}</div>
         </div>
         <button class="btn secondary" data-edge-index="${i}" style="font-size:11px; padding:5px 10px; flex-shrink:0;" ${alreadyAdded ? "disabled" : ""}>${alreadyAdded ? "Added" : "Add to graph"}</button>
       </div>
@@ -3621,7 +3673,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
   }
   exploreGraphEdges.add({
     id: edgeId, from: edge.from, to: edge.to, arrows: "to",
-    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${edge.tx_time_utc}` : (edge.amount_label || ""),
+    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
     font: { color: "#7d8590", size: 9, strokeWidth: 0 },
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
