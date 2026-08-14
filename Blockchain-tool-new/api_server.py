@@ -660,10 +660,13 @@ class LinkTraceRequest(BaseModel):
 
 def _hop_out(hop):
     pattern_match = hop.get("pattern_match")
+    fiat = lt.get_hop_fiat_amounts(hop["amount_label"], hop["tx_time"])
     output = {
         "from_address": hop["from"],
         "to_address": hop["to"],
         "amount": hop["amount_label"],
+        "amount_gbp": fiat["gbp"] if fiat else None,
+        "amount_usd": fiat["usd"] if fiat else None,
         "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S"),
         "tx_hash": hop["tx_hash"],
         "explorer_url": hop["explorer_url"],
@@ -698,22 +701,26 @@ def _hop_out(hop):
     return output
 
 
+def _swap_candidate_out(candidate):
+    fiat = lt.get_hop_fiat_amounts(candidate["amount_label"], candidate["tx_time"])
+    return {
+        "chain": candidate["chain"],
+        "counterparty": candidate["counterparty"],
+        "amount": candidate["amount_label"],
+        "amount_gbp": fiat["gbp"] if fiat else None,
+        "amount_usd": fiat["usd"] if fiat else None,
+        "tx_time_utc": candidate["tx_time"].strftime("%Y-%m-%d %H:%M:%S"),
+        "tx_hash": candidate["tx_hash"],
+        "explorer_url": candidate["explorer_url"],
+        "minutes_diff": candidate["minutes_diff"],
+        "usd_match_ratio": candidate["usd_match_ratio"],
+    }
+
+
 def _path_out(path, reason=None, swap_candidates=None):
     output = {"hops": [_hop_out(hop) for hop in path], "reason": reason}
     if swap_candidates is not None:
-        output["swap_correlation_candidates"] = [
-            {
-                "chain": candidate["chain"],
-                "counterparty": candidate["counterparty"],
-                "amount": candidate["amount_label"],
-                "tx_time_utc": candidate["tx_time"].strftime("%Y-%m-%d %H:%M:%S"),
-                "tx_hash": candidate["tx_hash"],
-                "explorer_url": candidate["explorer_url"],
-                "minutes_diff": candidate["minutes_diff"],
-                "usd_match_ratio": candidate["usd_match_ratio"],
-            }
-            for candidate in swap_candidates
-        ]
+        output["swap_correlation_candidates"] = [_swap_candidate_out(c) for c in swap_candidates]
     return output
 
 
