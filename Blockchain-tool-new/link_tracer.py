@@ -3990,12 +3990,73 @@ def save_case_explore_position(case_id, address, x, y):
         return {"success": False, "message": str(error)}
 
 
+def save_case_explore_note(case_id, note_text, x, y, username):
+    """Adds a free-floating text note to a case's graph - for the
+    investigator's own annotations (e.g. "this cluster looks like a
+    mixer service"), not tied to any specific wallet address."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO case_explore_notes (case_id, note_text, x, y, created_by) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+                    (case_id, note_text, x, y, username)
+                )
+                note_id = cur.fetchone()[0]
+                conn.commit()
+        return {"success": True, "id": str(note_id)}
+    except Exception as error:
+        print(f"⚠️  Could not save case explore note: {error}")
+        return {"success": False, "message": str(error)}
+
+
+def update_case_explore_note(note_id, note_text=None, x=None, y=None):
+    """Updates a note's text and/or position - whichever fields are
+    given. Called separately for "edited the text" versus "dragged it"
+    so a drag never accidentally touches the text and vice versa."""
+    fields, values = [], []
+    if note_text is not None:
+        fields.append("note_text = %s")
+        values.append(note_text)
+    if x is not None:
+        fields.append("x = %s")
+        values.append(x)
+    if y is not None:
+        fields.append("y = %s")
+        values.append(y)
+    if not fields:
+        return {"success": True}  # nothing to do
+    fields.append("updated_at = now()")
+    values.append(note_id)
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE case_explore_notes SET {', '.join(fields)} WHERE id = %s;", values)
+                conn.commit()
+        return {"success": True}
+    except Exception as error:
+        print(f"⚠️  Could not update case explore note: {error}")
+        return {"success": False, "message": str(error)}
+
+
+def delete_case_explore_note(note_id):
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM case_explore_notes WHERE id = %s;", (note_id,))
+                conn.commit()
+        return {"success": True}
+    except Exception as error:
+        print(f"⚠️  Could not delete case explore note: {error}")
+        return {"success": False, "message": str(error)}
+
+
 def load_case_explore_graph(case_id):
     """Returns everything needed to restore a case's Explore Graph
     exactly as it was left: every distinct address as a node (case's
     own saved wallets marked distinctly, entity/sanction status looked
-    up LIVE), every added transaction as an edge, and every saved
-    manual position."""
+    up LIVE), every added transaction as an edge, every saved manual
+    position, and every free-floating text note."""
     try:
         with auth._get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -4010,9 +4071,14 @@ def load_case_explore_graph(case_id):
                     (case_id,)
                 )
                 position_rows = cur.fetchall()
+                cur.execute(
+                    "SELECT id, note_text, x, y FROM case_explore_notes WHERE case_id = %s;",
+                    (case_id,)
+                )
+                note_rows = cur.fetchall()
     except Exception as error:
         print(f"⚠️  Could not read case explore graph: {error}")
-        return {"nodes": [], "edges": [], "positions": {}}
+        return {"nodes": [], "edges": [], "positions": {}, "notes": []}
 
     case_wallet_addresses = {a.lower() for a in load_case_wallet_addresses(case_id)}
 
@@ -4053,7 +4119,9 @@ def load_case_explore_graph(case_id):
 
     positions = {addr: {"x": x, "y": y} for addr, x, y in position_rows}
 
-    return {"nodes": nodes, "edges": edges, "positions": positions, "chain": detected_chain}
+    notes = [{"id": str(note_id), "text": note_text, "x": x, "y": y} for note_id, note_text, x, y in note_rows]
+
+    return {"nodes": nodes, "edges": edges, "positions": positions, "notes": notes, "chain": detected_chain}
 
 
 def build_target_set(include_case_watchlist=True):
