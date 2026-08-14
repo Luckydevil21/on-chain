@@ -3817,6 +3817,124 @@ def load_case_wallet_addresses(case_id):
         return []
 
 
+# ====================================================================
+# CASE EXPLORE GRAPH - a case's own persistent, manually-built graph
+# (Explore Graph, not the automated trace). Reopening a case shows
+# exactly what was there before, including exactly where nodes were
+# dragged - not a fresh auto-layout each time.
+#
+# Like the case's own saved wallets, only the RAW edge relationship is
+# stored - entity/sanction attribution is looked up LIVE on load, so
+# confirming a new Known Entity later automatically improves every
+# saved case graph retroactively, with nothing needing to be redone.
+# ====================================================================
+
+def save_case_explore_edges(case_id, edges, chain, username):
+    """Persists newly-added Explore Graph edges for a case. Deduplication
+    happens at the database level - the same transaction added again is
+    silently skipped, safe to call without checking first."""
+    if not edges:
+        return
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                for edge in edges:
+                    cur.execute(
+                        "INSERT INTO case_explore_edges "
+                        "(case_id, from_address, to_address, chain, amount_label, tx_hash, "
+                        "tx_time_utc, explorer_url, added_by) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                        "ON CONFLICT (case_id, tx_hash, from_address, to_address) DO NOTHING;",
+                        (case_id, edge["from"], edge["to"], chain, edge.get("amount_label"),
+                         edge["tx_hash"], edge.get("tx_time_utc"), edge.get("explorer_url"), username)
+                    )
+                conn.commit()
+    except Exception as error:
+        print(f"⚠️  Could not save case explore graph edges: {error}")
+
+
+def save_case_explore_position(case_id, address, x, y):
+    """Remembers exactly where a node was dragged to, so it's restored
+    in the same place next time this case's graph is opened."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO case_explore_positions (case_id, address, x, y) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (case_id, address) DO UPDATE SET x = %s, y = %s, updated_at = now();",
+                    (case_id, address, x, y, x, y)
+                )
+                conn.commit()
+        return {"success": True}
+    except Exception as error:
+        print(f"⚠️  Could not save case explore graph position: {error}")
+        return {"success": False, "message": str(error)}
+
+
+def load_case_explore_graph(case_id):
+    """Returns everything needed to restore a case's Explore Graph
+    exactly as it was left: every distinct address as a node (case's
+    own saved wallets marked distinctly, entity/sanction status looked
+    up LIVE), every added transaction as an edge, and every saved
+    manual position."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT from_address, to_address, chain, amount_label, tx_hash, "
+                    "tx_time_utc, explorer_url FROM case_explore_edges WHERE case_id = %s;",
+                    (case_id,)
+                )
+                edge_rows = cur.fetchall()
+                cur.execute(
+                    "SELECT address, x, y FROM case_explore_positions WHERE case_id = %s;",
+                    (case_id,)
+                )
+                position_rows = cur.fetchall()
+    except Exception as error:
+        print(f"⚠️  Could not read case explore graph: {error}")
+        return {"nodes": [], "edges": [], "positions": {}}
+
+    case_wallet_addresses = {a.lower() for a in load_case_wallet_addresses(case_id)}
+
+    edges = []
+    node_addresses = set(case_wallet_addresses)
+    detected_chain = None
+    for from_addr, to_addr, chain, amount_label, tx_hash, tx_time_utc, explorer_url in edge_rows:
+        node_addresses.add(from_addr.lower())
+        node_addresses.add(to_addr.lower())
+        detected_chain = detected_chain or chain
+        edges.append({
+            "from": from_addr, "to": to_addr, "chain": chain, "amount_label": amount_label,
+            "tx_hash": tx_hash,
+            "tx_time_utc": tx_time_utc.strftime("%Y-%m-%d %H:%M:%S") if tx_time_utc else None,
+            "explorer_url": explorer_url,
+        })
+    # Case wallets need their real (non-lowercased) address form too, for
+    # display - re-fetch the originals rather than guessing casing back.
+    real_case_wallets = load_case_wallet_addresses(case_id)
+    address_display_form = {a.lower(): a for a in real_case_wallets}
+    for from_addr, to_addr, *_ in edge_rows:
+        address_display_form.setdefault(from_addr.lower(), from_addr)
+        address_display_form.setdefault(to_addr.lower(), to_addr)
+
+    nodes = []
+    for addr_lower in node_addresses:
+        real_address = address_display_form.get(addr_lower, addr_lower)
+        entity = check_known_entity(real_address)
+        nodes.append({
+            "id": real_address,
+            "is_case_wallet": addr_lower in case_wallet_addresses,
+            "entity_name": entity["name"] if entity else None,
+            "entity_type": entity["type"] if entity else None,
+        })
+
+    positions = {addr: {"x": x, "y": y} for addr, x, y in position_rows}
+
+    return {"nodes": nodes, "edges": edges, "positions": positions, "chain": detected_chain}
+
+
 def build_target_set(include_case_watchlist=True):
     """Combines TARGET_ILLICIT_WALLETS with a case's saved wallets, deduped.
     NOTE: only used by the CLI (python link_tracer.py directly) - the web app
