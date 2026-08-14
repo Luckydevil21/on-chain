@@ -992,6 +992,42 @@ def save_case_explore_position(case_id: str, req: SaveCaseExplorePositionRequest
     return result
 
 
+class SaveCaseExploreNoteRequest(BaseModel):
+    text: str
+    x: float
+    y: float
+
+
+class UpdateCaseExploreNoteRequest(BaseModel):
+    text: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+@app.post("/api/cases/{case_id}/explore-graph/notes")
+def add_case_explore_note(case_id: str, req: SaveCaseExploreNoteRequest, _auth=Depends(require_read)):
+    result = lt.save_case_explore_note(case_id, req.text, req.x, req.y, _auth["username"])
+    if not result["success"]:
+        raise HTTPException(503, result["message"])
+    return result
+
+
+@app.post("/api/cases/{case_id}/explore-graph/notes/{note_id}")
+def update_case_explore_note(case_id: str, note_id: str, req: UpdateCaseExploreNoteRequest, _auth=Depends(require_read)):
+    result = lt.update_case_explore_note(note_id, note_text=req.text, x=req.x, y=req.y)
+    if not result["success"]:
+        raise HTTPException(503, result["message"])
+    return result
+
+
+@app.delete("/api/cases/{case_id}/explore-graph/notes/{note_id}")
+def delete_case_explore_note(case_id: str, note_id: str, _auth=Depends(require_read)):
+    result = lt.delete_case_explore_note(note_id)
+    if not result["success"]:
+        raise HTTPException(503, result["message"])
+    return result
+
+
 @app.get("/api/cases")
 def list_cases(_auth=Depends(require_read)):
     """Every saved case, newest first, with a wallet count for each."""
