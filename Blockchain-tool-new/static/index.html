@@ -331,18 +331,16 @@
   position: absolute; top: -7px; right: -7px; width: 16px; height: 16px;
   display: flex; align-items: center; justify-content: center; border-radius: 50%;
   background: var(--panel); border: 1px solid var(--line); color: var(--text-dim);
-  font-size: 10px; text-decoration: none; opacity: 0; transition: opacity 0.12s ease;
+  font-size: 10px; text-decoration: none; opacity: 0.85; transition: opacity 0.12s ease;
 }
-.wbox:hover .wbox-explorer-link { opacity: 1; }
-.wbox-explorer-link:hover { color: var(--accent); border-color: var(--accent); }
+.wbox-explorer-link:hover { color: var(--accent); border-color: var(--accent); opacity: 1; }
 .wbox-flag-btn {
   position: absolute; top: -7px; left: -7px; width: 16px; height: 16px;
   display: flex; align-items: center; justify-content: center; border-radius: 50%;
   background: var(--panel); border: 1px solid var(--line); color: var(--text-dim);
-  font-size: 9px; padding: 0; cursor: pointer; opacity: 0; transition: opacity 0.12s ease;
+  font-size: 9px; padding: 0; cursor: pointer; opacity: 0.85; transition: opacity 0.12s ease;
 }
-.wbox:hover .wbox-flag-btn { opacity: 1; }
-.wbox-flag-btn:hover { border-color: var(--flag); }
+.wbox-flag-btn:hover { border-color: var(--flag); opacity: 1; }
 .wbox-flag-btn:disabled { cursor: default; opacity: 1; }
 .wbox.root { border-color: var(--accent); background: var(--accent-bg); }
 .wbox.root::before { background: var(--accent); }
@@ -1559,6 +1557,8 @@ function renderLinkTraceSection() {
     const amountRaw = document.getElementById("ltAmount").value.trim();
     const exactAmountOnly = document.getElementById("ltExactAmount").checked;
     const selectedCaseId = document.getElementById("ltCaseId").value;
+    const caseSelect = document.getElementById("ltCaseId");
+    const selectedCaseName = selectedCaseId ? caseSelect.options[caseSelect.selectedIndex].textContent : null;
     const selectedEvmChain = document.getElementById("ltEvmChain").value;
     const continuePastMatch = document.getElementById("ltContinuePastMatch").checked;
     const statusEl = document.getElementById("ltStatus");
@@ -1577,7 +1577,7 @@ function renderLinkTraceSection() {
     try {
       const data = await runTraceAsJob(body, statusEl);
       lastResults.linkTrace = data;
-      lastResults.linkTraceMeta = { wallet, direction };
+      lastResults.linkTraceMeta = { wallet, direction, caseName: selectedCaseName };
       statusEl.textContent = `${data.addresses_visited} wallet(s) visited. ${data.matched_paths.length} direct link(s) found.`;
       renderLinkTraceResults(data, lastResults.linkTraceMeta);
     } catch (err) {
@@ -1930,8 +1930,9 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
   // the main results container directly, so it can be shown/hidden as a
   // unit alongside the graph view.
   const viewToggleCard = el("div", "card");
-  viewToggleCard.style.cssText = "display:flex; align-items:center; gap:10px; padding:10px 16px;";
+  viewToggleCard.style.cssText = "display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 16px;";
   viewToggleCard.innerHTML = `
+    ${meta.caseName ? `<div class="footnote" style="font-weight:600; color:var(--text);">📁 ${escapeHtml(meta.caseName)}</div>` : "<div></div>"}
     <div class="style-toggle" id="traceViewToggle">
       <button data-view="linear" class="active">Linear</button>
       <button data-view="graph">Graph</button>
@@ -2203,6 +2204,12 @@ function renderTraceGraph(data, allPaths, container) {
         ${isRoot ? `<div class="footnote">The wallet being traced.</div>` : ""}
         ${hop && hop.to_known_entity ? `<div class="hint">${escapeHtml(hop.to_known_entity.name)} (${escapeHtml(hop.to_known_entity.type)})</div>` : `<div class="footnote">No known-entity attribution yet.</div>`}
       `;
+      if (!isRoot && !(hop && hop.to_known_entity)) {
+        const flagBtn = el("button", "btn secondary", "🚩 Flag for review");
+        flagBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
+        flagBtn.onclick = () => flagAddressForReview(addr, data.chain, flagBtn);
+        card.appendChild(flagBtn);
+      }
       detailDiv.appendChild(card);
     } else if (params.edges.length) {
       const edge = visEdges.get(params.edges[0]);
@@ -2497,15 +2504,25 @@ async function openCase(caseId) {
       </div>
       <div class="status-line" id="cwStatus"></div>` : ""}
       <div class="card"><h3>Wallets in this case</h3><div id="cwList"></div></div>
+      <div class="card"><h3>Case graph</h3>
+        <div class="field hint mb-md">Builds automatically as you explore - reopen this case any time and it's exactly as you left it.</div>
+      </div>
+      <div class="status-line" id="caseGraphStatus"></div>
+      <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
+        <div id="caseGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+        <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
+      </div>
     `;
 
     document.getElementById("caseBackBtn").onclick = () => {
       detailView.style.display = "none";
       document.getElementById("casesListView").style.display = "block";
       savedCasesState.openCaseId = null;
+      exploreGraphCaseId = null;
     };
 
     renderCaseWalletsTable(caseData.wallets);
+    loadCaseExploreGraph(caseId);
 
     if (isAdmin()) {
       document.getElementById("cwAdd").onclick = async () => {
@@ -3278,6 +3295,10 @@ function renderExploreGraphIntoContainer(container) {
 let exploreGraphNetwork = null, exploreGraphNodes = null, exploreGraphEdges = null;
 let exploreGraphExpanded = new Set();
 let exploreGraphRootAddress = null;
+// null = standalone Explore Graph (nothing persists). Set to a case ID
+// when launched from a Saved Case - every add/drag then also persists
+// to that case, restorable later exactly as left.
+let exploreGraphCaseId = null;
 
 const EXPLORE_GRAPH_COLORS = {
   root: { border: "#4f8cc9", background: "#142331" },
@@ -3290,6 +3311,103 @@ function exploreGraphNodeColor(entityType) {
   if (entityType === "sanctioned") return EXPLORE_GRAPH_COLORS.sanctioned;
   if (entityType) return EXPLORE_GRAPH_COLORS.entity;
   return EXPLORE_GRAPH_COLORS.unknown;
+}
+
+// Launched when a Saved Case is opened - restores its graph exactly as
+// it was left (including manually-dragged positions), or seeds it
+// fresh from the case's own wallets if nothing's been built yet.
+async function loadCaseExploreGraph(caseId) {
+  const statusEl = document.getElementById("caseGraphStatus");
+  const containerEl = document.getElementById("caseGraphContainer");
+  const detailEl = document.getElementById("caseGraphDetail");
+  const evmChain = "ethereum";  // TODO: consider a per-case default if this becomes a real limitation
+
+  exploreGraphCaseId = caseId;
+  exploreGraphExpanded = new Set();
+  exploreGraphPendingConnections = new Map();
+  exploreGraphRootAddress = null;
+  containerEl.innerHTML = "";
+  detailEl.innerHTML = "";
+  statusEl.textContent = "Loading...";
+  statusEl.className = "status-line";
+
+  let graph;
+  try {
+    graph = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph`);
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    statusEl.className = "status-line error";
+    return;
+  }
+
+  if (!graph.nodes.length) {
+    statusEl.textContent = "This case has no wallets yet - add one above to start building its graph.";
+    return;
+  }
+
+  const symbol = chainSymbol(graph.chain);
+  exploreGraphNodes = new vis.DataSet(graph.nodes.map(n => {
+    const savedPos = graph.positions[n.id] || graph.positions[n.id.toLowerCase()];
+    const baseLabel = n.entity_name || truncateAddress(n.id);
+    const alreadyExplored = graph.edges.some(e => e.from.toLowerCase() === n.id.toLowerCase());
+    return {
+      id: n.id,
+      label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
+      title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
+      shape: n.is_case_wallet ? "box" : "dot",
+      size: n.is_case_wallet ? 22 : 14,
+      color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
+      font: { color: "#c9d1d9", size: 12 },
+      shapeProperties: { borderDashes: alreadyExplored ? false : [4, 3] },
+      borderWidth: alreadyExplored ? 2 : 1,
+      entityName: n.entity_name, entityType: n.entity_type,
+      ...(savedPos ? { x: savedPos.x, y: savedPos.y, fixed: { x: true, y: true } } : {}),
+    };
+  }));
+  exploreGraphEdges = new vis.DataSet(graph.edges.map(edge => ({
+    id: `${edge.from}->${edge.to}->${edge.tx_hash}`, from: edge.from, to: edge.to, arrows: "to",
+    label: edge.tx_time_utc ? `${edge.amount_label || ""}\n${edge.tx_time_utc}` : (edge.amount_label || ""),
+    font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+    color: { color: "#3d5a78", opacity: 0.8 },
+    amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
+  })));
+
+  exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 130 } },
+    interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
+    layout: { improvedLayout: true },
+    edges: { smooth: false },
+  });
+
+  exploreGraphNetwork.on("dragEnd", (params) => {
+    if (params.nodes.length) {
+      const nodeId = params.nodes[0];
+      const pos = exploreGraphNetwork.getPositions([nodeId])[nodeId];
+      exploreGraphNodes.update({ id: nodeId, fixed: { x: true, y: true }, x: pos.x, y: pos.y });
+      apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/position`, {
+        method: "POST", body: JSON.stringify({ address: nodeId, x: pos.x, y: pos.y }),
+      }).catch(err => console.error("Could not save this position to the case:", err.message));
+    }
+  });
+
+  exploreGraphNetwork.on("click", async (params) => {
+    if (params.nodes.length) {
+      await expandExploreGraphNode(params.nodes[0], evmChain, statusEl, detailEl);
+    } else if (params.edges.length) {
+      const edge = exploreGraphEdges.get(params.edges[0]);
+      const card = el("div", "card");
+      card.style.marginTop = "10px";
+      card.innerHTML = `
+        <div class="footnote"><strong>${escapeHtml(edge.amountLabel || "")}</strong> - ${escapeHtml(edge.txTimeUtc || "unknown time")}</div>
+        <div class="mono footnote">${escapeHtml(edge.from)} → ${escapeHtml(edge.to)}</div>
+        ${edge.explorerUrl ? `<a href="${escapeHtml(edge.explorerUrl)}" target="_blank" rel="noopener">View transaction on explorer ↗</a>` : ""}
+      `;
+      detailEl.innerHTML = "";
+      detailEl.appendChild(card);
+    }
+  });
+
+  statusEl.textContent = `${graph.nodes.length} address(es), ${graph.edges.length} transaction(s) restored.`;
 }
 
 async function startExploreGraph() {
@@ -3308,6 +3426,7 @@ async function startExploreGraph() {
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
   exploreGraphRootAddress = wallet;
+  exploreGraphCaseId = null;
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
@@ -3332,6 +3451,11 @@ async function startExploreGraph() {
       const nodeId = params.nodes[0];
       const pos = exploreGraphNetwork.getPositions([nodeId])[nodeId];
       exploreGraphNodes.update({ id: nodeId, fixed: { x: true, y: true }, x: pos.x, y: pos.y });
+      if (exploreGraphCaseId) {
+        apiFetch(`/api/cases/${encodeURIComponent(exploreGraphCaseId)}/explore-graph/position`, {
+          method: "POST", body: JSON.stringify({ address: nodeId, x: pos.x, y: pos.y }),
+        }).catch(err => console.error("Could not save this position to the case:", err.message));
+      }
     }
   });
 
@@ -3399,11 +3523,18 @@ function renderExploreGraphConnectionsList(address, detailEl) {
   const node = exploreGraphNodes.get(address);
   const entityLine = node.entityName ? `${node.entityName} (${node.entityType})` : "No known-entity attribution yet.";
   const result = exploreGraphPendingConnections.get(address.toLowerCase());
+  const isRoot = address.toLowerCase() === (exploreGraphRootAddress || "").toLowerCase();
 
   detailEl.innerHTML = "";
   const headerCard = el("div", "card");
   headerCard.style.marginTop = "10px";
   headerCard.innerHTML = `<div class="mono" style="font-weight:600;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
+  if (!isRoot && !node.entityName) {
+    const flagBtn = el("button", "btn secondary", "🚩 Flag for review");
+    flagBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
+    flagBtn.onclick = () => flagAddressForReview(address, result ? result.chain : null, flagBtn);
+    headerCard.appendChild(flagBtn);
+  }
   detailEl.appendChild(headerCard);
 
   if (!result || !result.edges.length) {
@@ -3495,6 +3626,13 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
   });
+
+  if (exploreGraphCaseId) {
+    apiFetch(`/api/cases/${encodeURIComponent(exploreGraphCaseId)}/explore-graph/edges`, {
+      method: "POST",
+      body: JSON.stringify({ edges: [edge], chain }),
+    }).catch(err => console.error("Could not save this connection to the case:", err.message));
+  }
 }
 
 function renderPoisoningCheckSection() {
