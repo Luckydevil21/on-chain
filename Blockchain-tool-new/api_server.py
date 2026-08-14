@@ -102,7 +102,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response, Backgrou
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # ---- link_tracer.py, imported as a module. Importing it does NOT run
 # its CLI/__main__ section - only its top-level constants and function
@@ -938,6 +938,51 @@ class CaseWalletIn(BaseModel):
     chain: Optional[str] = Field(default=None, description="Auto-detected if omitted.")
     source: Optional[str] = None
     context: Optional[str] = None
+
+
+class CaseExploreEdgeInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    from_: str = Field(..., alias="from")
+    to: str
+    amount_label: Optional[str] = None
+    tx_hash: str
+    tx_time_utc: Optional[str] = None
+    explorer_url: Optional[str] = None
+
+
+class SaveCaseExploreEdgesRequest(BaseModel):
+    edges: List[CaseExploreEdgeInput]
+    chain: Optional[str] = None
+
+
+class SaveCaseExplorePositionRequest(BaseModel):
+    address: str
+    x: float
+    y: float
+
+
+@app.get("/api/cases/{case_id}/explore-graph")
+def get_case_explore_graph(case_id: str, _auth=Depends(require_read)):
+    """Everything needed to restore a case's Explore Graph exactly as it
+    was left - see link_tracer.py's load_case_explore_graph()."""
+    return lt.load_case_explore_graph(case_id)
+
+
+@app.post("/api/cases/{case_id}/explore-graph/edges")
+def add_case_explore_edges(case_id: str, req: SaveCaseExploreEdgesRequest, _auth=Depends(require_read)):
+    edges = [{"from": e.from_, "to": e.to, "amount_label": e.amount_label,
+              "tx_hash": e.tx_hash, "tx_time_utc": e.tx_time_utc, "explorer_url": e.explorer_url}
+             for e in req.edges]
+    lt.save_case_explore_edges(case_id, edges, req.chain, _auth["username"])
+    return {"success": True}
+
+
+@app.post("/api/cases/{case_id}/explore-graph/position")
+def save_case_explore_position(case_id: str, req: SaveCaseExplorePositionRequest, _auth=Depends(require_read)):
+    result = lt.save_case_explore_position(case_id, req.address, req.x, req.y)
+    if not result["success"]:
+        raise HTTPException(503, result["message"])
+    return result
 
 
 @app.get("/api/cases")
