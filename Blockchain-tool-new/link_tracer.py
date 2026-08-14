@@ -112,6 +112,7 @@ import os
 import csv
 import json
 import time
+import re
 import requests
 import xml.etree.ElementTree as ET
 from lxml import etree as LET  # only for OFAC's large-file streaming parse (see refresh_ofac_sanctions_list) -
@@ -706,20 +707,129 @@ def detect_chain(address):
         return "xrp"
     if is_valid_tron_address(address):
         return "tron"
-    return None
-
-def detect_chain(address):
-    if is_valid_ethereum_address(address):
-        return "ethereum"
-    if is_valid_bitcoin_address(address):
-        return "bitcoin"
-    if is_valid_xrp_address(address):
-        return "xrp"
-    if is_valid_tron_address(address):
-        return "tron"
     if is_valid_solana_address(address):
         return "solana"
     return None
+
+
+# ====================================================================
+# HISTORICAL FIAT PRICING (GBP + USD). Uses CoinGecko's free/Demo tier
+# (keyless, 10,000 calls/month) - NOTE: that tier's terms restrict it
+# to non-commercial use. This is fine while there are no paying
+# customers, but MUST be revisited (upgrade to a paid, commercially
+# licensed tier) before this app is sold to anyone. See the
+# conversation this was scoped from for the full reasoning.
+#
+# A past date's price never changes once that day has ended, so this
+# caches PERMANENTLY in the database, keyed by (coin, date) - the
+# entire point being that any given (coin, date) pair is only ever
+# fetched from the API once, ever, across every user and every trace.
+# ====================================================================
+
+# Maps the SYMBOL actually shown in amount labels (e.g. "5.0 ETH") to
+# CoinGecko's own coin ID - keyed by symbol, not chain, since the same
+# token (USDT) can appear on multiple chains but is priced identically.
+COINGECKO_COIN_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "XRP": "ripple",
+    "TRX": "tron",
+    "SOL": "solana",
+    "USDT": "tether",
+    "USDC": "usd-coin",
+}
+
+
+def parse_amount_label(amount_label):
+    """Splits "5.0 ETH" into (5.0, "ETH"). Returns (None, None) if the
+    label isn't in the expected numeric-then-symbol shape (e.g. "token
+    payment" or "(see explorer for detail...)", which some paths use
+    when an exact amount couldn't be decoded)."""
+    if not amount_label:
+        return None, None
+    match = re.match(r"^([\d.]+)\s+([A-Za-z]+)", amount_label)
+    if not match:
+        return None, None
+    try:
+        return float(match.group(1)), match.group(2).upper()
+    except ValueError:
+        return None, None
+
+
+def get_historical_fiat_price(symbol, date_str):
+    """Returns {"gbp": ..., "usd": ...} for one unit of `symbol` on
+    `date_str` (YYYY-MM-DD) - cached permanently, so the CoinGecko API
+    is only ever called once per (symbol, date) pair, ever. Returns
+    None if the symbol isn't recognized or the lookup genuinely fails
+    (never raises - a pricing failure should never break a trace)."""
+    coin_id = COINGECKO_COIN_IDS.get(symbol)
+    if not coin_id:
+        return None
+
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT gbp_price, usd_price FROM historical_fiat_prices "
+                    "WHERE coin_symbol = %s AND price_date = %s;",
+                    (symbol, date_str)
+                )
+                row = cur.fetchone()
+                if row:
+                    return {"gbp": float(row[0]) if row[0] is not None else None,
+                            "usd": float(row[1]) if row[1] is not None else None}
+    except Exception as error:
+        print(f"⚠️  Could not read historical price cache: {error}")
+
+    # Not cached yet - fetch from CoinGecko (free/Demo tier, see the
+    # module docstring above for the commercial-use caveat).
+    try:
+        coingecko_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%m-%Y")
+        response = requests.get(
+            f"https://api.coingecko.com/api/v3/coins/{coin_id}/history",
+            params={"date": coingecko_date, "localization": "false"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        price_data = response.json().get("market_data", {}).get("current_price", {})
+        gbp_price = price_data.get("gbp")
+        usd_price = price_data.get("usd")
+    except Exception as error:
+        print(f"⚠️  Could not fetch historical price for {symbol} on {date_str}: {error}")
+        return None
+
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO historical_fiat_prices (coin_symbol, price_date, gbp_price, usd_price) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT (coin_symbol, price_date) DO NOTHING;",
+                    (symbol, date_str, gbp_price, usd_price)
+                )
+                conn.commit()
+    except Exception as error:
+        print(f"⚠️  Could not save historical price to cache: {error}")
+
+    return {"gbp": gbp_price, "usd": usd_price}
+
+
+def get_hop_fiat_amounts(amount_label, tx_time):
+    """Convenience wrapper for _hop_out in api_server.py - parses the
+    amount label, looks up (cached) historical pricing for that date,
+    and returns {"gbp": ..., "usd": ...} for the TOTAL amount (not per
+    unit). Returns None if the amount couldn't be parsed or pricing
+    isn't available (unrecognized coin, API failure, etc.)."""
+    quantity, symbol = parse_amount_label(amount_label)
+    if quantity is None or not tx_time:
+        return None
+    date_str = tx_time.strftime("%Y-%m-%d") if hasattr(tx_time, "strftime") else str(tx_time)[:10]
+    unit_price = get_historical_fiat_price(symbol, date_str)
+    if not unit_price:
+        return None
+    return {
+        "gbp": round(quantity * unit_price["gbp"], 2) if unit_price.get("gbp") is not None else None,
+        "usd": round(quantity * unit_price["usd"], 2) if unit_price.get("usd") is not None else None,
+    }
 
 
 # ====================================================================
@@ -3659,17 +3769,25 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
     counterparty_addresses = set()
     for hop in outgoing:
         counterparty_addresses.add(hop["counterparty"])
+        fiat = get_hop_fiat_amounts(hop.get("amount_label"), hop.get("tx_time"))
         edges.append({
             "from": wallet, "to": hop["counterparty"],
-            "amount_label": hop.get("amount_label"), "tx_hash": hop.get("tx_hash"),
+            "amount_label": hop.get("amount_label"),
+            "amount_gbp": fiat["gbp"] if fiat else None,
+            "amount_usd": fiat["usd"] if fiat else None,
+            "tx_hash": hop.get("tx_hash"),
             "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
             "explorer_url": hop.get("explorer_url"),
         })
     for hop in incoming:
         counterparty_addresses.add(hop["counterparty"])
+        fiat = get_hop_fiat_amounts(hop.get("amount_label"), hop.get("tx_time"))
         edges.append({
             "from": hop["counterparty"], "to": wallet,
-            "amount_label": hop.get("amount_label"), "tx_hash": hop.get("tx_hash"),
+            "amount_label": hop.get("amount_label"),
+            "amount_gbp": fiat["gbp"] if fiat else None,
+            "amount_usd": fiat["usd"] if fiat else None,
+            "tx_hash": hop.get("tx_hash"),
             "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
             "explorer_url": hop.get("explorer_url"),
         })
@@ -3905,8 +4023,11 @@ def load_case_explore_graph(case_id):
         node_addresses.add(from_addr.lower())
         node_addresses.add(to_addr.lower())
         detected_chain = detected_chain or chain
+        fiat = get_hop_fiat_amounts(amount_label, tx_time_utc)
         edges.append({
             "from": from_addr, "to": to_addr, "chain": chain, "amount_label": amount_label,
+            "amount_gbp": fiat["gbp"] if fiat else None,
+            "amount_usd": fiat["usd"] if fiat else None,
             "tx_hash": tx_hash,
             "tx_time_utc": tx_time_utc.strftime("%Y-%m-%d %H:%M:%S") if tx_time_utc else None,
             "explorer_url": explorer_url,
