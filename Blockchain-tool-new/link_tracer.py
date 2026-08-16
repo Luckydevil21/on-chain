@@ -4124,6 +4124,62 @@ def load_case_explore_graph(case_id):
     return {"nodes": nodes, "edges": edges, "positions": positions, "notes": notes, "chain": detected_chain}
 
 
+def build_trace_data_from_case_explore_graph(case_id):
+    """Transforms a case's saved Explore Graph into the same trace_data
+    shape the Evidence Pack PDF generator already expects (see
+    evidence_pack.py) - reusing that tested rendering logic rather than
+    building a second, parallel PDF generator from scratch.
+
+    A manually-built graph doesn't have the single, linear chain of
+    hops an automated trace does - it can branch, have multiple
+    starting wallets, or edges that don't chain together at all. So
+    each discovered EDGE becomes its own single-hop "path", rather than
+    trying to force the graph into a shape it doesn't naturally have.
+
+    Includes a "source": "explore_graph" marker and the case's notes,
+    both of which generate_evidence_pack_pdf checks for specifically -
+    an automated trace's trace_data never has either."""
+    graph = load_case_explore_graph(case_id)
+    case_wallets = load_case_wallet_addresses(case_id)
+
+    flagged_end_paths = []
+    for edge in graph["edges"]:
+        tx_time = None
+        fiat = None
+        if edge.get("tx_time_utc"):
+            tx_time = datetime.strptime(edge["tx_time_utc"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            fiat = get_hop_fiat_amounts(edge["amount_label"], tx_time)
+        hop = {
+            "from_address": edge["from"], "to_address": edge["to"],
+            "amount": edge["amount_label"],
+            "amount_gbp": fiat["gbp"] if fiat else None,
+            "amount_usd": fiat["usd"] if fiat else None,
+            "tx_time_utc": edge["tx_time_utc"],
+            "tx_hash": edge["tx_hash"],
+            "explorer_url": edge["explorer_url"],
+            "from_known_entity": check_known_entity(edge["from"]),
+            "to_known_entity": check_known_entity(edge["to"]),
+            "is_change": False,
+            "change_confidence": None,
+        }
+        flagged_end_paths.append({"hops": [hop], "reason": "Discovered during manual graph exploration"})
+
+    investigator_notes = [n["text"] for n in graph["notes"]]
+
+    return {
+        "source": "explore_graph",
+        "wallet": case_wallets[0] if case_wallets else "(no case wallet recorded)",
+        "direction": "n/a",
+        "chain": graph["chain"] or "multiple/unknown",
+        "addresses_visited": len(graph["nodes"]),
+        "root_known_entity": None,
+        "matched_paths": [],
+        "flagged_end_paths": flagged_end_paths,
+        "amount_filtered_paths": [],
+        "investigator_notes": investigator_notes,
+    }
+
+
 def build_target_set(include_case_watchlist=True):
     """Combines TARGET_ILLICIT_WALLETS with a case's saved wallets, deduped.
     NOTE: only used by the CLI (python link_tracer.py directly) - the web app
