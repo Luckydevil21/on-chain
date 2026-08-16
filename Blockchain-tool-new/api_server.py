@@ -524,6 +524,27 @@ def get_me(current_user=Depends(require_read)):
     }
 
 
+@app.get("/api/policy/status")
+def get_policy_status(current_user=Depends(require_read)):
+    """Combines the accept-needed check with the policy text itself in
+    one call, since the frontend needs both together whenever
+    acceptance is actually required."""
+    accepted_version = auth.get_latest_policy_acceptance(current_user["username"])
+    needs_acceptance = accepted_version != auth.CURRENT_POLICY_VERSION
+    return {
+        "needs_acceptance": needs_acceptance,
+        "current_version": auth.CURRENT_POLICY_VERSION,
+        "policy_text": auth.POLICY_TEXT if needs_acceptance else None,
+    }
+
+
+@app.post("/api/policy/accept")
+def accept_policy(current_user=Depends(require_read)):
+    if not auth.record_policy_acceptance(current_user["username"], auth.CURRENT_POLICY_VERSION):
+        raise HTTPException(503, "Could not record your acceptance - please try again.")
+    return {"success": True, "version": auth.CURRENT_POLICY_VERSION}
+
+
 # ---- Two-factor authentication ----
 # 2FA is a hardened rule, not an opt-in - there is no self-service
 # "enable 2FA later" path any more. Setup for an account that doesn't
