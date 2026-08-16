@@ -79,6 +79,89 @@ SESSION_DURATION_HOURS = 12
 VALID_ROLES = ("admin", "read_only")
 
 TOTP_ISSUER_NAME = "On-Chain Investigations"
+
+# ====================================================================
+# DATA UNCERTAINTY / ACCEPTABLE USE POLICY. Bump CURRENT_POLICY_VERSION
+# whenever POLICY_TEXT changes - this forces every user to re-accept
+# the new version, and every past acceptance stays in the
+# policy_acceptances table forever (never overwritten), so there's
+# always a genuine, provable record of who accepted exactly which
+# version, exactly when.
+#
+# NOTE: this text is a starting draft, not reviewed by a solicitor.
+# It should not be relied upon as genuinely protective until it has
+# been reviewed and, if needed, rewritten by one - particularly given
+# this tool's output can end up in court-facing documents.
+# ====================================================================
+CURRENT_POLICY_VERSION = "2026-08-16"
+
+POLICY_TEXT = """# Data Uncertainty & Acceptable Use Notice
+
+**Please read before continuing.**
+
+## Nothing in this tool is proof of anything on its own
+
+This application analyses public blockchain data and presents findings to assist your own investigation and professional judgment. It does not, and cannot, establish legal fact. Every finding falls into one of these categories, and the distinction matters:
+
+- **Confirmed** - directly observable on-chain (a transaction occurred, an address received funds). Still requires your own independent verification before use in any legal, evidentiary, or client-facing context.
+- **Heuristic / correlation** - a probability-based match (for example, timing and amount correlation across a swap or bridge). This is a lead, not a finding. It may be wrong.
+- **Attribution** - a label identifying an address as belonging to a known entity (an exchange, a mixer, a sanctioned party). Attributions are drawn from third-party and community-sourced data, which can be incomplete, outdated, or incorrect.
+
+## You are responsible for independent verification
+
+Nothing produced by this tool - including trace results, graphs, attributions, or generated Evidence Packs - should be relied upon, disclosed to a client, submitted to a court, or used as the basis for a legal or financial decision without your own independent verification and professional judgment. Evidence Pack documents are drafts of factual scaffolding only; any declaration, expert opinion, or conclusion must be completed, reviewed, and personally signed by a suitably qualified analyst who takes responsibility for its contents.
+
+## This is not legal, financial, or professional advice
+
+This tool does not provide legal, financial, or investigative advice. It is a piece of software that surfaces publicly available information. Using it does not create any advisory relationship between you and the provider, and no output should be treated as a substitute for your own professional judgment or for advice from a qualified solicitor, accountant, or licensed investigator.
+
+## Limitation of liability
+
+To the fullest extent permitted by law, the provider of this tool accepts no liability for any loss, damage, legal consequence, or professional liability arising from your use of, or reliance upon, this tool or any output it generates, including but not limited to inaccurate attributions, incomplete trace results, or errors in generated documentation.
+
+## By continuing, you confirm that:
+
+- You understand the distinction between confirmed, heuristic, and attributed findings described above.
+- You will independently verify any finding before relying on it professionally or disclosing it to a third party.
+- You accept that this tool is provided "as is," without warranty of completeness or accuracy.
+- You are using this tool in a professional capacity and take personal responsibility for how its output is used."""
+
+
+def get_latest_policy_acceptance(username):
+    """Returns the version string of the most recent policy this user
+    accepted, or None if they've never accepted any version."""
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT policy_version FROM policy_acceptances "
+                    "WHERE username = %s ORDER BY accepted_at DESC LIMIT 1;",
+                    (username,)
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception as error:
+        print(f"⚠️  Could not read policy acceptance record: {error}")
+        return None
+
+
+def record_policy_acceptance(username, version):
+    """Appends a new acceptance record - never updates or overwrites a
+    previous one, so the full history is always genuinely provable."""
+    try:
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO policy_acceptances (username, policy_version) VALUES (%s, %s);",
+                    (username, version)
+                )
+                conn.commit()
+        return True
+    except Exception as error:
+        print(f"⚠️  Could not record policy acceptance: {error}")
+        return False
+
+
 TOTP_PENDING_TOKEN_MINUTES = 5   # how long you have to enter your 2FA code after a correct password
 RESET_TOKEN_HOURS = 1            # how long a "forgot password" email link stays valid
 
