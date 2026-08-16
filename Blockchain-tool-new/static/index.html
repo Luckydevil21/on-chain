@@ -127,6 +127,7 @@
   }
   a { color: var(--accent); }
   code, .mono { font-family: var(--mono); }
+  #appShell { flex: 1; min-width: 0; }
 
   /* ---------- Layout ---------- */
   .sidebar {
@@ -315,6 +316,15 @@
   .trail-reason { font-size: 11.5px; color: var(--text-dim); font-style: italic; margin-bottom: 6px; }
   .trail-row { margin-bottom: 20px; }
   .trail-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 0; }
+/* Light grey dot-grid canvas background, shared by all three graph
+   views - a deliberate departure from the app's dark theme for the
+   graph area specifically, since it makes node/edge data stand out
+   more clearly than the previous dark-on-dark canvas did. */
+.graph-canvas {
+  background-color: #e4e7eb;
+  background-image: radial-gradient(circle, #b7bec6 1.3px, transparent 1.3px);
+  background-size: 22px 22px;
+}
 .wbox {
   font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 9px 13px; border-radius: 8px;
   border: 1.5px solid #3d5a78; background: var(--panel-alt); text-align: center;
@@ -2238,7 +2248,7 @@ function renderTraceGraph(data, allPaths, container) {
       id: i,
       from: h.from_address, to: h.to_address, arrows: "to",
       label: h.tx_time_utc ? `${h.amount || ""}${fiatLabel ? " (" + fiatLabel + ")" : ""}\n${formatFriendlyDate(h.tx_time_utc)}` : (h.amount || ""),
-      font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+      font: { color: "#3d4451", size: 9, strokeWidth: 0 },
       color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
       dashes: !!h.is_change,
       hop: h,
@@ -2259,7 +2269,7 @@ function renderTraceGraph(data, allPaths, container) {
 
   container.innerHTML = "";
   const graphDiv = el("div");
-  graphDiv.style.cssText = "height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);";
+  graphDiv.className = "graph-canvas"; graphDiv.style.cssText = "height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);";
   container.appendChild(graphDiv);
   const detailDiv = el("div");
   container.appendChild(detailDiv);
@@ -2619,7 +2629,7 @@ async function openCase(caseId) {
       </div>
       <div id="caseGraphEvidencePackResult"></div>
       <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
-        <div id="caseGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+        <div id="caseGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
         <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
       </div>
     `;
@@ -3392,7 +3402,7 @@ function renderExploreGraphIntoContainer(container) {
       ${isAdmin() ? `<button class="btn secondary" id="egSaveCaseBtn" style="display:none; font-size:12px; padding:7px 14px;">💾 Save to Saved Cases</button>` : ""}
     </div>
     <div id="egGraphRow" style="display:none; margin-top:14px; gap:14px; align-items:flex-start;">
-      <div id="egGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
+      <div id="egGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
       <div id="egNodeDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
     </div>
   `;
@@ -3587,7 +3597,7 @@ async function loadCaseExploreGraph(caseId) {
     return {
       id: `${edge.from}->${edge.to}->${edge.tx_hash}`, from: edge.from, to: edge.to, arrows: "to",
       label: edge.tx_time_utc ? `${edge.amount_label || ""}${fiatLabel ? " (" + fiatLabel + ")" : ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
-      font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+      font: { color: "#3d4451", size: 9, strokeWidth: 0 },
       color: { color: "#3d5a78", opacity: 0.8 },
       amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
     };
@@ -3914,8 +3924,8 @@ function renderExploreGraphConnectionsList(address, detailEl) {
       <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
         <div style="flex-shrink:0; width:34px; text-align:center; font-size:9px; font-weight:700; letter-spacing:0.04em; color:#fff; background:${badgeColor}; border-radius:4px; padding:3px 0;">${isOut ? "OUT" : "IN"}</div>
         <div style="flex:1; min-width:0;">
-          <div class="mono footnote">${escapeHtml(truncateAddress(counterparty))}</div>
-          <div class="footnote">${escapeHtml(edge.amount_label || "")}${edge.tx_time_utc ? " - " + escapeHtml(formatFriendlyDate(edge.tx_time_utc)) : ""}</div>
+          <div class="mono" style="color:var(--text); font-size:12px;">${escapeHtml(truncateAddress(counterparty))}</div>
+          <div style="color:var(--text); opacity:0.85; font-size:11.5px; margin-top:1px;">${escapeHtml(edge.amount_label || "")}${edge.tx_time_utc ? " - " + escapeHtml(formatFriendlyDate(edge.tx_time_utc)) : ""}</div>
         </div>
         <button class="btn secondary" data-edge-index="${i}" style="font-size:11px; padding:5px 10px; flex-shrink:0;" ${alreadyAdded ? "disabled" : ""}>${alreadyAdded ? "Added" : "Add to graph"}</button>
       </div>
@@ -3948,6 +3958,14 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
   if (exploreGraphEdges.get(edgeId)) return;  // already added
   const symbol = chainSymbol(chain);
 
+  // New nodes start at a randomized offset from whichever side of the
+  // edge already exists in the graph - without this, multiple new
+  // nodes added in quick succession can all default to the same
+  // starting point and end up visibly overlapping if physics doesn't
+  // get a chance to spread them apart before the next one lands.
+  const anchorId = exploreGraphNodes.get(edge.from) ? edge.from : (exploreGraphNodes.get(edge.to) ? edge.to : null);
+  const anchorPos = anchorId ? exploreGraphNetwork.getPositions([anchorId])[anchorId] : { x: 0, y: 0 };
+
   for (const side of [edge.from, edge.to]) {
     if (!exploreGraphNodes.get(side)) {
       const meta = nodesMeta.find(n => n.id.toLowerCase() === side.toLowerCase());
@@ -3961,14 +3979,16 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         font: { color: "#c9d1d9", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
         entityName: meta && meta.entity_name, entityType: meta && meta.entity_type,
+        x: anchorPos.x + (Math.random() * 200 - 100), y: anchorPos.y + (Math.random() * 200 - 100),
       });
     }
   }
+  if (exploreGraphNetwork) exploreGraphNetwork.stabilize(80);  // a real, bounded physics pass so new nodes genuinely separate, not just an ambient hope
   const liveFiatLabel = formatFiatLabel(edge.amount_gbp, edge.amount_usd);
   exploreGraphEdges.add({
     id: edgeId, from: edge.from, to: edge.to, arrows: "to",
     label: edge.tx_time_utc ? `${edge.amount_label || ""}${liveFiatLabel ? " (" + liveFiatLabel + ")" : ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
-    font: { color: "#7d8590", size: 9, strokeWidth: 0 },
+    font: { color: "#3d4451", size: 9, strokeWidth: 0 },
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
   });
