@@ -590,6 +590,17 @@
     <button class="btn secondary" id="totpBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
   </div>
 </div>
+<div id="totpSetupView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:380px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">Set up two-factor authentication</h1>
+    <p class="landing-lede" style="font-size:13px;">Required for every account - scan this with an authenticator app (Google Authenticator, Authy, 1Password, etc.) to finish signing in.</p>
+    <div id="totpSetupQrArea" style="margin:14px 0;"><div class="hint">Loading...</div></div>
+    <div class="status-line error" id="totpSetupStatus" style="min-height:16px;"></div>
+    <button class="btn btn-full-primary" id="totpSetupSubmitBtn">Confirm &amp; continue</button>
+    <button class="btn secondary" id="totpSetupBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
+  </div>
+</div>
 
 <!-- ============================================================
      FORGOT PASSWORD
@@ -666,7 +677,6 @@
   <nav class="nav" id="nav" aria-label="Main navigation"></nav>
   <div class="sidebar-foot">
     <div class="conn-pill"><span class="conn-dot ok"></span><span id="whoamiLabel">-</span></div>
-    <button class="btn secondary" id="security2faBtn" style="width:100%; margin-top:10px; padding:7px; font-size:12px;">🔐 <span class="sidebar-foot-label">Two-Factor Auth</span></button>
     <button class="btn secondary" id="logoutBtn" style="width:100%; margin-top:8px; padding:7px; font-size:12px;">⏻ <span class="sidebar-foot-label">Log out</span></button>
   </div>
   <button class="sidebar-collapse-toggle" id="sidebarCollapseToggle" aria-label="Collapse sidebar" title="Collapse sidebar">
@@ -964,7 +974,7 @@ function refreshStyleToggle() {
 // AUTH - landing page, login, logout, session check on load
 // ============================================================
 function showView(viewId) {
-  ["landingView", "loginView", "pricingView", "totpView", "forgotView", "resetView", "appShell"].forEach(id => {
+  ["landingView", "loginView", "pricingView", "totpView", "totpSetupView", "forgotView", "resetView", "appShell"].forEach(id => {
     document.getElementById(id).style.display = id === viewId ? "flex" : "none";
   });
 
@@ -1000,22 +1010,73 @@ async function attemptLogin() {
   statusEl.textContent = "";
   try {
     const result = await apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    pendingTotpToken = result.temp_token;
+    if (result.requires_totp_setup) {
+      // 2FA is a hardened rule - a correct password alone never signs
+      // you in. This account has no 2FA yet, so set it up right now,
+      // as part of this same login, not as an optional later step.
+      showView("totpSetupView");
+      await beginMandatoryTotpSetup();
+      return;
+    }
     if (result.requires_totp) {
-      pendingTotpToken = result.temp_token;
       document.getElementById("totpStatus").textContent = "";
       document.getElementById("totpCode").value = "";
       showView("totpView");
       document.getElementById("totpCode").focus();
       return;
     }
-    state.currentUser = { username: result.username, role: result.role };
-    enterApp();
   } catch (err) {
     statusEl.textContent = err.message || "Login failed.";
   }
 }
 document.getElementById("loginSubmitBtn").onclick = attemptLogin;
 document.getElementById("loginPassword").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptLogin(); });
+
+async function beginMandatoryTotpSetup() {
+  const qrArea = document.getElementById("totpSetupQrArea");
+  const statusEl = document.getElementById("totpSetupStatus");
+  statusEl.textContent = "";
+  qrArea.innerHTML = `<div class="hint">Loading...</div>`;
+  try {
+    const data = await apiFetch("/api/auth/2fa/setup-pending", { method: "POST", body: JSON.stringify({ temp_token: pendingTotpToken }) });
+    qrArea.innerHTML = `
+      <div style="text-align:center; margin-bottom:12px;">
+        <img src="data:image/png;base64,${data.qr_code_base64}" style="width:180px; height:180px; border-radius:8px;" alt="2FA QR code">
+      </div>
+      <div class="field" style="text-align:left;">
+        <label>Manual entry key</label>
+        <input type="text" readonly value="${escapeHtml(data.secret)}" style="text-align:center; letter-spacing:1px;">
+      </div>
+      <div class="field" style="text-align:left;">
+        <label>Enter the 6-digit code it's showing now</label>
+        <input type="text" id="totpSetupCode" inputmode="numeric" maxlength="6" placeholder="123456">
+      </div>
+    `;
+    document.getElementById("totpSetupCode").focus();
+  } catch (err) {
+    statusEl.textContent = err.message || "Could not start setup - please sign in again.";
+  }
+}
+
+async function attemptTotpSetupConfirm() {
+  const codeEl = document.getElementById("totpSetupCode");
+  const statusEl = document.getElementById("totpSetupStatus");
+  if (!codeEl) return;
+  const code = codeEl.value.trim();
+  if (!code) { statusEl.textContent = "Enter the 6-digit code."; return; }
+  statusEl.textContent = "";
+  try {
+    const result = await apiFetch("/api/auth/2fa/confirm-pending", { method: "POST", body: JSON.stringify({ temp_token: pendingTotpToken, code }) });
+    state.currentUser = { username: result.username, role: result.role };
+    pendingTotpToken = null;
+    enterApp();
+  } catch (err) {
+    statusEl.textContent = err.message || "Incorrect code.";
+  }
+}
+document.getElementById("totpSetupSubmitBtn").onclick = attemptTotpSetupConfirm;
+document.getElementById("totpSetupBackBtn").onclick = () => { pendingTotpToken = null; showView("loginView"); };
 
 async function attemptTotpVerify() {
   const code = document.getElementById("totpCode").value.trim();
@@ -1083,11 +1144,6 @@ document.getElementById("logoutBtn").onclick = async () => {
   showView("landingView");
 };
 
-// ============================================================
-// 2FA SETUP / DISABLE (from within the app, for your own account)
-// ============================================================
-document.getElementById("security2faBtn").onclick = () => open2FAModal();
-
 function closeModal(overlay) { overlay.remove(); }
 
 // ============================================================
@@ -1135,107 +1191,6 @@ function saveEntityButtonHtml(address) {
   // Read-only users never get this button at all - matches every other admin-only control in the app.
   if (!isAdmin()) return "";
   return `<button class="btn secondary" style="padding:3px 8px; font-size:10.5px; margin-left:6px;" onclick="openQuickSaveEntityModal('${escapeHtml(address)}')">+ Save</button>`;
-}
-
-async function open2FAModal() {
-  const overlay = el("div");
-  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:60; padding:20px;";
-  document.body.appendChild(overlay);
-
-  let me;
-  try {
-    me = await apiFetch("/api/auth/me");
-  } catch (err) {
-    overlay.remove();
-    return;
-  }
-
-  if (me.totp_enabled) {
-    renderDisable2FA(overlay);
-  } else {
-    renderEnable2FAStart(overlay);
-  }
-}
-
-function renderEnable2FAStart(overlay) {
-  overlay.innerHTML = `
-    <div class="card" style="width:380px;">
-      <h3>Enable Two-Factor Auth</h3>
-      <div class="hint mb-md" >
-        Adds a second step to signing in - after your password, you'll also need a 6-digit
-        code from an authenticator app (Google Authenticator, Authy, 1Password, etc.).
-      </div>
-      <button class="btn" id="start2FASetupBtn" style="width:100%;">Get started</button>
-      <button class="btn secondary btn-full-secondary" id="cancel2FABtn" >Cancel</button>
-    </div>`;
-  overlay.querySelector("#cancel2FABtn").onclick = () => closeModal(overlay);
-  overlay.querySelector("#start2FASetupBtn").onclick = async () => {
-    try {
-      const data = await apiFetch("/api/auth/2fa/setup", { method: "POST" });
-      renderEnable2FAConfirm(overlay, data);
-    } catch (err) {
-      alert("Error: " + err.message);
-    }
-  };
-}
-
-function renderEnable2FAConfirm(overlay, data) {
-  overlay.innerHTML = `
-    <div class="card" style="width:380px;">
-      <h3>Scan this code</h3>
-      <div class="hint" style="margin-bottom:12px;">
-        Scan with your authenticator app, or enter this key manually if you can't scan:
-      </div>
-      <div style="text-align:center; margin-bottom:12px;">
-        <img src="data:image/png;base64,${data.qr_code_base64}" style="width:180px; height:180px; border-radius:8px;" alt="2FA QR code">
-      </div>
-      <div class="field">
-        <label>Manual entry key</label>
-        <input type="text" readonly value="${escapeHtml(data.secret)}" style="text-align:center; letter-spacing:1px;">
-      </div>
-      <div class="field">
-        <label>Enter the 6-digit code it's showing now, to confirm</label>
-        <input type="text" id="confirm2FACode" inputmode="numeric" maxlength="6" placeholder="123456">
-      </div>
-      <div class="status-line error" id="confirm2FAStatus"></div>
-      <button class="btn" id="confirm2FABtn" style="width:100%;">Confirm &amp; enable</button>
-      <button class="btn secondary btn-full-secondary" id="cancel2FABtn2" >Cancel</button>
-    </div>`;
-  overlay.querySelector("#cancel2FABtn2").onclick = () => closeModal(overlay);
-  overlay.querySelector("#confirm2FABtn").onclick = async () => {
-    const code = overlay.querySelector("#confirm2FACode").value.trim();
-    const statusEl = overlay.querySelector("#confirm2FAStatus");
-    try {
-      await apiFetch("/api/auth/2fa/confirm", { method: "POST", body: JSON.stringify({ code }) });
-      overlay.innerHTML = `<div class="card" style="width:380px; text-align:center;"><h3>✅ Enabled</h3><div class="hint">Two-factor authentication is now on for your account.</div><button class="btn" id="done2FABtn" style="width:100%; margin-top:14px;">Done</button></div>`;
-      overlay.querySelector("#done2FABtn").onclick = () => closeModal(overlay);
-    } catch (err) {
-      statusEl.textContent = err.message || "Incorrect code.";
-    }
-  };
-}
-
-function renderDisable2FA(overlay) {
-  overlay.innerHTML = `
-    <div class="card" style="width:380px;">
-      <h3>Disable Two-Factor Auth</h3>
-      <div class="hint mb-md" >Enter your password to confirm.</div>
-      <div class="field"><label>Password</label><input type="password" id="disable2FAPassword"></div>
-      <div class="status-line error" id="disable2FAStatus"></div>
-      <button class="btn" id="confirmDisable2FABtn" style="width:100%;">Disable</button>
-      <button class="btn secondary btn-full-secondary" id="cancelDisable2FABtn" >Cancel</button>
-    </div>`;
-  overlay.querySelector("#cancelDisable2FABtn").onclick = () => closeModal(overlay);
-  overlay.querySelector("#confirmDisable2FABtn").onclick = async () => {
-    const password = overlay.querySelector("#disable2FAPassword").value;
-    const statusEl = overlay.querySelector("#disable2FAStatus");
-    try {
-      await apiFetch("/api/auth/2fa/disable", { method: "POST", body: JSON.stringify({ password }) });
-      closeModal(overlay);
-    } catch (err) {
-      statusEl.textContent = err.message || "Incorrect password.";
-    }
-  };
 }
 
 function enterApp() {
@@ -2229,10 +2184,11 @@ function renderTraceGraph(data, allPaths, container) {
   container.appendChild(detailDiv);
 
   const network = new vis.Network(graphDiv, { nodes: visNodes, edges: visEdges }, {
-    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 120 } },
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 150, springConstant: 0.02, damping: 0.15 } },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
-    edges: { smooth: false },  // straight lines, not curved
+    edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },
+    nodes: { shadow: { enabled: true, size: 10, x: 2, y: 3, color: "rgba(0,0,0,0.35)" }, borderWidth: 2 },
   });
   // Physics only runs for the initial layout - once that settles, turn
   // it off entirely so a dragged node stays exactly where it's placed,
@@ -3393,6 +3349,7 @@ const EXPLORE_GRAPH_COLORS = {
   entity: { border: "#4fb3a3", background: "#12211f" },
   unknown: { border: "#5a6472", background: "#1c232c" },
   note: { border: "#d4a72c", background: "#2b230f" },  // amber/sticky-note - visually distinct from every wallet-node color
+  crossChain: { border: "#a371f7", background: "#241a33" },  // distinct purple - matches the trace-results graph's "chain jump" styling exactly
 };
 
 function exploreGraphNodeColor(entityType) {
@@ -3413,7 +3370,7 @@ function buildNoteNode(id, text, x, y) {
     font: { color: "#f0d78c", size: 12 },
     shapeProperties: { borderDashes: false },
     isNote: true, noteText: text,
-    x, y, fixed: { x: true, y: true },  // notes always stay exactly where placed - physics never moves them
+    x, y, physics: false,  // notes stay exactly where placed and are always re-draggable (fixed:true would block future drags entirely)
   };
 }
 
@@ -3538,7 +3495,7 @@ async function loadCaseExploreGraph(caseId) {
       shapeProperties: { borderDashes: alreadyExplored ? false : [4, 3] },
       borderWidth: alreadyExplored ? 2 : 1,
       entityName: n.entity_name, entityType: n.entity_type,
-      ...(savedPos ? { x: savedPos.x, y: savedPos.y, fixed: { x: true, y: true } } : {}),
+      ...(savedPos ? { x: savedPos.x, y: savedPos.y, physics: false } : {}),
     };
   }));
   (graph.notes || []).forEach(note => {
@@ -3556,17 +3513,18 @@ async function loadCaseExploreGraph(caseId) {
   }));
 
   exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
-    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 130 } },
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 150, springConstant: 0.02, damping: 0.15 } },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
-    edges: { smooth: false },
+    edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },
+    nodes: { shadow: { enabled: true, size: 10, x: 2, y: 3, color: "rgba(0,0,0,0.35)" }, borderWidth: 2 },
   });
 
   exploreGraphNetwork.on("dragEnd", (params) => {
     if (params.nodes.length) {
       const nodeId = params.nodes[0];
       const pos = exploreGraphNetwork.getPositions([nodeId])[nodeId];
-      exploreGraphNodes.update({ id: nodeId, fixed: { x: true, y: true }, x: pos.x, y: pos.y });
+      exploreGraphNodes.update({ id: nodeId, physics: false, x: pos.x, y: pos.y });
       const draggedNode = exploreGraphNodes.get(nodeId);
       if (draggedNode.isNote) {
         const realId = nodeId.replace("note-", "");
@@ -3735,10 +3693,11 @@ async function startExploreGraph() {
   exploreGraphEdges = new vis.DataSet([]);
 
   exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
-    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 130 } },
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 150, springConstant: 0.02, damping: 0.15 } },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
-    edges: { smooth: false },  // straight lines, not curved
+    edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },  // straight lines, not curved
+    nodes: { shadow: { enabled: true, size: 10, x: 2, y: 3, color: "rgba(0,0,0,0.35)" }, borderWidth: 2 },
   });
 
   // A node the user drags becomes pinned exactly where they drop it -
@@ -3749,7 +3708,7 @@ async function startExploreGraph() {
     if (params.nodes.length) {
       const nodeId = params.nodes[0];
       const pos = exploreGraphNetwork.getPositions([nodeId])[nodeId];
-      exploreGraphNodes.update({ id: nodeId, fixed: { x: true, y: true }, x: pos.x, y: pos.y });
+      exploreGraphNodes.update({ id: nodeId, physics: false, x: pos.x, y: pos.y });
       if (exploreGraphCaseId) {
         apiFetch(`/api/cases/${encodeURIComponent(exploreGraphCaseId)}/explore-graph/position`, {
           method: "POST", body: JSON.stringify({ address: nodeId, x: pos.x, y: pos.y }),
@@ -3932,6 +3891,35 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
   });
+
+  // A cross-chain memo-stated destination (e.g. Bridgers.xyz) - the
+  // service's own stated routing, not a timing/amount guess. Gets its
+  // own node using ITS OWN chain's symbol, and a visually distinct
+  // purple, dashed edge so it's never confused with a normal hop.
+  if (edge.embedded_destination_address) {
+    const destChainSymbol = chainSymbol(edge.embedded_destination_chain);
+    if (!exploreGraphNodes.get(edge.embedded_destination_address)) {
+      exploreGraphNodes.add({
+        id: edge.embedded_destination_address,
+        label: destChainSymbol ? `${destChainSymbol} ${truncateAddress(edge.embedded_destination_address)}` : truncateAddress(edge.embedded_destination_address),
+        title: `Memo-stated destination on ${edge.embedded_destination_chain}\n${edge.embedded_destination_address}`,
+        shape: "dot", size: 14,
+        color: EXPLORE_GRAPH_COLORS.crossChain,
+        font: { color: "#c9d1d9", size: 12 },
+        shapeProperties: { borderDashes: [4, 3] },
+      });
+    }
+    const crossChainEdgeId = `${edge.to}->${edge.embedded_destination_address}->crosschain-${edge.tx_hash}`;
+    if (!exploreGraphEdges.get(crossChainEdgeId)) {
+      exploreGraphEdges.add({
+        id: crossChainEdgeId, from: edge.to, to: edge.embedded_destination_address, arrows: "to",
+        label: `→ ${edge.embedded_destination_chain}`,
+        font: { color: "#a371f7", size: 9, strokeWidth: 0 },
+        color: { color: "#a371f7", opacity: 0.8 },
+        dashes: [6, 4],
+      });
+    }
+  }
 
   if (exploreGraphCaseId) {
     apiFetch(`/api/cases/${encodeURIComponent(exploreGraphCaseId)}/explore-graph/edges`, {
@@ -4181,11 +4169,22 @@ async function loadUsers() {
        <td>${isSelf ? "" : `
          <button class="btn secondary btn-table-action" style="margin-right:6px;" onclick="changeUserRole('${escapeHtml(u.username)}', '${u.role === "admin" ? "read_only" : "admin"}')">${roleToggleLabel}</button>
          <button class="btn secondary btn-table-action" onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>
-       `}</td></tr>`;
+       `}${u.totp_enabled ? `
+         <button class="btn secondary btn-table-action" style="margin-left:6px;" onclick="resetUser2FA('${escapeHtml(u.username)}')">Reset 2FA</button>
+       ` : ""}</td></tr>`;
     }).join("");
     listEl.appendChild(table);
   } catch (err) {
     listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function resetUser2FA(username) {
+  if (!confirm(`Reset 2FA for "${username}"? They'll be required to set it up again from scratch on their next login.`)) return;
+  try {
+    await apiFetch(`/api/users/${encodeURIComponent(username)}/reset-2fa`, { method: "POST" });
+    loadUsers();
+  } catch (err) {
+    alert("Error: " + err.message);
   }
 }
 async function changeUserRole(username, newRole) {
