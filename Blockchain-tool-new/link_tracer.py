@@ -3770,6 +3770,7 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
     for hop in outgoing:
         counterparty_addresses.add(hop["counterparty"])
         fiat = get_hop_fiat_amounts(hop.get("amount_label"), hop.get("tx_time"))
+        pattern_match = hop.get("pattern_match") or {}
         edges.append({
             "from": wallet, "to": hop["counterparty"],
             "amount_label": hop.get("amount_label"),
@@ -3778,10 +3779,13 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
             "tx_hash": hop.get("tx_hash"),
             "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
             "explorer_url": hop.get("explorer_url"),
+            "embedded_destination_address": pattern_match.get("embedded_destination_address"),
+            "embedded_destination_chain": pattern_match.get("embedded_destination_chain"),
         })
     for hop in incoming:
         counterparty_addresses.add(hop["counterparty"])
         fiat = get_hop_fiat_amounts(hop.get("amount_label"), hop.get("tx_time"))
+        pattern_match = hop.get("pattern_match") or {}
         edges.append({
             "from": hop["counterparty"], "to": wallet,
             "amount_label": hop.get("amount_label"),
@@ -3790,6 +3794,8 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
             "tx_hash": hop.get("tx_hash"),
             "tx_time_utc": hop["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if hop.get("tx_time") else None,
             "explorer_url": hop.get("explorer_url"),
+            "embedded_destination_address": pattern_match.get("embedded_destination_address"),
+            "embedded_destination_chain": pattern_match.get("embedded_destination_chain"),
         })
 
     nodes = []
@@ -3800,6 +3806,16 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
             "entity_name": entity["name"] if entity else None,
             "entity_type": entity["type"] if entity else None,
         })
+    for edge in edges:
+        if edge.get("embedded_destination_address") and edge["embedded_destination_address"] not in counterparty_addresses:
+            counterparty_addresses.add(edge["embedded_destination_address"])
+            entity = check_known_entity(edge["embedded_destination_address"])
+            nodes.append({
+                "id": edge["embedded_destination_address"],
+                "entity_name": entity["name"] if entity else None,
+                "entity_type": entity["type"] if entity else None,
+                "chain": edge["embedded_destination_chain"],  # different chain than the wallet being explored
+            })
 
     return {"wallet": wallet, "chain": chain, "nodes": nodes, "edges": edges}
 
