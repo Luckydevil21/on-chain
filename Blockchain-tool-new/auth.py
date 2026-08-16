@@ -421,6 +421,21 @@ def disable_totp(username, password):
     return True
 
 
+def admin_reset_totp(username):
+    """Admin-initiated 2FA reset for a user who's lost their device -
+    unlike disable_totp (self-service, requires the user's OWN
+    password), this trusts admin authority instead, since a locked-out
+    user obviously can't supply their own current TOTP or, in some
+    cases, even their password. 2FA remains a hardened, non-optional
+    rule - the user is forced straight through setup again on their
+    very next login, never left without 2FA."""
+    user = _get_user_record(username)
+    if not user:
+        return False
+    _update_user_record(username, totp_secret=None, totp_enabled=False)
+    return True
+
+
 def is_totp_enabled(username):
     user = _get_user_record(username)
     return bool(user and user.get("totp_enabled"))
