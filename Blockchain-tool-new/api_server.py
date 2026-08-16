@@ -237,8 +237,11 @@ class LoginRequest(BaseModel):
 class CreateUserRequest(BaseModel):
     username: str
     password: str
-    role: str = Field(..., description='"admin" or "read_only"')
     email: str = Field(default="", description="Needed for that user to use 'forgot password'.")
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role: str = Field(..., description='"admin" or "read_only"')
 
 
 class Verify2FARequest(BaseModel):
@@ -291,6 +294,16 @@ if _allowed_origins == ["*"]:
     print("    over the network, set it to your actual frontend's origin:")
     print("        TOOLKIT_ALLOWED_ORIGINS=https://your-app.up.railway.app")
     print("=" * 70)
+
+# Enforces the seat count this specific customer's deployment actually
+# paid for (Solo/Small Firm/Agency tiers on the pricing page). Since
+# each customer runs their own entirely separate instance (see the
+# multi-tenancy decision this was scoped from), there's no shared
+# billing system to check against - this environment variable, set
+# per-deployment to match what was sold, is the actual enforcement.
+# Unset = unlimited (matches the Agency tier).
+_max_seats_setting = os.environ.get("TOOLKIT_MAX_SEATS", "").strip()
+TOOLKIT_MAX_SEATS = int(_max_seats_setting) if _max_seats_setting.isdigit() else None
 
 app.add_middleware(
     CORSMiddleware,
@@ -590,12 +603,40 @@ def get_users(_admin=Depends(require_write)):
 
 @app.post("/api/users")
 def add_user(req: CreateUserRequest, _admin=Depends(require_write)):
+    if TOOLKIT_MAX_SEATS is not None:
+        current_seats = len(auth.list_users())
+        if current_seats >= TOOLKIT_MAX_SEATS:
+            raise HTTPException(
+                400,
+                f"This account is limited to {TOOLKIT_MAX_SEATS} seat(s) ({current_seats} in use). "
+                f"Remove an existing user first, or contact us to add more seats."
+            )
+    # New accounts always start read_only - principle of least
+    # privilege. Admin access is granted only afterward, as a
+    # separate, deliberate action (see update_user_role below), never
+    # as a checkbox ticked during the rush of creating an account.
     try:
-        auth.create_user(req.username, req.password, req.role, email=req.email)
+        auth.create_user(req.username, req.password, "read_only", email=req.email)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
-    auth.log_action(_admin["username"], "user_created", target=req.username, detail=f"role={req.role}")
+    auth.log_action(_admin["username"], "user_created", target=req.username, detail="role=read_only")
     return {"added": True}
+
+
+@app.get("/api/seat-info")
+def get_seat_info(_admin=Depends(require_write)):
+    return {"used": len(auth.list_users()), "max_seats": TOOLKIT_MAX_SEATS}
+
+
+@app.post("/api/users/{username}/role")
+def update_user_role(username: str, req: UpdateUserRoleRequest, _admin=Depends(require_write)):
+    if req.role not in auth.VALID_ROLES:
+        raise HTTPException(400, f"role must be one of {auth.VALID_ROLES}")
+    updated = auth._update_user_record(username, role=req.role)
+    if not updated:
+        raise HTTPException(404, "No user with that username.")
+    auth.log_action(_admin["username"], "user_role_changed", target=username, detail=f"role={req.role}")
+    return {"success": True}
     
 
 
@@ -1356,6 +1397,40 @@ def create_evidence_pack_endpoint(req: CreateEvidencePackRequest, _auth=Depends(
     except RuntimeError as error:
         raise HTTPException(503, f"Could not anchor this evidence to the blockchain right now: {error}")
     auth.log_action(_auth["username"], "evidence_pack_created", target=result["id"], detail=req.case_reference)
+    return result
+
+
+class CreateEvidencePackFromGraphRequest(BaseModel):
+    case_reference: Optional[str] = None
+    anchor_to_blockchain: bool = False
+    instructed_by: Optional[str] = None
+    analyst_name: Optional[str] = None
+    analyst_certification: Optional[str] = None
+    background_notes: Optional[str] = None
+
+
+@app.post("/api/cases/{case_id}/explore-graph/evidence-pack")
+def create_evidence_pack_from_case_graph(case_id: str, req: CreateEvidencePackFromGraphRequest, _auth=Depends(require_read)):
+    """Generates an Evidence Pack directly from a case's saved Explore
+    Graph - for investigations built manually rather than through an
+    automated Link Tracer search. See link_tracer.py's
+    build_trace_data_from_case_explore_graph() for how the graph gets
+    transformed into the same shape the PDF generator already expects."""
+    _check_general_rate_limit("evidence-pack", _auth["username"], window_seconds=300, max_requests=10)
+    trace_data = lt.build_trace_data_from_case_explore_graph(case_id)
+    try:
+        result = evidence_pack.create_evidence_pack(
+            _auth["username"], trace_data, req.case_reference,
+            extra_methodology={
+                "wallet": trace_data["wallet"], "direction": trace_data["direction"],
+                "instructed_by": req.instructed_by, "analyst_name": req.analyst_name,
+                "analyst_certification": req.analyst_certification, "background_notes": req.background_notes,
+            },
+            anchor_to_blockchain=req.anchor_to_blockchain,
+        )
+    except RuntimeError as error:
+        raise HTTPException(503, f"Could not anchor this evidence to the blockchain right now: {error}")
+    auth.log_action(_auth["username"], "evidence_pack_created_from_graph", target=result["id"], detail=case_id)
     return result
 
 
