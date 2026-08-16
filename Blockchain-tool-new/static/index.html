@@ -601,6 +601,18 @@
     <button class="btn secondary" id="totpSetupBackBtn" style="width:100%; padding:9px; margin-top:8px;">Back to sign in</button>
   </div>
 </div>
+<div id="policyAcceptView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:620px; text-align:left;">
+    <div class="brand-mark" style="text-align:center;">CASE TOOLKIT</div>
+    <div id="policyAcceptBody" style="max-height:55vh; overflow-y:auto; border:1px solid var(--line); border-radius:var(--radius); padding:20px 24px; background:var(--panel); margin:16px 0; font-size:13.5px; line-height:1.6;"></div>
+    <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; cursor:pointer;">
+      <input type="checkbox" id="policyAcceptCheckbox" style="margin-top:3px;">
+      <span>I have read and accept this notice.</span>
+    </label>
+    <div class="status-line error" id="policyAcceptStatus" style="min-height:16px;"></div>
+    <button class="btn btn-full-primary" id="policyAcceptBtn" disabled>Continue</button>
+  </div>
+</div>
 
 <!-- ============================================================
      FORGOT PASSWORD
@@ -974,7 +986,7 @@ function refreshStyleToggle() {
 // AUTH - landing page, login, logout, session check on load
 // ============================================================
 function showView(viewId) {
-  ["landingView", "loginView", "pricingView", "totpView", "totpSetupView", "forgotView", "resetView", "appShell"].forEach(id => {
+  ["landingView", "loginView", "pricingView", "totpView", "totpSetupView", "policyAcceptView", "forgotView", "resetView", "appShell"].forEach(id => {
     document.getElementById(id).style.display = id === viewId ? "flex" : "none";
   });
 
@@ -1193,7 +1205,76 @@ function saveEntityButtonHtml(address) {
   return `<button class="btn secondary" style="padding:3px 8px; font-size:10.5px; margin-left:6px;" onclick="openQuickSaveEntityModal('${escapeHtml(address)}')">+ Save</button>`;
 }
 
-function enterApp() {
+// Lightweight converter for the limited markdown actually used in
+// POLICY_TEXT (## headers, **bold**, - bullet lists) - not a general
+// markdown parser, just enough for this one document.
+function simpleMarkdownToHtml(text) {
+  const lines = text.split("\n");
+  let html = "", inList = false;
+  for (let line of lines) {
+    line = line.trim();
+    if (!line) { if (inList) { html += "</ul>"; inList = false; } continue; }
+    const withBold = escapeHtml(line).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    if (line.startsWith("## ")) {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += `<h3 style="margin:18px 0 8px;">${escapeHtml(line.slice(3)).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</h3>`;
+    } else if (line.startsWith("# ")) {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += `<h2 style="margin:0 0 8px;">${escapeHtml(line.slice(2))}</h2>`;
+    } else if (line.startsWith("- ")) {
+      if (!inList) { html += "<ul style=\"margin:6px 0; padding-left:20px;\">"; inList = true; }
+      html += `<li style="margin-bottom:4px;">${withBold.slice(2)}</li>`;
+    } else if (line.startsWith("*") && line.endsWith("*") && !line.startsWith("**")) {
+      html += `<p class="hint" style="margin:10px 0;">${escapeHtml(line.slice(1, -1))}</p>`;
+    } else {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += `<p style="margin:8px 0;">${withBold}</p>`;
+    }
+  }
+  if (inList) html += "</ul>";
+  return html;
+}
+
+async function enterApp() {
+  // 2FA is a hardened rule with no bypass - this acceptance check is
+  // the same principle applied to the data-uncertainty policy. Every
+  // login checks the CURRENT version, not just "have they ever
+  // accepted anything" - so a policy update requires fresh
+  // acceptance, not grandfathering people into an old version forever.
+  let policyStatus;
+  try {
+    policyStatus = await apiFetch("/api/policy/status");
+  } catch (err) {
+    // If the check itself fails, fail safe by still showing the app -
+    // don't lock someone out entirely over a transient network error.
+    renderAppShell();
+    return;
+  }
+  if (policyStatus.needs_acceptance) {
+    document.getElementById("policyAcceptBody").innerHTML = simpleMarkdownToHtml(policyStatus.policy_text);
+    document.getElementById("policyAcceptCheckbox").checked = false;
+    document.getElementById("policyAcceptBtn").disabled = true;
+    document.getElementById("policyAcceptStatus").textContent = "";
+    showView("policyAcceptView");
+    return;
+  }
+  renderAppShell();
+}
+
+document.getElementById("policyAcceptCheckbox").addEventListener("change", (e) => {
+  document.getElementById("policyAcceptBtn").disabled = !e.target.checked;
+});
+document.getElementById("policyAcceptBtn").onclick = async () => {
+  const statusEl = document.getElementById("policyAcceptStatus");
+  try {
+    await apiFetch("/api/policy/accept", { method: "POST" });
+    renderAppShell();
+  } catch (err) {
+    statusEl.textContent = err.message || "Could not record your acceptance - please try again.";
+  }
+};
+
+function renderAppShell() {
   document.getElementById("whoamiLabel").textContent = `${state.currentUser.username} (${state.currentUser.role})`;
   // Sections are built HERE, not at page load, because several of them
   // check isAdmin() while rendering (to show/hide add/delete controls) -
