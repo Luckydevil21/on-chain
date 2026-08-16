@@ -2249,7 +2249,7 @@ function renderTraceGraph(data, allPaths, container) {
     visEdges.add({
       id: `crosschain-${i}`,
       from: hint.fromAddress, to: hint.dest.address, arrows: "to",
-      label: `→ ${hint.dest.chain}`,
+      label: `→ ${chainSymbol(hint.dest.chain) || hint.dest.chain}`,
       font: { color: "#a371f7", size: 9, strokeWidth: 0 },
       color: { color: "#a371f7", opacity: 0.8 },
       dashes: [6, 4],  // distinct dash pattern from the change-edge dashing
@@ -3994,7 +3994,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
     if (!exploreGraphEdges.get(crossChainEdgeId)) {
       exploreGraphEdges.add({
         id: crossChainEdgeId, from: edge.to, to: edge.embedded_destination_address, arrows: "to",
-        label: `→ ${edge.embedded_destination_chain}`,
+        label: `→ ${chainSymbol(edge.embedded_destination_chain) || edge.embedded_destination_chain}`,
         font: { color: "#a371f7", size: 9, strokeWidth: 0 },
         color: { color: "#a371f7", opacity: 0.8 },
         dashes: [6, 4],
