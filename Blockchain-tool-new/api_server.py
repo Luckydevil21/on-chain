@@ -249,12 +249,13 @@ class Verify2FARequest(BaseModel):
     code: str
 
 
-class Confirm2FASetupRequest(BaseModel):
+class SetupPending2FARequest(BaseModel):
+    temp_token: str
+
+
+class ConfirmPending2FARequest(BaseModel):
+    temp_token: str
     code: str
-
-
-class Disable2FARequest(BaseModel):
-    password: str
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -474,15 +475,15 @@ def login(req: LoginRequest, request: Request, response: Response):
         _record_auth_failure(client_ip)
         raise HTTPException(status_code=401, detail="Incorrect username or password.")
 
+    # TOTP is a hardened rule, not an opt-in - a correct password alone
+    # NEVER issues a session. Either the account already has 2FA
+    # enrolled (enter the code), or it doesn't yet (enrol right now,
+    # as part of this same login) - there is no third path that skips
+    # 2FA entirely.
+    pending_token = auth.create_totp_pending_token(user["username"])
     if user["totp_enabled"]:
-        # Correct password, but 2FA is on - do NOT issue a real session
-        # yet. Hand back a short-lived pending token that must be
-        # combined with a valid TOTP code at /api/auth/2fa/verify.
-        pending_token = auth.create_totp_pending_token(user["username"])
-        return {"requires_totp": True, "temp_token": pending_token}
-
-    auth.set_session_cookie(response, user["username"], user["role"])
-    return {"requires_totp": False, "username": user["username"], "role": user["role"]}
+        return {"requires_totp": True, "requires_totp_setup": False, "temp_token": pending_token}
+    return {"requires_totp": False, "requires_totp_setup": True, "temp_token": pending_token}
 
 
 @app.post("/api/auth/2fa/verify")
@@ -523,33 +524,43 @@ def get_me(current_user=Depends(require_read)):
     }
 
 
-# ---- Two-factor authentication setup (for your OWN logged-in account) ----
+# ---- Two-factor authentication ----
+# 2FA is a hardened rule, not an opt-in - there is no self-service
+# "enable 2FA later" path any more. Setup for an account that doesn't
+# have it yet happens as part of THIS SAME login (see /api/auth/login
+# above), using the same short-lived pending token as normal 2FA
+# verification - never a full session, since one doesn't exist yet.
 
-@app.post("/api/auth/2fa/setup")
-def setup_2fa(current_user=Depends(require_read)):
-    """Starts 2FA setup for the CURRENTLY LOGGED IN account. Not yet
-    active - call /api/auth/2fa/confirm with a code from your
-    authenticator app to actually turn it on."""
-    if current_user["username"] == "api-key":
-        raise HTTPException(400, "2FA doesn't apply to API-key access - it's only for user logins.")
-    secret, uri, qr_base64 = auth.begin_totp_setup(current_user["username"])
+@app.post("/api/auth/2fa/setup-pending")
+def setup_2fa_pending(req: SetupPending2FARequest):
+    username = auth.verify_totp_pending_token(req.temp_token)
+    if not username:
+        raise HTTPException(401, "This session has expired - please sign in again.")
+    secret, uri, qr_base64 = auth.begin_totp_setup(username)
     return {"secret": secret, "otpauth_uri": uri, "qr_code_base64": qr_base64}
 
 
-@app.post("/api/auth/2fa/confirm")
-def confirm_2fa(req: Confirm2FASetupRequest, current_user=Depends(require_read)):
-    if not auth.confirm_totp_setup(current_user["username"], req.code):
+@app.post("/api/auth/2fa/confirm-pending")
+def confirm_2fa_pending(req: ConfirmPending2FARequest, response: Response):
+    username = auth.verify_totp_pending_token(req.temp_token)
+    if not username:
+        raise HTTPException(401, "This session has expired - please sign in again.")
+    if not auth.confirm_totp_setup(username, req.code):
         raise HTTPException(400, "Incorrect code - check your authenticator app and try again.")
-    return {"enabled": True}
+    user_record = auth._get_user_record(username)
+    auth.set_session_cookie(response, user_record["username"], user_record["role"])
+    return {"username": user_record["username"], "role": user_record["role"]}
 
 
-@app.post("/api/auth/2fa/disable")
-def disable_2fa(req: Disable2FARequest, current_user=Depends(require_read)):
-    if current_user["username"] == "api-key":
-        raise HTTPException(400, "2FA doesn't apply to API-key access.")
-    if not auth.disable_totp(current_user["username"], req.password):
-        raise HTTPException(401, "Incorrect password.")
-    return {"disabled": True}
+@app.post("/api/users/{username}/reset-2fa")
+def reset_user_2fa(username: str, _admin=Depends(require_write)):
+    """Admin-only - for a user who's lost their authenticator device.
+    They'll be forced straight through setup again on their next
+    login, same as a brand new account - 2FA is never left off."""
+    if not auth.admin_reset_totp(username):
+        raise HTTPException(404, "No user with that username.")
+    auth.log_action(_admin["username"], "user_2fa_reset", target=username)
+    return {"success": True}
 
 @app.get("/api/audit-log")
 def get_audit_log_endpoint(current_user=Depends(require_read)):
