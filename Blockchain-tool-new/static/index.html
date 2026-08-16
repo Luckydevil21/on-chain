@@ -2576,7 +2576,11 @@ async function openCase(caseId) {
         <div class="field hint mb-md">Builds automatically as you explore - reopen this case any time and it's exactly as you left it.</div>
       </div>
       <div class="status-line" id="caseGraphStatus"></div>
-      <button class="btn secondary" id="caseGraphAddNoteBtn" style="margin-bottom:10px; font-size:12px; padding:7px 14px;">📝 Add note</button>
+      <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+        <button class="btn secondary" id="caseGraphAddNoteBtn" style="font-size:12px; padding:7px 14px;">📝 Add note</button>
+        <button class="btn secondary" id="caseGraphEvidencePackBtn" style="font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>
+      </div>
+      <div id="caseGraphEvidencePackResult"></div>
       <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
         <div id="caseGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
         <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
@@ -3338,6 +3342,7 @@ function renderExploreGraphIntoContainer(container) {
         which branches are worth exploring further, one hop at a time. Dashed nodes haven't been
         explored yet; click one to expand it.
       </div>
+      ${isAdmin() ? `<div class="field"><label>Case name (optional)</label><input type="text" id="egCaseName" placeholder="Name this to save your graph as a Saved Case"></div>` : ""}
       <div class="field"><label>Starting wallet</label><input type="text" id="egWallet" placeholder="Any Bitcoin, Ethereum, XRP, Tron, or Solana address"></div>
       <div class="field"><label>If this is an 0x... address, which EVM chain?</label>
         <select id="egEvmChain"><option value="ethereum">Ethereum (default)</option></select>
@@ -3345,7 +3350,10 @@ function renderExploreGraphIntoContainer(container) {
       <button class="btn" id="egStartBtn">Start exploring</button>
     </div>
     <div class="status-line" id="egStatus"></div>
-    <button class="btn secondary" id="egAddNoteBtn" style="display:none; margin-bottom:10px; font-size:12px; padding:7px 14px;">📝 Add note</button>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button class="btn secondary" id="egAddNoteBtn" style="display:none; font-size:12px; padding:7px 14px;">📝 Add note</button>
+      ${isAdmin() ? `<button class="btn secondary" id="egSaveCaseBtn" style="display:none; font-size:12px; padding:7px 14px;">💾 Save to Saved Cases</button>` : ""}
+    </div>
     <div id="egGraphRow" style="display:none; margin-top:14px; gap:14px; align-items:flex-start;">
       <div id="egGraphContainer" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel-alt);"></div>
       <div id="egNodeDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
@@ -3363,6 +3371,9 @@ function renderExploreGraphIntoContainer(container) {
     const detailEl = document.getElementById("egNodeDetail");
     promptAddNote(null, exploreGraphNetwork, exploreGraphNodes, statusEl);
   };
+  if (isAdmin()) {
+    document.getElementById("egSaveCaseBtn").onclick = () => saveExploreGraphAsCase();
+  }
 }
 
 // Persistent across expand operations for the current session - reset
@@ -3374,6 +3385,7 @@ let exploreGraphRootAddress = null;
 // when launched from a Saved Case - every add/drag then also persists
 // to that case, restorable later exactly as left.
 let exploreGraphCaseId = null;
+let exploreGraphDetectedChain = null;
 
 const EXPLORE_GRAPH_COLORS = {
   root: { border: "#4f8cc9", background: "#142331" },
@@ -3596,6 +3608,102 @@ async function loadCaseExploreGraph(caseId) {
   document.getElementById("caseGraphAddNoteBtn").onclick = () => {
     promptAddNote(caseId, exploreGraphNetwork, exploreGraphNodes, statusEl);
   };
+  document.getElementById("caseGraphEvidencePackBtn").onclick = () => generateEvidencePackFromCaseGraph(caseId);
+}
+
+// Generates an Evidence Pack directly from this case's saved Explore
+// Graph - for an investigation built manually rather than through an
+// automated Link Tracer search. Reuses the exact same PDF download
+// pattern as the regular Evidence Pack card.
+async function generateEvidencePackFromCaseGraph(caseId) {
+  const btn = document.getElementById("caseGraphEvidencePackBtn");
+  const resultEl = document.getElementById("caseGraphEvidencePackResult");
+  btn.disabled = true;
+  resultEl.innerHTML = `<div class="footnote mt-sm">Generating...</div>`;
+  try {
+    const result = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/evidence-pack`, {
+      method: "POST", body: JSON.stringify({}),
+    });
+    resultEl.innerHTML = `
+      <div class="footnote mt-sm">
+        Evidence pack created - SHA-256: <span class="mono">${escapeHtml(result.sha256_hash)}</span>
+      </div>
+      <div class="footnote">${escapeHtml(result.note || "")}</div>
+      <a href="/api/evidence-pack/${encodeURIComponent(result.id)}/pdf" target="_blank">
+        <button class="btn secondary" style="margin-top:8px; font-size:12px; padding:7px 14px;">⬇ Download PDF</button>
+      </a>
+    `;
+  } catch (err) {
+    resultEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Turns the CURRENT standalone Explore Graph session into a real
+// Saved Case - creates the case, adds the starting wallet as its case
+// wallet, and migrates every edge, note, and node position currently
+// on the canvas so it appears in Saved Cases exactly as it looks right
+// now. From this point on, the session behaves like a case-linked
+// graph - further additions persist automatically, same as opening
+// the case normally would.
+async function saveExploreGraphAsCase() {
+  const nameInput = document.getElementById("egCaseName");
+  const statusEl = document.getElementById("egStatus");
+  const saveBtn = document.getElementById("egSaveCaseBtn");
+  const caseName = nameInput.value.trim();
+
+  if (!caseName) { statusEl.textContent = "Enter a case name first."; statusEl.className = "status-line error"; return; }
+  if (exploreGraphCaseId) { statusEl.textContent = "Already saved to a case."; return; }
+
+  saveBtn.disabled = true;
+  statusEl.textContent = "Saving as a new case...";
+  statusEl.className = "status-line";
+
+  try {
+    const newCase = await apiFetch("/api/cases", { method: "POST", body: JSON.stringify({ name: caseName }) });
+    const caseId = newCase.id;
+
+    if (exploreGraphRootAddress) {
+      await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/wallets`, {
+        method: "POST", body: JSON.stringify({ address: exploreGraphRootAddress }),
+      });
+    }
+
+    const allNodes = exploreGraphNodes.get();
+    const walletEdges = exploreGraphEdges.get().map(e => ({
+      from: e.from, to: e.to, amount_label: e.amountLabel, tx_hash: e.id.split("->")[2],
+      tx_time_utc: e.txTimeUtc, explorer_url: e.explorerUrl,
+    }));
+    if (walletEdges.length) {
+      await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/edges`, {
+        method: "POST", body: JSON.stringify({ edges: walletEdges, chain: exploreGraphDetectedChain }),
+      });
+    }
+
+    const allPositions = exploreGraphNetwork.getPositions();
+    const saveTasks = allNodes.map(node => {
+      const pos = allPositions[node.id];
+      if (node.isNote) {
+        return apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/notes`, {
+          method: "POST", body: JSON.stringify({ text: node.noteText, x: pos.x, y: pos.y }),
+        });
+      }
+      return apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/position`, {
+        method: "POST", body: JSON.stringify({ address: node.id, x: pos.x, y: pos.y }),
+      });
+    });
+    await Promise.all(saveTasks);
+
+    exploreGraphCaseId = caseId;
+    nameInput.disabled = true;
+    saveBtn.textContent = "✓ Saved";
+    statusEl.textContent = `Saved as "${caseName}" - find it under Saved Cases any time. Anything you add from here saves automatically.`;
+  } catch (err) {
+    statusEl.textContent = "Error saving case: " + err.message;
+    statusEl.className = "status-line error";
+    saveBtn.disabled = false;
+  }
 }
 
 async function startExploreGraph() {
@@ -3611,11 +3719,13 @@ async function startExploreGraph() {
   detailEl.innerHTML = "";
   rowEl.style.display = "flex";
   document.getElementById("egAddNoteBtn").style.display = "inline-block";
+  if (isAdmin()) document.getElementById("egSaveCaseBtn").style.display = "inline-block";
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
   exploreGraphRootAddress = wallet;
   exploreGraphCaseId = null;
+  exploreGraphDetectedChain = null;
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
@@ -3687,6 +3797,7 @@ async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
     try {
       const result = await apiFetch("/api/wallet-connections", { method: "POST", body: JSON.stringify({ wallet: address, evm_chain: evmChain }) });
       exploreGraphExpanded.add(address.toLowerCase());
+      exploreGraphDetectedChain = exploreGraphDetectedChain || result.chain;
       exploreGraphPendingConnections.set(address.toLowerCase(), result);
       // Mark this node as looked-at - solid border instead of dashed -
       // regardless of how many of its connections get added to the
@@ -4022,16 +4133,11 @@ function renderUsersSection() {
       <div class="field"><label>Username</label><input type="text" id="userUsername"></div>
       <div class="field"><label>Password (min. 8 characters)</label><input type="password" id="userPassword"></div>
       <div class="field"><label>Email (optional - needed for that user to use "forgot password")</label><input type="text" id="userEmail"></div>
-      <div class="field"><label>Role</label>
-        <select id="userRole">
-          <option value="read_only">read_only - can run checks/traces, view all lists</option>
-          <option value="admin">admin - full read/write access</option>
-        </select>
-      </div>
+      <div class="field hint">New accounts always start as read_only - grant admin access afterward from the user list below, as a separate, deliberate step.</div>
       <button class="btn" id="userAdd">Add user</button>
     </div>
     <div class="status-line" id="userStatus"></div>
-    <div class="card"><h3>Users</h3><div id="userList"></div></div>
+    <div class="card"><h3>Users</h3><div class="footnote mb-sm" id="seatInfo"></div><div id="userList"></div></div>
   `;
   document.getElementById("content").appendChild(section);
 
@@ -4039,11 +4145,10 @@ function renderUsersSection() {
     const username = document.getElementById("userUsername").value.trim();
     const password = document.getElementById("userPassword").value;
     const email = document.getElementById("userEmail").value.trim();
-    const role = document.getElementById("userRole").value;
     const statusEl = document.getElementById("userStatus");
     if (!username || !password) { statusEl.textContent = "Enter both a username and password."; statusEl.className = "status-line error"; return; }
     try {
-      await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ username, password, role, email }) });
+      await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ username, password, email }) });
       statusEl.textContent = "Added.";
       statusEl.className = "status-line";
       document.getElementById("userUsername").value = ""; document.getElementById("userPassword").value = ""; document.getElementById("userEmail").value = "";
@@ -4053,20 +4158,44 @@ function renderUsersSection() {
 }
 async function loadUsers() {
   const listEl = document.getElementById("userList");
+  const seatInfoEl = document.getElementById("seatInfo");
   if (!listEl) return;
   try {
     const users = await apiFetch("/api/users");
+    if (seatInfoEl) {
+      try {
+        const seatInfo = await apiFetch("/api/seat-info");
+        seatInfoEl.textContent = seatInfo.max_seats
+          ? `${seatInfo.used} of ${seatInfo.max_seats} seat(s) in use`
+          : `${seatInfo.used} seat(s) in use - unlimited on this plan`;
+      } catch (e) { /* non-critical - just don't show the seat count if this fails */ }
+    }
     listEl.innerHTML = "";
     const table = el("table", "data-table");
-    table.innerHTML = `<tr><th>Username</th><th>Role</th><th>Email</th><th>2FA</th><th>Created</th><th></th></tr>` + users.map(u =>
-      `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td>
+    table.innerHTML = `<tr><th>Username</th><th>Role</th><th>Email</th><th>2FA</th><th>Created</th><th></th></tr>` + users.map(u => {
+      const isSelf = u.username === state.currentUser.username;
+      const roleToggleLabel = u.role === "admin" ? "Make read_only" : "Make admin";
+      return `<tr><td>${escapeHtml(u.username)}</td><td><span class="pill ${u.role === 'admin' ? 'entity' : 'ok'}">${escapeHtml(u.role)}</span></td>
        <td>${escapeHtml(u.email || "-")}</td><td>${u.totp_enabled ? '<span class="pill ok">on</span>' : '<span class="hint">off</span>'}</td>
        <td>${escapeHtml(u.created_utc || "")}</td>
-       <td>${u.username === state.currentUser.username ? "" : `<button class="btn secondary btn-table-action"  onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>`}</td></tr>`
-    ).join("");
+       <td>${isSelf ? "" : `
+         <button class="btn secondary btn-table-action" style="margin-right:6px;" onclick="changeUserRole('${escapeHtml(u.username)}', '${u.role === "admin" ? "read_only" : "admin"}')">${roleToggleLabel}</button>
+         <button class="btn secondary btn-table-action" onclick="deleteUserAccount('${escapeHtml(u.username)}')">Remove</button>
+       `}</td></tr>`;
+    }).join("");
     listEl.appendChild(table);
   } catch (err) {
     listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function changeUserRole(username, newRole) {
+  const verb = newRole === "admin" ? "grant admin access to" : "reduce to read_only access for";
+  if (!confirm(`Are you sure you want to ${verb} "${username}"?`)) return;
+  try {
+    await apiFetch(`/api/users/${encodeURIComponent(username)}/role`, { method: "POST", body: JSON.stringify({ role: newRole }) });
+    loadUsers();
+  } catch (err) {
+    alert("Error: " + err.message);
   }
 }
 async function deleteUserAccount(username) {
