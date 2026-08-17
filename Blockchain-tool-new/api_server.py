@@ -521,7 +521,14 @@ def get_me(current_user=Depends(require_read)):
         "username": current_user["username"],
         "role": current_user["role"],
         "totp_enabled": bool(full_record.get("totp_enabled")),
+        "has_completed_onboarding": bool(full_record.get("has_completed_onboarding")),
     }
+
+
+@app.post("/api/auth/onboarding-complete")
+def mark_onboarding_complete(current_user=Depends(require_read)):
+    auth._update_user_record(current_user["username"], has_completed_onboarding=True)
+    return {"success": True}
 
 
 @app.get("/api/policy/status")
