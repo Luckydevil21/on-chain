@@ -2481,18 +2481,43 @@ def check_op_return_patterns(decoded_text):
     """Returns {"name", "type"} (plus "embedded_destination_address"/
     "embedded_destination_chain" if the memo itself states one - see
     _extract_embedded_destination) for the first known pattern found as
-    a substring of decoded_text, or None if nothing matches."""
+    a substring of decoded_text, or None if nothing matches.
+
+    IMPORTANT: the embedded-destination check runs independently of
+    whether a NAMED service pattern matches. A memo that states its
+    own destination as JSON is self-evident, verifiable proof on its
+    own - it shouldn't require an admin to have already registered
+    that exact service's name pattern first. Requiring both together
+    used to mean a genuinely self-stated destination got silently
+    thrown away whenever the sending service hadn't been separately
+    catalogued (or its signature didn't exactly match this specific
+    memo) - the two are different kinds of evidence and shouldn't be
+    gated on each other."""
     if not decoded_text:
         return None
+
+    embedded = _extract_embedded_destination(decoded_text)
+
     for entry in load_known_op_return_patterns():
         pattern = entry.get("pattern", "")
         if pattern and pattern in decoded_text:
             match = {"name": entry.get("name", "Known service"), "type": entry.get("type", "bridge")}
-            embedded = _extract_embedded_destination(decoded_text)
             if embedded:
                 match["embedded_destination_address"] = embedded["address"]
                 match["embedded_destination_chain"] = embedded["chain"]
             return match
+
+    if embedded:
+        # The memo itself states a valid destination, even though no
+        # admin-registered service name matched this particular one -
+        # still real, still worth surfacing, just without a named
+        # attribution.
+        return {
+            "name": "Unidentified service (memo-stated destination)", "type": "bridge",
+            "embedded_destination_address": embedded["address"],
+            "embedded_destination_chain": embedded["chain"],
+        }
+
     return None
 
 
