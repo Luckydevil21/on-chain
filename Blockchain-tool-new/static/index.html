@@ -3711,7 +3711,8 @@ function renderExploreGraphIntoContainer(container) {
         explored yet; click one to expand it.
       </div>
       ${isAdmin() ? `<div class="field"><label>Case name (optional)</label><input type="text" id="egCaseName" placeholder="Name this to save your graph as a Saved Case"></div>` : ""}
-      <div class="field"><label>Starting wallet</label><input type="text" id="egWallet" placeholder="Any Bitcoin, Ethereum, XRP, Tron, or Solana address"></div>
+      <div class="field"><label>Starting wallet or transaction hash</label><input type="text" id="egWallet" placeholder="A wallet address, or a transaction hash you already know"></div>
+      <div class="field hint" style="margin-top:-8px;">Any Bitcoin, Ethereum, XRP, Tron, or Solana address - or a transaction hash, which seeds the graph with both addresses involved.</div>
       <div class="field"><label>If this is an 0x... address, which EVM chain?</label>
         <select id="egEvmChain"><option value="ethereum">Ethereum (default)</option></select>
       </div>
@@ -4084,13 +4085,45 @@ async function saveExploreGraphAsCase() {
 }
 
 async function startExploreGraph() {
-  const wallet = document.getElementById("egWallet").value.trim();
+  const rawInput = document.getElementById("egWallet").value.trim();
   const evmChain = document.getElementById("egEvmChain").value;
   const statusEl = document.getElementById("egStatus");
   const rowEl = document.getElementById("egGraphRow");
   const containerEl = document.getElementById("egGraphContainer");
   const detailEl = document.getElementById("egNodeDetail");
-  if (!wallet) { statusEl.textContent = "Enter a starting wallet first."; statusEl.className = "status-line error"; return; }
+  if (!rawInput) { statusEl.textContent = "Enter a starting wallet or transaction hash first."; statusEl.className = "status-line error"; return; }
+
+  // Accept a transaction hash the same way Link Tracer does - an
+  // Ethereum-style hash (0x + 64 hex) is unambiguous; a bare 64
+  // hex-character string could be Bitcoin, XRP, or Tron, so the
+  // backend tries each in turn. Anything else is treated as a wallet
+  // address, same as before.
+  const looksLikeTxHash = /^0x[0-9a-fA-F]{64}$/.test(rawInput) || /^[0-9a-fA-F]{64}$/.test(rawInput);
+  let wallet = rawInput;
+  let seedTx = null;
+  if (looksLikeTxHash) {
+    statusEl.textContent = "Looking up this transaction...";
+    statusEl.className = "status-line";
+    try {
+      const lookup = await apiFetch("/api/tx-lookup", { method: "POST", body: JSON.stringify({ tx_hash: rawInput }) });
+      if (!lookup.found) {
+        statusEl.textContent = lookup.message || "Transaction not found on any supported chain.";
+        statusEl.className = "status-line error";
+        return;
+      }
+      if (!lookup.from || !lookup.to) {
+        statusEl.textContent = "This transaction doesn't have a single clear sender/recipient to start a graph from - try searching by wallet instead.";
+        statusEl.className = "status-line error";
+        return;
+      }
+      wallet = lookup.from;  // the rest of this function treats this exactly like a normal wallet start
+      seedTx = lookup;
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+      return;
+    }
+  }
 
   statusEl.textContent = "";
   detailEl.innerHTML = "";
@@ -4103,7 +4136,7 @@ async function startExploreGraph() {
   exploreGraphShowAllTracking = new Map();
   exploreGraphRootAddress = wallet;
   exploreGraphCaseId = null;
-  exploreGraphDetectedChain = null;
+  exploreGraphDetectedChain = seedTx ? seedTx.chain : null;
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
@@ -4119,6 +4152,17 @@ async function startExploreGraph() {
     edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },  // straight lines, not curved
     nodes: { shadow: { enabled: true, size: 10, x: 2, y: 3, color: "rgba(0,0,0,0.35)" }, borderWidth: 2 },
   });
+
+  // A known transaction was the starting point - seed the graph with
+  // it directly (both addresses, one edge) rather than making the
+  // user click to expand and rediscover the exact transaction they
+  // already knew about.
+  if (seedTx) {
+    addExploreGraphConnection({
+      from: seedTx.from, to: seedTx.to, amount_label: seedTx.amount_label,
+      tx_hash: seedTx.tx_hash, tx_time_utc: seedTx.tx_time_utc, explorer_url: seedTx.explorer_url,
+    }, [], seedTx.chain);
+  }
 
   // A node the user drags becomes pinned exactly where they drop it -
   // physics keeps working normally for everything else, so a NEW node
