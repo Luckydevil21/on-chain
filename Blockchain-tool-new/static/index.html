@@ -386,15 +386,11 @@
   ::-webkit-scrollbar-track { background: transparent; }
 
   /* ---------- Landing / login ---------- */
-  .landing { width: 100%; min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; }
-  .landing-inner { max-width: 820px; text-align: center; }
+  .landing { width: 100%; min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; position: relative; overflow: hidden; }
+  .landing-inner { max-width: 820px; text-align: center; position: relative; z-index: 1; }
+  .landing-node-bg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.12; pointer-events: none; z-index: 0; }
   .landing h1 { font-size: 30px; margin: 10px 0 14px; }
   .landing-lede { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
-  .landing-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 30px; text-align: left; }
-  .landing-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
-  .landing-card h3 { margin: 0 0 6px; font-size: 14px; }
-  .landing-card p { margin: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
-  @media (max-width: 820px) { .landing-grid { grid-template-columns: 1fr; } }
 
   /* ---------- Pre-login top tab bar ---------- */
   #preLoginTabBar {
@@ -436,6 +432,90 @@
      LANDING PAGE - shown before login
      ============================================================ -->
 <div id="landingView" class="landing">
+  <svg class="landing-node-bg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <linearGradient id="ghostGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#7bb8f0"/>
+        <stop offset="100%" stop-color="#4fb3a3"/>
+      </linearGradient>
+    </defs>
+    <g stroke="url(#ghostGrad)" stroke-width="1" fill="none">
+        <line x1="22.4" y1="48.0" x2="211.0" y2="103.9"/>
+        <line x1="211.0" y1="103.9" x2="131.9" y2="252.6"/>
+        <line x1="211.0" y1="103.9" x2="325.8" y2="174.5"/>
+        <line x1="433.5" y1="18.6" x2="636.5" y2="82.3"/>
+        <line x1="433.5" y1="18.6" x2="325.8" y2="174.5"/>
+        <line x1="636.5" y1="82.3" x2="792.9" y2="48.4"/>
+        <line x1="636.5" y1="82.3" x2="672.9" y2="234.3"/>
+        <line x1="1454.1" y1="26.6" x2="1470.4" y2="197.0"/>
+        <line x1="131.9" y1="252.6" x2="325.8" y2="174.5"/>
+        <line x1="131.9" y1="252.6" x2="42.8" y2="402.5"/>
+        <line x1="131.9" y1="252.6" x2="234.5" y2="426.0"/>
+        <line x1="672.9" y1="234.3" x2="556.7" y2="352.9"/>
+        <line x1="761.9" y1="199.7" x2="857.8" y2="383.1"/>
+        <line x1="1326.8" y1="265.1" x2="1345.2" y2="422.7"/>
+        <line x1="42.8" y1="402.5" x2="25.5" y2="478.2"/>
+        <line x1="234.5" y1="426.0" x2="383.3" y2="510.8"/>
+        <line x1="419.8" y1="407.2" x2="556.7" y2="352.9"/>
+        <line x1="419.8" y1="407.2" x2="383.3" y2="510.8"/>
+        <line x1="857.8" y1="383.1" x2="977.7" y2="421.2"/>
+        <line x1="857.8" y1="383.1" x2="746.0" y2="571.2"/>
+        <line x1="977.7" y1="421.2" x2="1105.1" y2="404.4"/>
+        <line x1="977.7" y1="421.2" x2="976.2" y2="628.4"/>
+        <line x1="25.5" y1="478.2" x2="89.0" y2="636.4"/>
+        <line x1="688.2" y1="568.3" x2="746.0" y2="571.2"/>
+        <line x1="688.2" y1="568.3" x2="574.8" y2="729.4"/>
+        <line x1="1126.6" y1="484.0" x2="976.2" y2="628.4"/>
+        <line x1="463.9" y1="688.1" x2="574.8" y2="729.4"/>
+        <line x1="463.9" y1="688.1" x2="441.0" y2="831.0"/>
+        <line x1="574.8" y1="729.4" x2="441.0" y2="831.0"/>
+        <line x1="1449.2" y1="720.4" x2="1266.3" y2="831.5"/>
+        <line x1="1449.2" y1="720.4" x2="1451.1" y2="840.7"/>
+        <line x1="441.0" y1="831.0" x2="637.1" y2="880.7"/>
+        <line x1="1266.3" y1="831.5" x2="1451.1" y2="840.7"/>
+    </g>
+    <g fill="url(#ghostGrad)">
+        <circle cx="22.4" cy="48.0" r="2.8"/>
+        <circle cx="211.0" cy="103.9" r="5.2"/>
+        <circle cx="433.5" cy="18.6" r="2.8"/>
+        <circle cx="636.5" cy="82.3" r="5.2"/>
+        <circle cx="792.9" cy="48.4" r="2.2"/>
+        <circle cx="1144.7" cy="48.3" r="2.8"/>
+        <circle cx="1454.1" cy="26.6" r="3.4"/>
+        <circle cx="131.9" cy="252.6" r="5.2"/>
+        <circle cx="325.8" cy="174.5" r="3.4"/>
+        <circle cx="672.9" cy="234.3" r="2.2"/>
+        <circle cx="761.9" cy="199.7" r="2.2"/>
+        <circle cx="1326.8" cy="265.1" r="2.8"/>
+        <circle cx="1470.4" cy="197.0" r="2.2"/>
+        <circle cx="42.8" cy="402.5" r="2.8"/>
+        <circle cx="234.5" cy="426.0" r="5.2"/>
+        <circle cx="419.8" cy="407.2" r="2.2"/>
+        <circle cx="556.7" cy="352.9" r="3.4"/>
+        <circle cx="857.8" cy="383.1" r="3.4"/>
+        <circle cx="977.7" cy="421.2" r="4.2"/>
+        <circle cx="1105.1" cy="404.4" r="5.2"/>
+        <circle cx="1345.2" cy="422.7" r="4.2"/>
+        <circle cx="1580.7" cy="331.6" r="4.2"/>
+        <circle cx="25.5" cy="478.2" r="2.8"/>
+        <circle cx="383.3" cy="510.8" r="4.2"/>
+        <circle cx="688.2" cy="568.3" r="2.2"/>
+        <circle cx="746.0" cy="571.2" r="3.4"/>
+        <circle cx="1126.6" cy="484.0" r="2.2"/>
+        <circle cx="89.0" cy="636.4" r="2.2"/>
+        <circle cx="463.9" cy="688.1" r="2.8"/>
+        <circle cx="574.8" cy="729.4" r="5.2"/>
+        <circle cx="976.2" cy="628.4" r="3.4"/>
+        <circle cx="1449.2" cy="720.4" r="2.2"/>
+        <circle cx="86.9" cy="773.3" r="5.2"/>
+        <circle cx="441.0" cy="831.0" r="3.4"/>
+        <circle cx="637.1" cy="880.7" r="5.2"/>
+        <circle cx="1007.6" cy="812.9" r="3.4"/>
+        <circle cx="1158.0" cy="779.5" r="2.8"/>
+        <circle cx="1266.3" cy="831.5" r="5.2"/>
+        <circle cx="1451.1" cy="840.7" r="2.8"/>
+    </g>
+  </svg>
   <div class="landing-inner">
     <svg width="84" height="84" viewBox="0 0 84 84" xmlns="http://www.w3.org/2000/svg" class="mb-md">
       <defs>
@@ -474,14 +554,6 @@
       evidence - built for investigators working with law enforcement. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
-    <div class="landing-grid">
-      <div class="landing-card"><h3>⇢ Link Tracer</h3><p>Traces funds hop by hop across six chains, looks up a known transaction hash directly (even years-old ones), or searches a wallet's activity around a specific date.</p></div>
-      <div class="landing-card"><h3>⛃ Deposit Mapping</h3><p>Confirms exchange deposit addresses by watching for consolidation sweeps.</p></div>
-      <div class="landing-card"><h3>⇄ Swap/Bridge Check</h3><p>Finds where funds likely went after passing through a non-KYC exchange or bridge - even across chains.</p></div>
-      <div class="landing-card"><h3>⚠ Token/Contract Risk Check</h3><p>Checks a Solana token or EVM contract for real, verifiable red flags - active mint/freeze authority, unrenounced ownership, upgradeable proxies.</p></div>
-      <div class="landing-card"><h3>▤ Saved Cases</h3><p>Group wallets and evidence under named cases you can revisit, rather than one flat, ungrouped list.</p></div>
-      <div class="landing-card"><h3>📄 Evidence Pack</h3><p>Generates a court-ready PDF with full methodology, a SHA-256 integrity hash, and optional Bitcoin blockchain timestamp anchoring.</p></div>
-    </div>
     <p class="landing-lede" style="font-size:13px; margin-top:8px;">
       Every finding is labeled by confidence - confirmed, heuristic, or lead - nothing is
       ever presented as proof it isn't.
@@ -765,7 +837,7 @@ const state = {
   // change until they explicitly toggle it - this exists for a NEW
   // non-technical user's first impression, not to disrupt anyone
   // already using the full toolkit.
-  showAdvancedTools: localStorage.getItem("showAdvancedTools") !== "0",
+  showAdvancedTools: localStorage.getItem("showAdvancedTools") === "1",
 };
 
 // Cached last Link Tracer result, so switching Technical/Simple view
