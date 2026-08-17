@@ -843,6 +843,44 @@ async function apiFetch(path, options = {}) {
   return body;
 }
 
+// Shared by every place a "Generate legal letter" option appears
+// (linear view, both graph views) - a direct fetch rather than
+// apiFetch, since apiFetch always parses JSON and this response is a
+// binary .docx file.
+async function downloadLegalLetter(hop, chain) {
+  try {
+    const response = await fetch("/api/legal-letter", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        exchange_name: hop.to_known_entity.name,
+        wallet_address: hop.to_address,
+        chain: chain || undefined,
+        amount_label: hop.amount,
+        tx_hash: hop.tx_hash,
+        tx_time_utc: hop.tx_time_utc,
+        explorer_url: hop.explorer_url,
+      }),
+    });
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => null);
+      throw new Error((errBody && errBody.detail) || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `draft-letter-${(hop.to_known_entity.name || "exchange").replace(/[^a-z0-9]/gi, "-")}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert("Could not generate the letter: " + err.message);
+  }
+}
+
 function escapeHtml(text) {
   return String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -2214,6 +2252,14 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
       renderEmbeddedDestination(path);
       renderCoinjoinStats(path);
       renderSwapLeads(path);
+
+      const lastHop = path.hops[path.hops.length - 1];
+      if (lastHop.to_known_entity && lastHop.to_known_entity.type === "exchange") {
+        const letterBtn = el("button", "btn secondary", "📄 Generate legal letter for " + lastHop.to_known_entity.name);
+        letterBtn.style.cssText = "margin:6px 0 14px; font-size:11.5px; padding:6px 12px;";
+        letterBtn.onclick = () => downloadLegalLetter(lastHop, data.chain);
+        diagramTarget.appendChild(letterBtn);
+      }
     }
   }
 
@@ -2404,6 +2450,12 @@ function renderTraceGraph(data, allPaths, container) {
         flagBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
         flagBtn.onclick = () => flagAddressForReview(addr, data.chain, flagBtn);
         card.appendChild(flagBtn);
+      }
+      if (hop && hop.to_known_entity && hop.to_known_entity.type === "exchange") {
+        const letterBtn = el("button", "btn secondary", "📄 Generate legal letter");
+        letterBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
+        letterBtn.onclick = () => downloadLegalLetter(hop, data.chain);
+        card.appendChild(letterBtn);
       }
       detailDiv.appendChild(card);
     } else if (params.edges.length) {
@@ -4134,6 +4186,24 @@ function renderExploreGraphConnectionsList(address, detailEl) {
     flagBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
     flagBtn.onclick = () => flagAddressForReview(address, result ? result.chain : null, flagBtn);
     headerCard.appendChild(flagBtn);
+  }
+  if (node.entityType === "exchange") {
+    // Transaction details live on the EDGE, not the node, here -
+    // find any edge that lands on this node to represent the finding.
+    const representativeEdge = exploreGraphEdges.get().find(e => e.to.toLowerCase() === address.toLowerCase());
+    if (representativeEdge) {
+      const letterBtn = el("button", "btn secondary", "📄 Generate legal letter");
+      letterBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
+      letterBtn.onclick = () => downloadLegalLetter({
+        to_known_entity: { name: node.entityName },
+        to_address: address,
+        amount: representativeEdge.amountLabel,
+        tx_hash: representativeEdge.id.split("->")[2],
+        tx_time_utc: representativeEdge.txTimeUtc,
+        explorer_url: representativeEdge.explorerUrl,
+      }, result ? result.chain : (exploreGraphDetectedChain || null));
+      headerCard.appendChild(letterBtn);
+    }
   }
   detailEl.appendChild(headerCard);
 
