@@ -198,7 +198,7 @@ def _resolve_evm_chain(evm_chain):
     return entry["chainid"], entry["explorer"], entry["native_symbol"]
 
 
-def _get_erc20_transfers(address, evm_chain, direction):
+def _get_erc20_transfers(address, evm_chain, direction, max_fanout=None):
     """
     PLAIN ENGLISH: Fetches ERC-20 TOKEN transfers (not native currency)
     for an address on a given EVM chain, via Etherscan's tokentx
@@ -208,6 +208,8 @@ def _get_erc20_transfers(address, evm_chain, direction):
     same (results, unique_counterparty_count) shape as the native
     fetchers, so it can be merged directly into their output.
     """
+    if max_fanout is None:
+        max_fanout = MAX_FANOUT_PER_HOP
     tracked = TRACKED_ERC20_TOKENS.get(evm_chain, {})
     if not tracked:
         return [], 0
@@ -262,7 +264,7 @@ def _get_erc20_transfers(address, evm_chain, direction):
             continue
 
         unique_counterparties.add(counterparty.lower())
-        if len(results) >= MAX_FANOUT_PER_HOP:
+        if len(results) >= max_fanout:
             continue
 
         try:
@@ -852,7 +854,7 @@ def get_hop_fiat_amounts(amount_label, tx_time):
 #               likely exchange/custodial wallets. See HIGH_FANOUT_THRESHOLD.
 # ====================================================================
 
-def get_outgoing_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
+def get_outgoing_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN, max_fanout=MAX_FANOUT_PER_HOP):
     chainid, explorer_base, native_symbol = _resolve_evm_chain(evm_chain)
     url = "https://api.etherscan.io/v2/api"
     per_page = 1000
@@ -891,7 +893,7 @@ def get_outgoing_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
         if not to_address:
             continue  # contract creation, no simple recipient
         unique_counterparties.add(to_address.lower())
-        if len(results) >= MAX_FANOUT_PER_HOP:
+        if len(results) >= max_fanout:
             continue
         eth_value = int(tx.get("value", 0)) / 1_000_000_000_000_000_000
         hop_info = {
@@ -910,14 +912,14 @@ def get_outgoing_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
     # most real value on these chains moves as tokens, not native
     # currency, so native-only tracing was missing the bulk of activity
     # for wallets like exchange hot wallets.
-    token_results, token_unique_count = _get_erc20_transfers(address, evm_chain, "outgoing")
+    token_results, token_unique_count = _get_erc20_transfers(address, evm_chain, "outgoing", max_fanout)
     results.extend(token_results)
     unique_counterparties |= {r["counterparty"].lower() for r in token_results}
 
     return results, len(unique_counterparties)
 
 
-def get_outgoing_bitcoin(address):
+def get_outgoing_bitcoin(address, max_fanout=MAX_FANOUT_PER_HOP):
     all_txs = []
     url = f"https://mempool.space/api/address/{address}/txs"
     try:
@@ -980,7 +982,7 @@ def get_outgoing_bitcoin(address):
             if not recipient or recipient.lower() == address.lower():
                 continue
             unique_counterparties.add(recipient.lower())
-            if len(results) < MAX_FANOUT_PER_HOP:
+            if len(results) < max_fanout:
                 hop_info = {
                     "counterparty": recipient,
                     "tx_hash": tx.get("txid"),
@@ -999,7 +1001,7 @@ def get_outgoing_bitcoin(address):
 RIPPLE_EPOCH_OFFSET_SECONDS = 946684800
 
 
-def get_outgoing_xrp(address):
+def get_outgoing_xrp(address, max_fanout=MAX_FANOUT_PER_HOP):
     all_txs = []
     marker = None
     pages_fetched = 0
@@ -1051,7 +1053,7 @@ def get_outgoing_xrp(address):
             continue
 
         unique_counterparties.add(destination.lower())
-        if len(results) < MAX_FANOUT_PER_HOP:
+        if len(results) < max_fanout:
             delivered = meta.get("delivered_amount", tx.get("Amount"))
             amount_label = f"{int(delivered) / 1_000_000:.6f} XRP" if isinstance(delivered, str) else "token payment"
             ripple_ts = tx.get("date")
@@ -1075,7 +1077,7 @@ def get_outgoing_xrp(address):
     return results, fanout_count
 
 
-def get_outgoing_tron(address):
+def get_outgoing_tron(address, max_fanout=MAX_FANOUT_PER_HOP):
     """
     PLAIN ENGLISH: Fetches this address's recent USDT (TRC-20) transfer
     history from TronGrid and returns the ones where THIS address was
@@ -1120,7 +1122,7 @@ def get_outgoing_tron(address):
         if not to_address:
             continue
         unique_counterparties.add(to_address.lower())
-        if len(results) >= MAX_FANOUT_PER_HOP:
+        if len(results) >= max_fanout:
             continue
 
         decimals = (tx.get("token_info") or {}).get("decimals", 6)
@@ -1303,7 +1305,7 @@ def _parse_solana_tx_hops(tx, signature, address, want_direction):
     return hops
 
 
-def _get_solana_hops(address, want_direction):
+def _get_solana_hops(address, want_direction, max_fanout=MAX_FANOUT_PER_HOP):
     signatures = _get_solana_signatures(address, SOLANA_TRACE_MAX_SIGNATURES)
     results = []
     unique_counterparties = set()
@@ -1315,17 +1317,17 @@ def _get_solana_hops(address, want_direction):
         time.sleep(SOLANA_SECONDS_BETWEEN_REQUESTS)
         for hop in _parse_solana_tx_hops(tx, signature, address, want_direction):
             unique_counterparties.add(hop["counterparty"].lower())
-            if len(results) < MAX_FANOUT_PER_HOP:
+            if len(results) < max_fanout:
                 results.append(hop)
     return results, len(unique_counterparties)
 
 
-def get_outgoing_solana(address):
-    return _get_solana_hops(address, "outgoing")
+def get_outgoing_solana(address, max_fanout=MAX_FANOUT_PER_HOP):
+    return _get_solana_hops(address, "outgoing", max_fanout)
 
 
-def get_incoming_solana(address):
-    return _get_solana_hops(address, "incoming")
+def get_incoming_solana(address, max_fanout=MAX_FANOUT_PER_HOP):
+    return _get_solana_hops(address, "incoming", max_fanout)
 
 
 def _cache_key_for_chain(chain, evm_chain):
@@ -1387,37 +1389,55 @@ def _store_wallet_activity_cache(cache_chain_key, address, direction, hops):
         print(f"⚠️  Could not write wallet activity cache: {error}")
 
 
+# The internal fetch/cache always uses this generous limit, regardless
+# of what any specific caller requests - fetching cost is already
+# fixed by the page caps (BITCOIN_TRACE_MAX_PAGES etc.), not by
+# fanout, so there's no extra cost to fetching/caching the fuller set.
+# Each caller then gets truncated to whatever max_fanout it actually
+# asked for. This also avoids a real cache-consistency risk: if the
+# cache stored whatever fanout the FIRST caller happened to request,
+# a later caller wanting a different fanout for the same address
+# within the cache window would wrongly get the first caller's limit.
+_INTERNAL_FETCH_FANOUT = 500
+
+
 def _get_outgoing_counterparties_uncached(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "ethereum":
-        return get_outgoing_ethereum(address, evm_chain)
+        return get_outgoing_ethereum(address, evm_chain, _INTERNAL_FETCH_FANOUT)
     if chain == "bitcoin":
-        return get_outgoing_bitcoin(address)
+        return get_outgoing_bitcoin(address, _INTERNAL_FETCH_FANOUT)
     if chain == "xrp":
-        return get_outgoing_xrp(address)
+        return get_outgoing_xrp(address, _INTERNAL_FETCH_FANOUT)
     if chain == "tron":
-        return get_outgoing_tron(address)
+        return get_outgoing_tron(address, _INTERNAL_FETCH_FANOUT)
     if chain == "solana":
-        return get_outgoing_solana(address)
+        return get_outgoing_solana(address, _INTERNAL_FETCH_FANOUT)
     return [], 0
 
 
-def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
+def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN, max_fanout=MAX_FANOUT_PER_HOP):
     """Cache-aware wrapper - repeated lookups of the same address
     within WALLET_ACTIVITY_CACHE_MINUTES are served instantly instead
     of re-fetching, which matters most for a high-activity Bitcoin
     wallet that may need many paginated calls to fetch completely
     (see BITCOIN_TRACE_MAX_PAGES). The first lookup of any address is
     still exactly as thorough as before - this speeds up REVISITING
-    an address, not the initial fetch itself."""
+    an address, not the initial fetch itself.
+
+    max_fanout truncates the RETURNED list only - Link Tracer's
+    recursive trace passes the default (20) to keep its own branching
+    bounded, while Explore Graph (no recursion, the user picks each
+    connection by hand) can request a much higher value without
+    needing a second, separate fetch."""
     cache_key = _cache_key_for_chain(chain, evm_chain)
     cached = _get_cached_wallet_activity(cache_key, address, "out")
-    if cached is not None:
-        unique = len(set(h["counterparty"].lower() for h in cached if h.get("counterparty")))
-        return cached, unique
-    hops, unique_count = _get_outgoing_counterparties_uncached(chain, address, evm_chain)
-    if chain:  # don't cache an unrecognized-chain empty result
-        _store_wallet_activity_cache(cache_key, address, "out", hops)
-    return hops, unique_count
+    if cached is None:
+        cached, _ = _get_outgoing_counterparties_uncached(chain, address, evm_chain)
+        if chain:  # don't cache an unrecognized-chain empty result
+            _store_wallet_activity_cache(cache_key, address, "out", cached)
+    truncated = cached[:max_fanout]
+    unique = len(set(h["counterparty"].lower() for h in cached if h.get("counterparty")))
+    return truncated, unique
 
 
 # ====================================================================
@@ -1426,7 +1446,7 @@ def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
 # not the recipient - this is what powers backward tracing.
 # ====================================================================
 
-def get_incoming_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
+def get_incoming_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN, max_fanout=MAX_FANOUT_PER_HOP):
     chainid, explorer_base, native_symbol = _resolve_evm_chain(evm_chain)
     url = "https://api.etherscan.io/v2/api"
     per_page = 1000
@@ -1465,7 +1485,7 @@ def get_incoming_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
         if not from_address:
             continue
         unique_counterparties.add(from_address.lower())
-        if len(results) >= MAX_FANOUT_PER_HOP:
+        if len(results) >= max_fanout:
             continue
         eth_value = int(tx.get("value", 0)) / 1_000_000_000_000_000_000
         hop_info = {
@@ -1480,14 +1500,14 @@ def get_incoming_ethereum(address, evm_chain=DEFAULT_EVM_CHAIN):
             hop_info["pattern_match"] = pattern_match
         results.append(hop_info)
 
-    token_results, token_unique_count = _get_erc20_transfers(address, evm_chain, "incoming")
+    token_results, token_unique_count = _get_erc20_transfers(address, evm_chain, "incoming", max_fanout)
     results.extend(token_results)
     unique_counterparties |= {r["counterparty"].lower() for r in token_results}
 
     return results, len(unique_counterparties)
 
 
-def get_incoming_bitcoin(address):
+def get_incoming_bitcoin(address, max_fanout=MAX_FANOUT_PER_HOP):
     """
     NOTE: a Bitcoin transaction can combine multiple people's coins
     into one set of inputs. Where a payment TO this address came from
@@ -1558,7 +1578,7 @@ def get_incoming_bitcoin(address):
 
         for sender in senders:
             unique_counterparties.add(sender.lower())
-            if len(results) < MAX_FANOUT_PER_HOP:
+            if len(results) < max_fanout:
                 hop_info = {
                     "counterparty": sender,
                     "tx_hash": tx.get("txid"),
@@ -1574,7 +1594,7 @@ def get_incoming_bitcoin(address):
     return results, len(unique_counterparties)
 
 
-def get_incoming_xrp(address):
+def get_incoming_xrp(address, max_fanout=MAX_FANOUT_PER_HOP):
     all_txs = []
     marker = None
     pages_fetched = 0
@@ -1626,7 +1646,7 @@ def get_incoming_xrp(address):
             continue
 
         unique_counterparties.add(sender.lower())
-        if len(results) < MAX_FANOUT_PER_HOP:
+        if len(results) < max_fanout:
             delivered = meta.get("delivered_amount", tx.get("Amount"))
             amount_label = f"{int(delivered) / 1_000_000:.6f} XRP" if isinstance(delivered, str) else "token payment"
             ripple_ts = tx.get("date")
@@ -1650,7 +1670,7 @@ def get_incoming_xrp(address):
     return results, fanout_count
 
 
-def get_incoming_tron(address):
+def get_incoming_tron(address, max_fanout=MAX_FANOUT_PER_HOP):
     """Same as get_outgoing_tron but for INCOMING USDT transfers (this
     address as the recipient) - powers backward tracing."""
     all_txs = []
@@ -1691,7 +1711,7 @@ def get_incoming_tron(address):
         if not from_address:
             continue
         unique_counterparties.add(from_address.lower())
-        if len(results) >= MAX_FANOUT_PER_HOP:
+        if len(results) >= max_fanout:
             continue
 
         decimals = (tx.get("token_info") or {}).get("decimals", 6)
@@ -1904,30 +1924,30 @@ def check_common_funding_source(addresses):
 
 def _get_incoming_counterparties_uncached(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "ethereum":
-        return get_incoming_ethereum(address, evm_chain)
+        return get_incoming_ethereum(address, evm_chain, _INTERNAL_FETCH_FANOUT)
     if chain == "bitcoin":
-        return get_incoming_bitcoin(address)
+        return get_incoming_bitcoin(address, _INTERNAL_FETCH_FANOUT)
     if chain == "xrp":
-        return get_incoming_xrp(address)
+        return get_incoming_xrp(address, _INTERNAL_FETCH_FANOUT)
     if chain == "tron":
-        return get_incoming_tron(address)
+        return get_incoming_tron(address, _INTERNAL_FETCH_FANOUT)
     if chain == "solana":
-        return get_incoming_solana(address)
+        return get_incoming_solana(address, _INTERNAL_FETCH_FANOUT)
     return [], 0
 
 
-def get_incoming_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
+def get_incoming_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN, max_fanout=MAX_FANOUT_PER_HOP):
     """Cache-aware wrapper - see get_outgoing_counterparties for the
     full reasoning, identical here for the reverse direction."""
     cache_key = _cache_key_for_chain(chain, evm_chain)
     cached = _get_cached_wallet_activity(cache_key, address, "in")
-    if cached is not None:
-        unique = len(set(h["counterparty"].lower() for h in cached if h.get("counterparty")))
-        return cached, unique
-    hops, unique_count = _get_incoming_counterparties_uncached(chain, address, evm_chain)
-    if chain:
-        _store_wallet_activity_cache(cache_key, address, "in", hops)
-    return hops, unique_count
+    if cached is None:
+        cached, _ = _get_incoming_counterparties_uncached(chain, address, evm_chain)
+        if chain:
+            _store_wallet_activity_cache(cache_key, address, "in", cached)
+    truncated = cached[:max_fanout]
+    unique = len(set(h["counterparty"].lower() for h in cached if h.get("counterparty")))
+    return truncated, unique
 
 
 # ====================================================================
@@ -3888,8 +3908,8 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
     if chain is None:
         return {"error": "Not a recognized address on any supported chain."}
 
-    outgoing, _ = get_outgoing_counterparties(chain, wallet, evm_chain)
-    incoming, _ = get_incoming_counterparties(chain, wallet, evm_chain)
+    outgoing, _ = get_outgoing_counterparties(chain, wallet, evm_chain, max_fanout=_INTERNAL_FETCH_FANOUT)
+    incoming, _ = get_incoming_counterparties(chain, wallet, evm_chain, max_fanout=_INTERNAL_FETCH_FANOUT)
 
     edges = []
     counterparty_addresses = set()
