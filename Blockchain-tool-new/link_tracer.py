@@ -3820,6 +3820,98 @@ def get_wallet_immediate_connections(wallet, evm_chain=DEFAULT_EVM_CHAIN):
     return {"wallet": wallet, "chain": chain, "nodes": nodes, "edges": edges}
 
 
+def get_wallet_latest_activity(wallet, evm_chain=DEFAULT_EVM_CHAIN):
+    """Returns the single most recent transaction (in either direction)
+    for a wallet, or None if it has no activity at all yet. Shared by
+    wallet alerts - both for setting the baseline when an alert is
+    first created, and for the periodic background check that compares
+    against that baseline to detect genuinely new activity."""
+    chain = detect_chain(wallet)
+    if chain is None:
+        return {"error": "Not a recognized address on any supported chain."}
+
+    outgoing, _ = get_outgoing_counterparties(chain, wallet, evm_chain)
+    incoming, _ = get_incoming_counterparties(chain, wallet, evm_chain)
+    all_hops = outgoing + incoming
+    if not all_hops:
+        return {"chain": chain, "latest_tx_hash": None, "latest_tx": None}
+
+    latest = max(all_hops, key=lambda h: h.get("tx_time") or datetime.min.replace(tzinfo=timezone.utc))
+    return {
+        "chain": chain,
+        "latest_tx_hash": latest.get("tx_hash"),
+        "latest_tx": {
+            "tx_hash": latest.get("tx_hash"),
+            "amount_label": latest.get("amount_label"),
+            "counterparty": latest.get("counterparty"),
+            "tx_time_utc": latest["tx_time"].strftime("%Y-%m-%d %H:%M:%S") if latest.get("tx_time") else None,
+            "explorer_url": latest.get("explorer_url"),
+        },
+    }
+
+
+def create_wallet_alert(username, wallet_address, label, evm_chain=DEFAULT_EVM_CHAIN):
+    """Sets a baseline at the wallet's CURRENT latest activity, so the
+    alert only ever fires for genuinely new activity from this point
+    forward - not a backlog of everything that already happened."""
+    activity = get_wallet_latest_activity(wallet_address, evm_chain)
+    if activity.get("error"):
+        return {"success": False, "message": activity["error"]}
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO wallet_alerts (username, wallet_address, chain, label, last_seen_tx_hash, last_checked_at) "
+                    "VALUES (%s, %s, %s, %s, %s, now()) RETURNING id;",
+                    (username, wallet_address, activity["chain"], label, activity["latest_tx_hash"])
+                )
+                alert_id = cur.fetchone()[0]
+                conn.commit()
+        return {"success": True, "id": str(alert_id)}
+    except Exception as error:
+        print(f"⚠️  Could not create wallet alert: {error}")
+        return {"success": False, "message": str(error)}
+
+
+def list_wallet_alerts(username):
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, wallet_address, chain, label, created_at, last_checked_at "
+                    "FROM wallet_alerts WHERE username = %s ORDER BY created_at DESC;",
+                    (username,)
+                )
+                rows = cur.fetchall()
+    except Exception as error:
+        print(f"⚠️  Could not list wallet alerts: {error}")
+        return []
+    return [
+        {
+            "id": str(r[0]), "wallet_address": r[1], "chain": r[2], "label": r[3],
+            "created_at": r[4].strftime("%Y-%m-%d %H:%M:%S") if r[4] else None,
+            "last_checked_at": r[5].strftime("%Y-%m-%d %H:%M:%S") if r[5] else None,
+        }
+        for r in rows
+    ]
+
+
+def delete_wallet_alert(alert_id, username):
+    """Scoped to the requesting user - one user can never delete
+    another's alert, admin or not, since these are personal
+    notifications, not shared case data."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM wallet_alerts WHERE id = %s AND username = %s;", (alert_id, username))
+                deleted = cur.rowcount > 0
+                conn.commit()
+        return deleted
+    except Exception as error:
+        print(f"⚠️  Could not delete wallet alert: {error}")
+        return False
+
+
 def detect_address_poisoning(wallet, evm_chain=DEFAULT_EVM_CHAIN, case_id=None):
     """
     PLAIN ENGLISH: Fetches this wallet's own recent outgoing AND
@@ -3985,6 +4077,28 @@ def save_case_explore_edges(case_id, edges, chain, username):
                 conn.commit()
     except Exception as error:
         print(f"⚠️  Could not save case explore graph edges: {error}")
+
+
+def delete_case_explore_edges(case_id, edges):
+    """Removes specific edges from a case's saved Explore Graph - used
+    when "Hide" reverses a "Show all" batch, so hidden connections
+    stay genuinely gone rather than silently reappearing next time the
+    case is reopened. Identifies each edge the same way the unique
+    constraint does (case_id, tx_hash, from_address, to_address)."""
+    if not edges:
+        return
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                for edge in edges:
+                    cur.execute(
+                        "DELETE FROM case_explore_edges WHERE case_id = %s AND tx_hash = %s "
+                        "AND from_address = %s AND to_address = %s;",
+                        (case_id, edge["tx_hash"], edge["from"], edge["to"])
+                    )
+                conn.commit()
+    except Exception as error:
+        print(f"⚠️  Could not delete case explore graph edges: {error}")
 
 
 def save_case_explore_position(case_id, address, x, y):
