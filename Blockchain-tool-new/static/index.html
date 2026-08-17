@@ -349,14 +349,6 @@
   font-size: 10px; text-decoration: none; opacity: 0.85; transition: opacity 0.12s ease;
 }
 .wbox-explorer-link:hover { color: var(--accent); border-color: var(--accent); opacity: 1; }
-.wbox-flag-btn {
-  position: absolute; top: -7px; left: -7px; width: 16px; height: 16px;
-  display: flex; align-items: center; justify-content: center; border-radius: 50%;
-  background: var(--panel); border: 1px solid var(--line); color: var(--text-dim);
-  font-size: 9px; padding: 0; cursor: pointer; opacity: 0.85; transition: opacity 0.12s ease;
-}
-.wbox-flag-btn:hover { border-color: var(--flag); opacity: 1; }
-.wbox-flag-btn:disabled { cursor: default; opacity: 1; }
 .wbox.root { border-color: var(--accent); background: var(--accent-bg); }
 .wbox.root::before { background: var(--accent); }
 .wbox.entity { border-color: var(--entity); background: var(--entity-bg); }
@@ -388,9 +380,11 @@
   /* ---------- Landing / login ---------- */
   .landing { width: 100%; min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; position: relative; overflow: hidden; }
   .landing-inner { max-width: 820px; text-align: center; position: relative; z-index: 1; }
-  .landing-node-bg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.12; pointer-events: none; z-index: 0; }
+  .landing-node-bg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.24; pointer-events: none; z-index: 0; }
   .landing h1 { font-size: 30px; margin: 10px 0 14px; }
   .landing-lede { color: var(--text-dim); font-size: 15px; line-height: 1.6; }
+  .landing-oneliners { margin: 22px 0; display: flex; flex-direction: column; gap: 9px; }
+  .landing-oneliners p { margin: 0; font-size: 13.5px; color: var(--text); text-align: center; }
 
   /* ---------- Pre-login top tab bar ---------- */
   #preLoginTabBar {
@@ -554,6 +548,12 @@
       evidence - built for investigators working with law enforcement. Covers Ethereum,
       Bitcoin, XRP, Tron, Solana, and major EVM chains (Arbitrum, Base, Optimism, and more).
     </p>
+    <div class="landing-oneliners">
+      <p>⇢ Trace funds hop by hop, or search by transaction hash or date</p>
+      <p>📄 Generate court-ready Evidence Packs with a SHA-256 integrity hash</p>
+      <p>⚠ Screen for sanctions, mixers, and real contract red flags</p>
+      <p>✉ Draft a solicitor's letter the moment funds land at a KYC exchange</p>
+    </div>
     <p class="landing-lede" style="font-size:13px; margin-top:8px;">
       Every finding is labeled by confidence - confirmed, heuristic, or lead - nothing is
       ever presented as proof it isn't.
@@ -896,7 +896,6 @@ const SECTIONS = [
   { id: "poisoning", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><circle cx="12.5" cy="12.5" r="5.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Address Poisoning Check", sub: "Check a wallet's own history for lookalike scam addresses", adminOnly: false, group: "Investigate" },
   { id: "saved-cases", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5 A2 2 0 0 1 4.5 3.5 H8 L9.5 5.5 H15.5 A2 2 0 0 1 17.5 7.5 V14 A2 2 0 0 1 15.5 16 H4.5 A2 2 0 0 1 2.5 14 Z"/></svg>`, label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, essential: true, group: "Case Data" },
   { id: "known-entities", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5 H16.5 A1 1 0 0 1 17.5 3.5 V9.5 A1 1 0 0 1 17.2 10.2 L10.2 17.2 A1 1 0 0 1 8.8 17.2 L2.8 11.2 A1 1 0 0 1 2.8 9.8 L9.8 2.8 A1 1 0 0 1 10.5 2.5 Z"/><circle cx="13.5" cy="6.5" r="1.4" fill="currentColor"/></svg>`, label: "Known Entities", sub: "Exchanges, mixers, and instant-swap services", adminOnly: false, group: "Case Data" },
-  { id: "review-queue", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3 V17 M4 3 H13 L11 6 L13 9 H4"/></svg>`, label: "Review Queue", sub: "Addresses flagged for identification during real casework", adminOnly: true, group: "Case Data" },
   { id: "users", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="6.5" r="3"/><path d="M2 17 C2 12.5 4.5 10.5 7.5 10.5 C10.5 10.5 13 12.5 13 17"/><circle cx="14.5" cy="7.5" r="2.3"/><path d="M13 17 C13 13.5 14.5 12.2 16 12.2 C17.7 12.2 18.5 13.7 18.5 17" opacity="0.7"/></svg>`, label: "Users", sub: "Manage who can access this app", adminOnly: true, group: "Admin" },
 ];
 
@@ -1483,7 +1482,6 @@ function renderAppShell() {
   renderPoisoningCheckSection();
   loadEvmChainExplorers();
   if (isAdmin()) renderUsersSection();
-  if (isAdmin()) renderReviewQueueSection();
 
   buildNav();
   const currentMeta = SECTIONS.find(s => s.id === state.section);
@@ -2317,7 +2315,7 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
         } else if (isFlaggedEnd && hop.coinjoin_match) {
           boxCls = "guess"; label = `🌀 ${label}`;
         }
-        flow.appendChild(makeBox(label, boxCls, hop.to_address, data.chain, data.evm_chain, !hop.to_known_entity));
+        flow.appendChild(makeBox(label, boxCls, hop.to_address, data.chain, data.evm_chain));
       });
       row.appendChild(flow);
       diagramTarget.appendChild(row);
@@ -2517,12 +2515,6 @@ function renderTraceGraph(data, allPaths, container) {
         ${isRoot ? `<div class="footnote">The wallet being traced.</div>` : ""}
         ${hop && hop.to_known_entity ? `<div class="hint">${escapeHtml(hop.to_known_entity.name)} (${escapeHtml(hop.to_known_entity.type)})</div>` : `<div class="footnote">No known-entity attribution yet.</div>`}
       `;
-      if (!isRoot && !(hop && hop.to_known_entity)) {
-        const flagBtn = el("button", "btn secondary", "🚩 Flag for review");
-        flagBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
-        flagBtn.onclick = () => flagAddressForReview(addr, data.chain, flagBtn);
-        card.appendChild(flagBtn);
-      }
       if (hop && hop.to_known_entity && hop.to_known_entity.type === "exchange") {
         const letterBtn = el("button", "btn secondary", "📄 Generate legal letter");
         letterBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
@@ -2637,7 +2629,7 @@ function truncateAddress(address) {
   return address.slice(0, 10) + "…" + address.slice(-6);
 }
 
-function makeBox(label, cls, address, chain, evmChain, showFlagOption) {
+function makeBox(label, cls, address, chain, evmChain) {
   const box = el("div", "wbox" + (cls ? " " + cls : ""));
   // Only truncate genuine addresses - short labels like "(swap service)"
   // or an already-friendly Simple View name should show in full.
@@ -2671,41 +2663,9 @@ function makeBox(label, cls, address, chain, evmChain, showFlagOption) {
     box.appendChild(link);
   }
 
-  // "Flag for review" - only offered when there's genuinely no
-  // attribution yet (never on an address that's already a known
-  // entity, and never on the root/subject wallet itself - that's who's
-  // being investigated, not an unidentified counterparty).
-  if (showFlagOption && address) {
-    const flagBtn = document.createElement("button");
-    flagBtn.type = "button";
-    flagBtn.className = "wbox-flag-btn";
-    flagBtn.title = "Flag this address for review - no attribution found yet";
-    flagBtn.textContent = "🚩";
-    flagBtn.onclick = (e) => {
-      e.stopPropagation();
-      flagAddressForReview(address, chain, flagBtn);
-    };
-    box.appendChild(flagBtn);
-  }
-
   return box;
 }
 
-async function flagAddressForReview(address, chain, buttonEl) {
-  buttonEl.disabled = true;
-  try {
-    const result = await apiFetch("/api/flagged-addresses", {
-      method: "POST",
-      body: JSON.stringify({ address, chain, context: `Seen while tracing ${lastResults.linkTraceMeta ? lastResults.linkTraceMeta.wallet : "a wallet"}` }),
-    });
-    buttonEl.textContent = "✓";
-    buttonEl.title = result.already_pending ? "Already flagged - awaiting review" : "Flagged for review";
-  } catch (err) {
-    buttonEl.textContent = "!";
-    buttonEl.title = "Error: " + err.message;
-    buttonEl.disabled = false;
-  }
-}
 function addressCellHtml(address) {
   if (!address) return "";
   const short = truncateAddress(address);
@@ -4253,12 +4213,6 @@ function renderExploreGraphConnectionsList(address, detailEl) {
   const headerCard = el("div", "card");
   headerCard.style.marginTop = "10px";
   headerCard.innerHTML = `<div class="mono" style="font-weight:600;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
-  if (!isRoot && !node.entityName) {
-    const flagBtn = el("button", "btn secondary", "🚩 Flag for review");
-    flagBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
-    flagBtn.onclick = () => flagAddressForReview(address, result ? result.chain : null, flagBtn);
-    headerCard.appendChild(flagBtn);
-  }
   if (node.entityType === "exchange") {
     // Transaction details live on the EDGE, not the node, here -
     // find any edge that lands on this node to represent the finding.
@@ -4578,85 +4532,6 @@ function renderPoisoningResults(data, container) {
 // ============================================================
 // REVIEW QUEUE (admin only)
 // ============================================================
-function renderReviewQueueSection() {
-  const section = el("div", "section", "");
-  section.id = "section-review-queue";
-  section.innerHTML = `
-    <div class="card">
-      <h3>Addresses flagged for review</h3>
-      <div class="field hint mb-md">
-        Anyone using the app can flag an address that came up in a real trace with no known-entity
-        attribution. Confirm what it actually is (via the explorer link already shown in the trace,
-        or your own research) and either add it to Known Entities so future traces resolve it
-        automatically, or dismiss it if there's nothing worth adding (e.g. a personal wallet, not a
-        service).
-      </div>
-    </div>
-    <div id="reviewQueueList"></div>
-  `;
-  document.getElementById("content").appendChild(section);
-  loadReviewQueue();
-}
-
-async function loadReviewQueue() {
-  const container = document.getElementById("reviewQueueList");
-  if (!container) return;
-  container.innerHTML = `<div class="footnote">Loading...</div>`;
-  try {
-    const flags = await apiFetch("/api/flagged-addresses?status=pending");
-    if (!flags.length) {
-      container.innerHTML = `<div class="empty-state">Nothing pending review right now.</div>`;
-      return;
-    }
-    container.innerHTML = "";
-    for (const flag of flags) {
-      const card = el("div", "card");
-      card.innerHTML = `
-        <div class="mono" style="font-weight:600;">${escapeHtml(flag.address)}</div>
-        <div class="footnote mb-sm">${escapeHtml(flag.chain || "chain unknown")} - flagged by ${escapeHtml(flag.flagged_by)} on ${escapeHtml((flag.flagged_at || "").slice(0, 16).replace("T", " "))}</div>
-        ${flag.context ? `<div class="hint mb-sm">${escapeHtml(flag.context)}</div>` : ""}
-        <div class="field"><label>Resolution notes (optional)</label><input type="text" class="select-mono" id="notes-${flag.id}" placeholder="e.g. Confirmed as Kraken hot wallet"></div>
-      `;
-      const addBtn = el("button", "btn", "Add as Known Entity →");
-      addBtn.style.cssText = "margin-right:8px; font-size:12px; padding:7px 14px;";
-      addBtn.onclick = () => {
-        switchSection("known-entities");
-        setTimeout(() => {
-          const addrField = document.getElementById("keAddress");
-          const nameField = document.getElementById("keName");
-          if (addrField) { addrField.value = flag.address; addrField.focus(); }
-          if (nameField) nameField.focus();
-        }, 50);
-      };
-      const resolveBtn = el("button", "btn secondary", "Mark resolved");
-      resolveBtn.style.cssText = "margin-right:8px; font-size:12px; padding:7px 14px;";
-      resolveBtn.onclick = () => submitFlagResolution(flag.id, false);
-      const dismissBtn = el("button", "btn secondary", "Dismiss");
-      dismissBtn.style.cssText = "font-size:12px; padding:7px 14px;";
-      dismissBtn.onclick = () => submitFlagResolution(flag.id, true);
-      card.appendChild(addBtn);
-      card.appendChild(resolveBtn);
-      card.appendChild(dismissBtn);
-      container.appendChild(card);
-    }
-  } catch (err) {
-    container.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
-  }
-}
-
-async function submitFlagResolution(flagId, dismiss) {
-  const notesField = document.getElementById(`notes-${flagId}`);
-  const resolution_notes = notesField ? notesField.value.trim() : "";
-  try {
-    await apiFetch(`/api/flagged-addresses/${encodeURIComponent(flagId)}/${dismiss ? "dismiss" : "resolve"}`, {
-      method: "POST", body: JSON.stringify({ resolution_notes }),
-    });
-    loadReviewQueue();
-  } catch (err) {
-    alert("Error: " + err.message);
-  }
-}
-
 function renderUsersSection() {
   const section = el("div", "section", "");
   section.id = "section-users";
