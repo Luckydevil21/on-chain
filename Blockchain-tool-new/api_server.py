@@ -112,6 +112,7 @@ import ai_assist
 import auth
 import email_sender
 import evidence_pack
+import legal_letter
 
 import psycopg2
 import psycopg2.extras
@@ -1545,6 +1546,36 @@ def download_evidence_pack_pdf(evidence_pack_id: str, current_user=Depends(requi
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="evidence-pack-{evidence_pack_id[:8]}.pdf"'},
+    )
+
+
+class GenerateLegalLetterRequest(BaseModel):
+    exchange_name: str
+    wallet_address: str
+    chain: Optional[str] = None
+    amount_label: Optional[str] = None
+    tx_hash: Optional[str] = None
+    tx_time_utc: Optional[str] = None
+    explorer_url: Optional[str] = None
+    case_reference: Optional[str] = None
+
+
+@app.post("/api/legal-letter")
+def generate_legal_letter(req: GenerateLegalLetterRequest, current_user=Depends(require_read)):
+    """Generates a draft solicitor's letter for a single finding - an
+    OPTION the user chooses per finding, never automatic. See
+    legal_letter.py for the important caveats baked into the template
+    itself (draft only, cannot compel disclosure alone, etc.)."""
+    docx_bytes = legal_letter.generate_legal_letter_docx(
+        req.exchange_name, req.wallet_address, req.chain, req.amount_label,
+        req.tx_hash, req.tx_time_utc, req.explorer_url, req.case_reference,
+    )
+    auth.log_action(current_user["username"], "legal_letter_generated", target=req.wallet_address, detail=req.exchange_name)
+    safe_name = "".join(c if c.isalnum() else "-" for c in req.exchange_name)[:40]
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="draft-letter-{safe_name}.docx"'},
     )
 
 
