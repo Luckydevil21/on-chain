@@ -320,6 +320,11 @@
    views - a deliberate departure from the app's dark theme for the
    graph area specifically, since it makes node/edge data stand out
    more clearly than the previous dark-on-dark canvas did. */
+.glossary-hint {
+  border-bottom: 1px dotted var(--text-dim);
+  cursor: help;
+}
+
 .graph-canvas {
   background-color: #e4e7eb;
   background-image: radial-gradient(circle, #b7bec6 1.3px, transparent 1.3px);
@@ -623,6 +628,27 @@
     <button class="btn btn-full-primary" id="policyAcceptBtn" disabled>Continue</button>
   </div>
 </div>
+<div id="onboardingView" class="landing" style="display:none;">
+  <div class="landing-inner" style="max-width:520px;">
+    <div class="brand-mark">CASE TOOLKIT</div>
+    <h1 style="font-size:22px;">What are you trying to do?</h1>
+    <p class="landing-lede" style="font-size:13px;">This decides where to start you off - you can always reach everything else from the sidebar afterward.</p>
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px; text-align:left;">
+      <button class="btn secondary onboarding-choice" data-dest="find-connection" style="padding:14px 16px; text-align:left;">
+        <strong style="display:block; font-size:14px;">Trace where crypto went</strong>
+        <span class="hint" style="display:block; margin-top:2px;">Follow funds from one wallet, or check if two wallets are connected</span>
+      </button>
+      <button class="btn secondary onboarding-choice" data-dest="explore-graph" style="padding:14px 16px; text-align:left;">
+        <strong style="display:block; font-size:14px;">Explore a wallet's connections myself</strong>
+        <span class="hint" style="display:block; margin-top:2px;">Build out a graph by hand, deciding yourself what's worth following</span>
+      </button>
+      <button class="btn secondary onboarding-choice" data-dest="" style="padding:14px 16px; text-align:left;">
+        <strong style="display:block; font-size:14px;">Just show me around</strong>
+        <span class="hint" style="display:block; margin-top:2px;">Skip this and go straight to the main screen</span>
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ============================================================
      FORGOT PASSWORD
@@ -787,6 +813,7 @@ function chainSymbol(chain) {
 }
 
 const SECTIONS = [
+  { id: "glossary", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.6 a2.2 2.2 0 1 1 3.4 1.8 c-0.8 0.6 -1.2 1.1 -1.2 2.1"/><circle cx="10" cy="14" r="0.6" fill="currentColor"/></svg>`, label: "Glossary", sub: "Plain-English explanations of the terms used throughout this app", adminOnly: false, essential: true, group: "Help" },
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, essential: true, group: "Investigate" },
   { id: "find-connection", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="10" r="2.5"/><circle cx="16" cy="10" r="2.5"/><path d="M6.5 10 H13.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Find Connection", sub: "Does money from one wallet ever reach another?", adminOnly: false, essential: true, group: "Investigate" },
   { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
@@ -990,13 +1017,20 @@ function refreshStyleToggle() {
   document.querySelectorAll("#styleToggle button").forEach(b => b.classList.toggle("active", b.dataset.style === state.reportStyle));
   // Re-render whatever's currently on screen using cached last results, so the toggle is instant.
   if (lastResults.linkTrace) renderLinkTraceResults(lastResults.linkTrace, lastResults.linkTraceMeta);
+  const simpleCard = document.getElementById("ltSimpleSearchCard");
+  const fullCard = document.getElementById("ltFullSearchCard");
+  if (simpleCard && fullCard) {
+    const isSimple = state.reportStyle === "simple";
+    simpleCard.style.display = isSimple ? "block" : "none";
+    fullCard.style.display = isSimple ? "none" : "block";
+  }
 }
 
 // ============================================================
 // AUTH - landing page, login, logout, session check on load
 // ============================================================
 function showView(viewId) {
-  ["landingView", "loginView", "pricingView", "totpView", "totpSetupView", "policyAcceptView", "forgotView", "resetView", "appShell"].forEach(id => {
+  ["landingView", "loginView", "pricingView", "totpView", "totpSetupView", "policyAcceptView", "onboardingView", "forgotView", "resetView", "appShell"].forEach(id => {
     document.getElementById(id).style.display = id === viewId ? "flex" : "none";
   });
 
@@ -1268,8 +1302,40 @@ async function enterApp() {
     showView("policyAcceptView");
     return;
   }
+
+  // Onboarding is educational, not a hardened rule the way 2FA and the
+  // policy are - it only ever shows once, and skipping it is a first-
+  // class option, not a hidden escape hatch.
+  let meInfo;
+  try {
+    meInfo = await apiFetch("/api/auth/me");
+  } catch (err) {
+    renderAppShell();
+    return;
+  }
+  if (!meInfo.has_completed_onboarding) {
+    showView("onboardingView");
+    return;
+  }
   renderAppShell();
 }
+
+document.querySelectorAll(".onboarding-choice").forEach(btn => {
+  btn.onclick = async () => {
+    const dest = btn.dataset.dest;
+    try { await apiFetch("/api/auth/onboarding-complete", { method: "POST" }); } catch (err) { /* non-critical - proceed regardless */ }
+    renderAppShell();
+    if (dest === "find-connection") {
+      switchSection("find-connection");
+    } else if (dest === "explore-graph") {
+      switchSection("link-trace");
+      setTimeout(() => {
+        const graphTabBtn = document.querySelector('#ltModeToggle button[data-mode="graph"]');
+        if (graphTabBtn) graphTabBtn.click();
+      }, 50);
+    }
+  };
+});
 
 document.getElementById("policyAcceptCheckbox").addEventListener("change", (e) => {
   document.getElementById("policyAcceptBtn").disabled = !e.target.checked;
@@ -1294,6 +1360,7 @@ function renderAppShell() {
   const contentEl = document.getElementById("content");
   contentEl.innerHTML = "";
   renderLinkTraceSection();
+  renderGlossarySection();
   renderFindConnectionSection();
   renderSavedCasesSection();
   renderKnownEntitiesSection();
@@ -1439,7 +1506,20 @@ function renderLinkTraceSection() {
       <button data-mode="graph">Graph</button>
     </div>
     <div id="ltLinearTabContent">
-    <div class="card">
+    <div class="card" id="ltSimpleSearchCard" style="display:none;">
+      <h3>What wallet are you investigating?</h3>
+      <div class="field"><input type="text" id="ltSimpleWallet" placeholder="Paste the wallet address here"></div>
+      <div class="field">
+        <label>What do you want to know?</label>
+        <div class="radio-row">
+          <label><input type="radio" name="ltSimpleDirection" value="forward" checked> Where did the money go</label>
+          <label><input type="radio" name="ltSimpleDirection" value="backward"> Where did the money come from</label>
+        </div>
+      </div>
+      <button class="btn" id="ltSimpleSearchBtn">Search</button>
+      <div class="field hint" style="margin-top:12px;">Need to search by transaction hash, a specific date, or other advanced options instead? Switch to <strong>🎓 Technical</strong> mode at the top of the page.</div>
+    </div>
+    <div class="card" id="ltFullSearchCard">
       <h3>Search by</h3>
       <div class="radio-row mb-md" >
         <label><input type="radio" name="searchMode" value="txhash" checked> Transaction hash</label>
@@ -1635,6 +1715,22 @@ function renderLinkTraceSection() {
       statusEl.className = "status-line error";
     }
   }
+
+  document.getElementById("ltSimpleSearchBtn").onclick = () => {
+    const wallet = document.getElementById("ltSimpleWallet").value.trim();
+    const direction = document.querySelector('input[name="ltSimpleDirection"]:checked').value;
+    if (!wallet) {
+      document.getElementById("ltSimpleWallet").focus();
+      return;
+    }
+    // runWalletTrace reads directly from these fields regardless of
+    // which search-mode radio is visually active, so filling them and
+    // calling it directly is enough - no need to touch the full
+    // form's own mode-switching UI at all.
+    document.getElementById("ltWallet").value = wallet;
+    document.querySelector(`input[name="ltDirection"][value="${direction}"]`).checked = true;
+    runWalletTrace();
+  };
 
   async function runTxHashLookup() {
     const txHash = document.getElementById("txhAddress").value.trim();
@@ -2080,7 +2176,9 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
 
   function renderGroup(title, cls, paths) {
     if (!paths.length) return;
-    diagramTarget.appendChild(el("div", "diagram-section-title " + cls, title));
+    const titleEl = el("div", "diagram-section-title " + cls);
+    titleEl.innerHTML = title;
+    diagramTarget.appendChild(titleEl);
     for (const path of paths) {
       const row = el("div", "trail-row");
       if (path.reason) row.appendChild(el("div", "trail-reason", path.reason));
@@ -2142,12 +2240,12 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
 
     const savedTarget = diagramTarget;
     diagramTarget = otherContainer;
-    renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
-    renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
+    renderGroup(`🔶 ${glossaryTerm("Flagged trail end", "Trails ending at a known/likely exchange")}`, "flagged", data.flagged_end_paths);
+    renderGroup(`⚠️ Flagged for manual review (${glossaryTerm("Amount-filtered", "amount mismatch")})`, "flagged", data.amount_filtered_paths);
     diagramTarget = savedTarget;
   } else {
-    renderGroup("🔶 Trails ending at a known/likely exchange", "flagged", data.flagged_end_paths);
-    renderGroup("⚠️ Flagged for manual review (amount mismatch)", "flagged", data.amount_filtered_paths);
+    renderGroup(`🔶 ${glossaryTerm("Flagged trail end", "Trails ending at a known/likely exchange")}`, "flagged", data.flagged_end_paths);
+    renderGroup(`⚠️ Flagged for manual review (${glossaryTerm("Amount-filtered", "amount mismatch")})`, "flagged", data.amount_filtered_paths);
   }
 
   if (simple) {
@@ -3312,6 +3410,64 @@ async function pollSanctionsRefresh() {
 // field already does, just given its own clear, single-purpose entry
 // point instead of being a secondary field on a bigger form.
 // ============================================================
+// Shared with the hover-tooltip helper (glossaryTerm) used to mark up
+// jargon inline wherever it appears in results, not just this
+// reference page.
+const GLOSSARY = [
+  { term: "Address poisoning", def: "A scam where someone sends a tiny amount of crypto from a look-alike address, hoping you'll later copy that address by mistake instead of the real one." },
+  { term: "Amount-filtered", def: "A branch the tool found but set aside because the amount moving through it doesn't clearly match the value you're tracking - still worth a look, just not the main story." },
+  { term: "Bridge", def: "A service that moves funds from one blockchain to a different one (for example, from Ethereum to Solana)." },
+  { term: "Chain", def: "Short for blockchain - the specific network an address or transaction lives on (Bitcoin, Ethereum, XRP, Tron, Solana, etc.)." },
+  { term: "Confirmed", def: "Directly observable on the blockchain itself - a transaction genuinely happened. Still needs your own independent verification before relying on it professionally." },
+  { term: "Deposit address", def: "An address, usually generated uniquely per customer, that an exchange uses to receive funds before crediting them to that customer's account." },
+  { term: "Evidence Pack", def: "A generated PDF document laying out a trace's findings in a court-ready structure - a draft for a qualified analyst to review and sign, not a finished, authoritative report on its own." },
+  { term: "Explorer", def: "A public website (like Etherscan or mempool.space) that lets anyone look up any address or transaction on a given blockchain." },
+  { term: "Fan-out", def: "When a single wallet sends to a very large number of different addresses - often a sign it's an exchange or service, not a private individual." },
+  { term: "Flagged trail end", def: "A branch where the trace stopped because it reached a wallet believed to belong to an exchange, mixer, or similar service - a lead for further investigation (like a legal request to that service), not proof of anything beyond that point." },
+  { term: "Heuristic", def: "An educated, probability-based guess rather than a certainty - for example, matching a withdrawal to a deposit by timing and amount. It may be wrong, and should be treated as a lead, not a finding." },
+  { term: "Hop", def: "One single transaction moving funds from one wallet to the next - a trace of \"3 hops\" followed the money through 3 separate transactions." },
+  { term: "Known entity", def: "An address this tool's database has attributed to a specific real-world organization (an exchange, a mixer, a sanctioned party, etc.)." },
+  { term: "Memo / OP_RETURN", def: "A small note attached to some transactions, sometimes used by bridges to record where funds should end up on another chain." },
+  { term: "Mixer", def: "A service designed to obscure the trail between a deposit and a withdrawal by pooling many users' funds together." },
+  { term: "Sanctioned", def: "An address that appears on an official government sanctions list (such as OFAC's) - transacting with it can carry serious legal consequences." },
+  { term: "Swap correlation", def: "A heuristic that matches a withdrawal on one address to a deposit on another by comparing timing and value - used to follow funds through instant-swap services that don't require an account." },
+  { term: "Transaction hash", def: "A unique ID for one specific transaction on a blockchain - if you already know this, you can look the transaction up directly instead of tracing a whole wallet." },
+  { term: "Wallet", def: "An address on a blockchain that can send and receive funds - the basic unit this tool traces." },
+];
+
+function glossaryTooltipHtml(term) {
+  const entry = GLOSSARY.find(g => g.term.toLowerCase() === term.toLowerCase());
+  return entry ? entry.def : "";
+}
+
+// Wraps a piece of already-escaped display text with a subtle dotted
+// underline and a native hover tooltip explaining the term - used
+// selectively in the highest-value, most jargon-heavy spots, not
+// applied blanket everywhere (that would be noisy, not helpful).
+function glossaryTerm(term, displayText) {
+  const def = glossaryTooltipHtml(term);
+  if (!def) return escapeHtml(displayText != null ? displayText : term);
+  return `<span class="glossary-hint" title="${escapeHtml(def)}">${escapeHtml(displayText != null ? displayText : term)}</span>`;
+}
+
+function renderGlossarySection() {
+  const section = el("div", "section", "");
+  section.id = "section-glossary";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Glossary</h3>
+      <div class="field hint mb-md">Plain-English explanations of the terms used throughout this app. You'll also see some of these terms underlined with a dotted line elsewhere in the app - hover over them for a quick reminder without needing to come back here.</div>
+      ${GLOSSARY.map(g => `
+        <div style="padding:10px 0; border-bottom:1px solid var(--line);">
+          <div style="font-weight:600; font-size:13.5px; margin-bottom:3px;">${escapeHtml(g.term)}</div>
+          <div class="hint" style="font-size:13px; line-height:1.5;">${escapeHtml(g.def)}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  document.getElementById("content").appendChild(section);
+}
+
 function renderFindConnectionSection() {
   const section = el("div", "section", "");
   section.id = "section-find-connection";
