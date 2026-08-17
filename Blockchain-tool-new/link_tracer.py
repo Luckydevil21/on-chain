@@ -415,7 +415,7 @@ SECONDS_BETWEEN_REQUESTS = 0.3
 # x these page counts is the real cost of a trace, so keep them
 # reasonable rather than maxing everything out by default.
 # --------------------------------------------------------------
-BITCOIN_TRACE_MAX_PAGES = 4   # ~25-50 tx per page (mempool.space)
+BITCOIN_TRACE_MAX_PAGES = 500  # ~25-50 tx per page (mempool.space) - a genuine safety cap against a pathological wallet (a major exchange's hot wallet, say), not a "recent history only" limit. A real transaction must never go missing just because a wallet has had a lot of activity since then.
 XRP_TRACE_MAX_PAGES = 4       # 50 tx per page (XRPL)
 TRON_TRACE_MAX_PAGES = 4      # 50 tx per page (TronGrid)
 ETHEREUM_TRACE_MAX_PAGES = 4  # 1000 tx per page (Etherscan)
