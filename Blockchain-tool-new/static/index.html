@@ -889,9 +889,9 @@ const SECTIONS = [
   { id: "wallet-alerts", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 a5 5 0 0 1 5 5 v2.5 l1.5 3 h-13 l1.5 -3 V8 a5 5 0 0 1 5 -5 Z"/><path d="M8 15.5 a2 2 0 0 0 4 0"/></svg>`, label: "Wallet Alerts", sub: "Get emailed the moment a wallet you're watching shows new activity", adminOnly: false, essential: false, group: "Investigate" },
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, essential: true, group: "Investigate" },
   { id: "find-connection", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="10" r="2.5"/><circle cx="16" cy="10" r="2.5"/><path d="M6.5 10 H13.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Find Connection", sub: "Does money from one wallet ever reach another?", adminOnly: false, essential: true, group: "Investigate" },
-  { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
-  { id: "swap-correlation", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 H15 M15 6 L12 3 M15 6 L12 9"/><path d="M17 14 H5 M5 14 L8 11 M5 14 L8 17"/></svg>`, label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate" },
-  { id: "token-risk", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18.5 17 H1.5 Z"/><line x1="10" y1="8" x2="10" y2="12"/><circle cx="10" cy="14.5" r="0.7" fill="currentColor"/></svg>`, label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate" },
+  { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate", minTier: "small_firm" },
+  { id: "swap-correlation", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 H15 M15 6 L12 3 M15 6 L12 9"/><path d="M17 14 H5 M5 14 L8 11 M5 14 L8 17"/></svg>`, label: "Swap/Bridge Check", sub: "Did this wallet go through a non-KYC exchange or bridge?", adminOnly: false, group: "Investigate", minTier: "small_firm" },
+  { id: "token-risk", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 L18.5 17 H1.5 Z"/><line x1="10" y1="8" x2="10" y2="12"/><circle cx="10" cy="14.5" r="0.7" fill="currentColor"/></svg>`, label: "Token/Contract Risk", sub: "Real on-chain red flags for a Solana token or Ethereum contract", adminOnly: false, group: "Investigate", minTier: "small_firm" },
   { id: "sanctions", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="8"/><line x1="4.5" y1="4.5" x2="15.5" y2="15.5"/></svg>`, label: "Sanctions Screening", sub: "Check an address against the current OFAC SDN digital currency list", adminOnly: false, group: "Investigate" },
   { id: "poisoning", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><circle cx="12.5" cy="12.5" r="5.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Address Poisoning Check", sub: "Check a wallet's own history for lookalike scam addresses", adminOnly: false, group: "Investigate" },
   { id: "saved-cases", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5 A2 2 0 0 1 4.5 3.5 H8 L9.5 5.5 H15.5 A2 2 0 0 1 17.5 7.5 V14 A2 2 0 0 1 15.5 16 H4.5 A2 2 0 0 1 2.5 14 Z"/></svg>`, label: "Saved Cases", sub: "Group wallets and traces under named cases", adminOnly: false, essential: true, group: "Case Data" },
@@ -981,6 +981,8 @@ function isAdmin() {
 // ============================================================
 // NAV / LAYOUT
 // ============================================================
+const TIER_RANK = { solo: 0, small_firm: 1, agency: 2 };
+
 function buildNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = "";
@@ -988,6 +990,7 @@ function buildNav() {
   for (const section of SECTIONS) {
     if (section.adminOnly && !isAdmin()) continue;  // read-only users never see admin-only tabs at all
     if (!state.showAdvancedTools && !section.essential) continue;  // simple mode: only the essentials
+    if (section.minTier && TIER_RANK[state.tier || "agency"] < TIER_RANK[section.minTier]) continue;  // not included on this deployment's plan
     if (section.group !== lastGroup) {
       const header = el("div", "nav-group-label", section.group);
       nav.appendChild(header);
@@ -1423,6 +1426,7 @@ async function enterApp() {
     renderAppShell();
     return;
   }
+  state.tier = meInfo.tier || "agency";
   if (!meInfo.has_completed_onboarding) {
     showView("onboardingView");
     return;
@@ -1485,7 +1489,7 @@ function renderAppShell() {
 
   buildNav();
   const currentMeta = SECTIONS.find(s => s.id === state.section);
-  if (!currentMeta || (currentMeta.adminOnly && !isAdmin()) || (!state.showAdvancedTools && !currentMeta.essential)) state.section = "link-trace";
+  if (!currentMeta || (currentMeta.adminOnly && !isAdmin()) || (!state.showAdvancedTools && !currentMeta.essential) || (currentMeta.minTier && TIER_RANK[state.tier || "agency"] < TIER_RANK[currentMeta.minTier])) state.section = "link-trace";
   switchSection(state.section);
   refreshStyleToggle();
   showView("appShell");
