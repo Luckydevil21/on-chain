@@ -307,6 +307,34 @@ if _allowed_origins == ["*"]:
 _max_seats_setting = os.environ.get("TOOLKIT_MAX_SEATS", "").strip()
 TOOLKIT_MAX_SEATS = int(_max_seats_setting) if _max_seats_setting.isdigit() else None
 
+# Gates Token/Contract Risk Check, Swap/Bridge Check, and Deposit
+# Mapping to the Small Firm and Agency tiers - Solo doesn't include
+# them. Same enforcement model as TOOLKIT_MAX_SEATS: set per-deployment
+# to match what was actually sold, checked on both the API (the real
+# enforcement) and reflected in the UI (so a Solo customer never even
+# sees a button for something they can't use). Unset = unrestricted,
+# matching Agency - existing deployments aren't retroactively locked
+# out just because this variable didn't exist before.
+TOOLKIT_TIER = os.environ.get("TOOLKIT_TIER", "agency").strip().lower()
+if TOOLKIT_TIER not in ("solo", "small_firm", "agency"):
+    print(f"⚠️  TOOLKIT_TIER='{TOOLKIT_TIER}' is not recognized (expected solo/small_firm/agency) - "
+          f"treating this deployment as unrestricted (agency).")
+    TOOLKIT_TIER = "agency"
+
+
+def require_tier_above_solo():
+    """A standalone dependency for the three tier-gated endpoints -
+    carries no auth level of its own, so it's added ALONGSIDE each
+    endpoint's existing require_read/require_write, never replacing
+    it. Not just a frontend hide, either - a Solo-tier user could
+    otherwise call these directly and bypass a UI-only restriction
+    entirely."""
+    if TOOLKIT_TIER == "solo":
+        raise HTTPException(
+            403,
+            "This tool isn't included on the Solo plan. Contact us to upgrade to Small Firm or Agency."
+        )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -523,6 +551,7 @@ def get_me(current_user=Depends(require_read)):
         "role": current_user["role"],
         "totp_enabled": bool(full_record.get("totp_enabled")),
         "has_completed_onboarding": bool(full_record.get("has_completed_onboarding")),
+        "tier": TOOLKIT_TIER,
     }
 
 
@@ -1600,7 +1629,7 @@ class TokenRiskCheckRequest(BaseModel):
 
 
 @app.post("/api/token-risk-check")
-def check_token_risk(req: TokenRiskCheckRequest, _auth=Depends(require_read)):
+def check_token_risk(req: TokenRiskCheckRequest, _auth=Depends(require_read), _tier=Depends(require_tier_above_solo)):
     _check_general_rate_limit("token-risk-check", _auth["username"], window_seconds=300, max_requests=30)
     chain = lt.detect_chain(req.address)
     if chain == "solana":
@@ -1711,7 +1740,7 @@ class SwapCorrelationCheckRequest(BaseModel):
 
 
 @app.post("/api/swap-correlation/check")
-def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(require_read)):
+def check_swap_correlation(req: SwapCorrelationCheckRequest, _auth=Depends(require_read), _tier=Depends(require_tier_above_solo)):
     """
     Checks whether a SPECIFIC wallet went through a known no-KYC
     instant-swap service or cross-chain bridge - without needing to
@@ -1809,14 +1838,14 @@ class DepositCheckRequest(BaseModel):
 
 
 @app.get("/api/deposit-map")
-def get_deposit_map(_auth=Depends(require_read)):
+def get_deposit_map(_auth=Depends(require_read), _tier=Depends(require_tier_above_solo)):
     """Every address confirmed so far as an exchange deposit address, via consolidation sweeps."""
     with _file_lock:
         return lt.load_deposit_map()
 
 
 @app.post("/api/deposit-map/check")
-def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_write)):
+def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_write), _tier=Depends(require_tier_above_solo)):
     """
     Checks whether a SPECIFIC address has swept funds into a known
     exchange wallet - i.e. confirms/denies it as a deposit address for
