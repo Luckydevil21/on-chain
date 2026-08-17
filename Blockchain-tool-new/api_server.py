@@ -667,6 +667,33 @@ def get_seat_info(_admin=Depends(require_write)):
     return {"used": len(auth.list_users()), "max_seats": TOOLKIT_MAX_SEATS}
 
 
+class CreateWalletAlertRequest(BaseModel):
+    wallet_address: str
+    label: Optional[str] = None
+    evm_chain: Optional[str] = None
+
+
+@app.post("/api/wallet-alerts")
+def create_wallet_alert(req: CreateWalletAlertRequest, _auth=Depends(require_read)):
+    result = lt.create_wallet_alert(_auth["username"], req.wallet_address, req.label, req.evm_chain or lt.DEFAULT_EVM_CHAIN)
+    if not result["success"]:
+        raise HTTPException(400, result["message"])
+    auth.log_action(_auth["username"], "wallet_alert_created", target=req.wallet_address)
+    return result
+
+
+@app.get("/api/wallet-alerts")
+def get_wallet_alerts(_auth=Depends(require_read)):
+    return lt.list_wallet_alerts(_auth["username"])
+
+
+@app.delete("/api/wallet-alerts/{alert_id}")
+def remove_wallet_alert(alert_id: str, _auth=Depends(require_read)):
+    if not lt.delete_wallet_alert(alert_id, _auth["username"]):
+        raise HTTPException(404, "No alert with that ID for your account.")
+    return {"success": True}
+
+
 @app.post("/api/users/{username}/role")
 def update_user_role(username: str, req: UpdateUserRoleRequest, _admin=Depends(require_write)):
     if req.role not in auth.VALID_ROLES:
@@ -1061,6 +1088,17 @@ def add_case_explore_edges(case_id: str, req: SaveCaseExploreEdgesRequest, _auth
               "tx_hash": e.tx_hash, "tx_time_utc": e.tx_time_utc, "explorer_url": e.explorer_url}
              for e in req.edges]
     lt.save_case_explore_edges(case_id, edges, req.chain, _auth["username"])
+    return {"success": True}
+
+
+@app.post("/api/cases/{case_id}/explore-graph/edges/delete")
+def remove_case_explore_edges(case_id: str, req: SaveCaseExploreEdgesRequest, _auth=Depends(require_read)):
+    """Reverses a "Show all" batch for real - so hidden connections
+    stay genuinely gone, not just out of the current view, the next
+    time this case's graph is opened."""
+    edges = [{"from": e.from_, "to": e.to, "tx_hash": e.tx_hash} for e in req.edges]
+    lt.delete_case_explore_edges(case_id, edges)
+    auth.log_action(_auth["username"], "case_explore_edges_hidden", target=case_id, detail=f"{len(edges)} edge(s)")
     return {"success": True}
 
 
