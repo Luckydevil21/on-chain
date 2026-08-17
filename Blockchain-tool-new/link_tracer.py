@@ -416,6 +416,15 @@ SECONDS_BETWEEN_REQUESTS = 0.3
 # reasonable rather than maxing everything out by default.
 # --------------------------------------------------------------
 BITCOIN_TRACE_MAX_PAGES = 500  # ~25-50 tx per page (mempool.space) - a genuine safety cap against a pathological wallet (a major exchange's hot wallet, say), not a "recent history only" limit. A real transaction must never go missing just because a wallet has had a lot of activity since then.
+
+# How long a wallet's fetched activity stays cached before being
+# re-fetched fresh - see get_outgoing_counterparties/
+# get_incoming_counterparties. Exists specifically to offset the real
+# cost of BITCOIN_TRACE_MAX_PAGES: the FIRST lookup of a high-activity
+# address is still exactly as thorough (and can still be slow) as
+# before, but revisiting the same address - which is how most real
+# investigations actually work - is instant within this window.
+WALLET_ACTIVITY_CACHE_MINUTES = 5
 XRP_TRACE_MAX_PAGES = 4       # 50 tx per page (XRPL)
 TRON_TRACE_MAX_PAGES = 4      # 50 tx per page (TronGrid)
 ETHEREUM_TRACE_MAX_PAGES = 4  # 1000 tx per page (Etherscan)
@@ -1319,7 +1328,66 @@ def get_incoming_solana(address):
     return _get_solana_hops(address, "incoming")
 
 
-def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
+def _cache_key_for_chain(chain, evm_chain):
+    """Ethereum-family chains (mainnet, Arbitrum, Base, etc.) all share
+    chain == "ethereum" but have completely different activity - the
+    cache key has to fold in evm_chain too, or an Arbitrum lookup and
+    a mainnet lookup for the same address would wrongly collide."""
+    return f"ethereum:{evm_chain}" if chain == "ethereum" else chain
+
+
+def _get_cached_wallet_activity(cache_chain_key, address, direction):
+    """Returns cached hops if a fresh-enough entry exists (see
+    WALLET_ACTIVITY_CACHE_MINUTES), else None. A cache MISS is the
+    normal, expected case for any address not recently looked up -
+    this isn't an error, just "go fetch it for real"."""
+    try:
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT hops_json FROM wallet_activity_cache "
+                    "WHERE chain = %s AND lower(address) = lower(%s) AND direction = %s "
+                    "AND cached_at > now() - interval '%s minutes';",
+                    (cache_chain_key, address, direction, WALLET_ACTIVITY_CACHE_MINUTES)
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                hops = json.loads(row[0])
+                for hop in hops:
+                    if hop.get("tx_time"):
+                        hop["tx_time"] = datetime.fromisoformat(hop["tx_time"])
+                return hops
+    except Exception as error:
+        print(f"⚠️  Could not read wallet activity cache: {error}")
+        return None
+
+
+def _store_wallet_activity_cache(cache_chain_key, address, direction, hops):
+    """Best-effort - a caching failure should never break a real
+    trace, just mean the next lookup of this address isn't sped up."""
+    try:
+        serializable = []
+        for hop in hops:
+            h = dict(hop)
+            if h.get("tx_time"):
+                h["tx_time"] = h["tx_time"].isoformat()
+            serializable.append(h)
+        with auth._get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO wallet_activity_cache (chain, address, direction, hops_json, cached_at) "
+                    "VALUES (%s, %s, %s, %s, now()) "
+                    "ON CONFLICT (chain, address, direction) DO UPDATE SET "
+                    "hops_json = EXCLUDED.hops_json, cached_at = now();",
+                    (cache_chain_key, address, direction, json.dumps(serializable))
+                )
+                conn.commit()
+    except Exception as error:
+        print(f"⚠️  Could not write wallet activity cache: {error}")
+
+
+def _get_outgoing_counterparties_uncached(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "ethereum":
         return get_outgoing_ethereum(address, evm_chain)
     if chain == "bitcoin":
@@ -1331,6 +1399,25 @@ def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "solana":
         return get_outgoing_solana(address)
     return [], 0
+
+
+def get_outgoing_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
+    """Cache-aware wrapper - repeated lookups of the same address
+    within WALLET_ACTIVITY_CACHE_MINUTES are served instantly instead
+    of re-fetching, which matters most for a high-activity Bitcoin
+    wallet that may need many paginated calls to fetch completely
+    (see BITCOIN_TRACE_MAX_PAGES). The first lookup of any address is
+    still exactly as thorough as before - this speeds up REVISITING
+    an address, not the initial fetch itself."""
+    cache_key = _cache_key_for_chain(chain, evm_chain)
+    cached = _get_cached_wallet_activity(cache_key, address, "out")
+    if cached is not None:
+        unique = len(set(h["counterparty"].lower() for h in cached if h.get("counterparty")))
+        return cached, unique
+    hops, unique_count = _get_outgoing_counterparties_uncached(chain, address, evm_chain)
+    if chain:  # don't cache an unrecognized-chain empty result
+        _store_wallet_activity_cache(cache_key, address, "out", hops)
+    return hops, unique_count
 
 
 # ====================================================================
@@ -1815,7 +1902,7 @@ def check_common_funding_source(addresses):
     return {"per_address": per_address, "clusters": clusters}
 
 
-def get_incoming_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
+def _get_incoming_counterparties_uncached(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "ethereum":
         return get_incoming_ethereum(address, evm_chain)
     if chain == "bitcoin":
@@ -1827,6 +1914,20 @@ def get_incoming_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
     if chain == "solana":
         return get_incoming_solana(address)
     return [], 0
+
+
+def get_incoming_counterparties(chain, address, evm_chain=DEFAULT_EVM_CHAIN):
+    """Cache-aware wrapper - see get_outgoing_counterparties for the
+    full reasoning, identical here for the reverse direction."""
+    cache_key = _cache_key_for_chain(chain, evm_chain)
+    cached = _get_cached_wallet_activity(cache_key, address, "in")
+    if cached is not None:
+        unique = len(set(h["counterparty"].lower() for h in cached if h.get("counterparty")))
+        return cached, unique
+    hops, unique_count = _get_incoming_counterparties_uncached(chain, address, evm_chain)
+    if chain:
+        _store_wallet_activity_cache(cache_key, address, "in", hops)
+    return hops, unique_count
 
 
 # ====================================================================
