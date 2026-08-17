@@ -248,6 +248,7 @@ def _update_user_record(username, **fields):
     allowed_columns = {
         "password_hash", "role", "email", "totp_secret",
         "totp_enabled", "reset_token", "reset_token_expires",
+        "has_completed_onboarding",
     }
     set_clauses = []
     values = []
