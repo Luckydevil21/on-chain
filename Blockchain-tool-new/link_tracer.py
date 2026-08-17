@@ -128,7 +128,7 @@ from datetime import datetime, timezone, timedelta
 # SECTION 1: SETTINGS YOU CAN EDIT
 # ====================================================================
 
-ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "DSYVYN6A6E1FKWNGIPZRYDUR349XEUWYCZ")
+ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
 
 # --------------------------------------------------------------
 # OTHER EVM CHAINS. Etherscan's V2 API unifies 60+ EVM-compatible
