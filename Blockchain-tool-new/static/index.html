@@ -814,6 +814,7 @@ function chainSymbol(chain) {
 
 const SECTIONS = [
   { id: "glossary", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.6 a2.2 2.2 0 1 1 3.4 1.8 c-0.8 0.6 -1.2 1.1 -1.2 2.1"/><circle cx="10" cy="14" r="0.6" fill="currentColor"/></svg>`, label: "Glossary", sub: "Plain-English explanations of the terms used throughout this app", adminOnly: false, essential: true, group: "Help" },
+  { id: "wallet-alerts", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 a5 5 0 0 1 5 5 v2.5 l1.5 3 h-13 l1.5 -3 V8 a5 5 0 0 1 5 -5 Z"/><path d="M8 15.5 a2 2 0 0 0 4 0"/></svg>`, label: "Wallet Alerts", sub: "Get emailed the moment a wallet you're watching shows new activity", adminOnly: false, essential: false, group: "Investigate" },
   { id: "link-trace", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2.2"/><circle cx="15" cy="5" r="2.2"/><path d="M6.8 13.2 L13 7"/><path d="M13 3.5 L15.5 6 L12 8.5"/></svg>`, label: "Link Tracer", sub: "Trace by wallet, transaction hash, or wallet + date", adminOnly: false, essential: true, group: "Investigate" },
   { id: "find-connection", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="10" r="2.5"/><circle cx="16" cy="10" r="2.5"/><path d="M6.5 10 H13.5" stroke-dasharray="2.2 1.8"/></svg>`, label: "Find Connection", sub: "Does money from one wallet ever reach another?", adminOnly: false, essential: true, group: "Investigate" },
   { id: "deposit-map", icon: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3 L9.5 9.5"/><path d="M17 3 L10.5 9.5"/><path d="M3 17 L9.5 10.5"/><path d="M10 10 V16"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/></svg>`, label: "Deposit Map", sub: "Confirm exchange/instant-swap deposit addresses via consolidation sweeps", adminOnly: false, group: "Investigate" },
@@ -1361,6 +1362,7 @@ function renderAppShell() {
   contentEl.innerHTML = "";
   renderLinkTraceSection();
   renderGlossarySection();
+  renderWalletAlertsSection();
   renderFindConnectionSection();
   renderSavedCasesSection();
   renderKnownEntitiesSection();
@@ -2779,6 +2781,7 @@ function renderCaseWalletsTable(wallets) {
 }
 
 async function deleteCaseWallet(address) {
+  if (!confirm(`Remove ${address} from this case? This can't be undone.`)) return;
   const caseId = savedCasesState.openCaseId;
   if (!caseId) return;
   await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/wallets/${encodeURIComponent(address)}`, { method: "DELETE" });
@@ -2945,6 +2948,7 @@ async function loadKnownEntities() {
   }
 }
 async function deleteKnownEntity(address) {
+  if (!confirm(`Remove this attribution for ${address}? This can't be undone - future traces will treat it as unattributed again.`)) return;
   await apiFetch("/api/known-entities/" + encodeURIComponent(address), { method: "DELETE" });
   loadKnownEntities();
 }
@@ -2968,6 +2972,7 @@ async function loadOpReturnPatterns() {
   }
 }
 async function deleteOpReturnPattern(index) {
+  if (!confirm("Remove this message pattern? This can't be undone.")) return;
   await apiFetch("/api/op-return-patterns/" + index, { method: "DELETE" });
   loadOpReturnPatterns();
 }
@@ -3468,6 +3473,82 @@ function renderGlossarySection() {
   document.getElementById("content").appendChild(section);
 }
 
+function renderWalletAlertsSection() {
+  const section = el("div", "section", "");
+  section.id = "section-wallet-alerts";
+  section.innerHTML = `
+    <div class="card">
+      <h3>Set an alert on a wallet</h3>
+      <div class="field hint mb-md">
+        Checked roughly once an hour, separately from this app itself - so it keeps working even
+        when nobody's actively using the tool. You'll get one email as soon as new activity is
+        detected, not a running log of everything after that.
+      </div>
+      <div class="field"><label>Wallet address</label><input type="text" id="waWallet" placeholder="The address to watch"></div>
+      <div class="field"><label>Label (optional)</label><input type="text" id="waLabel" placeholder="e.g. Victim wallet, Case 2026-014"></div>
+      <button class="btn" id="waAddBtn">Set alert</button>
+    </div>
+    <div class="status-line" id="waStatus"></div>
+    <div class="card"><h3>Your alerts</h3><div id="waList"></div></div>
+  `;
+  document.getElementById("content").appendChild(section);
+
+  document.getElementById("waAddBtn").onclick = async () => {
+    const wallet = document.getElementById("waWallet").value.trim();
+    const label = document.getElementById("waLabel").value.trim();
+    const statusEl = document.getElementById("waStatus");
+    if (!wallet) { statusEl.textContent = "Enter a wallet address first."; statusEl.className = "status-line error"; return; }
+    statusEl.textContent = "Setting alert...";
+    statusEl.className = "status-line";
+    try {
+      await apiFetch("/api/wallet-alerts", { method: "POST", body: JSON.stringify({ wallet_address: wallet, label: label || null }) });
+      statusEl.textContent = "Alert set - starting from this point forward.";
+      document.getElementById("waWallet").value = "";
+      document.getElementById("waLabel").value = "";
+      loadWalletAlerts();
+    } catch (err) {
+      statusEl.textContent = "Error: " + err.message;
+      statusEl.className = "status-line error";
+    }
+  };
+
+  loadWalletAlerts();
+}
+
+async function loadWalletAlerts() {
+  const listEl = document.getElementById("waList");
+  if (!listEl) return;
+  try {
+    const alerts = await apiFetch("/api/wallet-alerts");
+    if (!alerts.length) { listEl.innerHTML = `<div class="empty-state">No alerts set yet.</div>`; return; }
+    const table = el("table", "data-table");
+    table.innerHTML = `<tr><th>Wallet</th><th>Label</th><th>Chain</th><th>Set</th><th>Last checked</th><th></th></tr>` + alerts.map(a => `
+      <tr>
+        <td class="select-mono">${escapeHtml(truncateAddress(a.wallet_address))}</td>
+        <td>${escapeHtml(a.label || "-")}</td>
+        <td>${escapeHtml(a.chain || "-")}</td>
+        <td>${escapeHtml(a.created_at ? formatFriendlyDate(a.created_at) : "-")}</td>
+        <td>${escapeHtml(a.last_checked_at ? formatFriendlyDate(a.last_checked_at) : "not yet")}</td>
+        <td><button class="btn secondary btn-table-action" onclick="deleteWalletAlert('${escapeHtml(a.id)}')">Remove</button></td>
+      </tr>`
+    ).join("");
+    listEl.innerHTML = "";
+    listEl.appendChild(table);
+  } catch (err) {
+    listEl.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function deleteWalletAlert(alertId) {
+  if (!confirm("Remove this alert? You'll stop getting notified about this wallet.")) return;
+  try {
+    await apiFetch("/api/wallet-alerts/" + encodeURIComponent(alertId), { method: "DELETE" });
+    loadWalletAlerts();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
 function renderFindConnectionSection() {
   const section = el("div", "section", "");
   section.id = "section-find-connection";
@@ -3589,6 +3670,11 @@ let exploreGraphRootAddress = null;
 // to that case, restorable later exactly as left.
 let exploreGraphCaseId = null;
 let exploreGraphDetectedChain = null;
+// Tracks, per address, exactly which edge IDs the last "Show all"
+// click for that address's connection list added - so "Hide" can
+// reverse precisely that batch, never touching anything individually
+// added or already present beforehand.
+let exploreGraphShowAllTracking = new Map();
 
 const EXPLORE_GRAPH_COLORS = {
   root: { border: "#4f8cc9", background: "#142331" },
@@ -3680,6 +3766,7 @@ function renderNoteDetail(nodeId, nodesDataSet, caseId, detailEl) {
     }
   };
   deleteBtn.onclick = async () => {
+    if (!confirm("Delete this note? This can't be undone.")) return;
     if (caseId) {
       const realId = nodeId.replace("note-", "");
       try {
@@ -3706,6 +3793,7 @@ async function loadCaseExploreGraph(caseId) {
   exploreGraphCaseId = caseId;
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
+  exploreGraphShowAllTracking = new Map();
   exploreGraphRootAddress = null;
   containerEl.innerHTML = "";
   detailEl.innerHTML = "";
@@ -3928,6 +4016,7 @@ async function startExploreGraph() {
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
+  exploreGraphShowAllTracking = new Map();
   exploreGraphRootAddress = wallet;
   exploreGraphCaseId = null;
   exploreGraphDetectedChain = null;
@@ -4087,10 +4176,16 @@ function renderExploreGraphConnectionsList(address, detailEl) {
       </div>
     `;
   }).join("");
+
+  const showAllTracked = exploreGraphShowAllTracking.get(address.toLowerCase());
+  const toggleButtonHtml = showAllTracked && showAllTracked.size
+    ? `<button class="btn secondary" id="egShowAllBtn" style="margin-top:10px; font-size:12px; padding:7px 14px;">Hide the ${showAllTracked.size} connection(s) shown via "Show all"</button>`
+    : `<button class="btn" id="egShowAllBtn" style="margin-top:10px; font-size:12px; padding:7px 14px;">Show all ${result.edges.length} connections</button>`;
+
   listCard.innerHTML = `
     <div class="footnote mb-sm">${result.edges.length} connection(s) - add the ones relevant to the funds being traced, or show everything at once.</div>
     ${rowsHtml}
-    <button class="btn" id="egShowAllBtn" style="margin-top:10px; font-size:12px; padding:7px 14px;">Show all ${result.edges.length} connections</button>
+    ${toggleButtonHtml}
   `;
   detailEl.appendChild(listCard);
 
@@ -4101,7 +4196,21 @@ function renderExploreGraphConnectionsList(address, detailEl) {
     };
   });
   document.getElementById("egShowAllBtn").onclick = () => {
-    result.edges.forEach(edge => addExploreGraphConnection(edge, result.nodes, result.chain));
+    if (showAllTracked && showAllTracked.size) {
+      hideShowAllConnections(address, showAllTracked);
+      exploreGraphShowAllTracking.delete(address.toLowerCase());
+    } else {
+      // Only the edges NOT already present get tracked as "added by
+      // this click" - anything individually added before stays
+      // individually added, and won't be touched by a later Hide.
+      const newlyAddedIds = new Set();
+      result.edges.forEach(edge => {
+        const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
+        if (!alreadyAddedIds.has(edgeId)) newlyAddedIds.add(edgeId);
+        addExploreGraphConnection(edge, result.nodes, result.chain);
+      });
+      exploreGraphShowAllTracking.set(address.toLowerCase(), newlyAddedIds);
+    }
     renderExploreGraphConnectionsList(address, detailEl);
   };
 }
@@ -4109,6 +4218,43 @@ function renderExploreGraphConnectionsList(address, detailEl) {
 // Adds one specific connection (its counterparty node, if not already
 // present, plus the edge itself) to the graph - shared by both the
 // individual "Add to graph" buttons and "Show all".
+// Reverses exactly one "Show all" batch - removes only the tracked
+// edges, then removes any node that's now genuinely disconnected from
+// the rest of the graph. A node stays if ANYTHING else still
+// references it - an individually-added connection, a different
+// "Show all" batch, or the user having expanded it further - so this
+// can never silently undo work the user did separately.
+function hideShowAllConnections(address, trackedEdgeIds) {
+  // Grab the full edge objects BEFORE removing them locally - needed
+  // for the case-persistence call below, and unavailable afterward.
+  const removedEdges = [...trackedEdgeIds].map(edgeId => exploreGraphEdges.get(edgeId)).filter(Boolean);
+  trackedEdgeIds.forEach(edgeId => exploreGraphEdges.remove(edgeId));
+
+  const remainingEdges = exploreGraphEdges.get();
+  const referencedAddresses = new Set();
+  remainingEdges.forEach(e => { referencedAddresses.add(e.from.toLowerCase()); referencedAddresses.add(e.to.toLowerCase()); });
+
+  const rootLower = (exploreGraphRootAddress || "").toLowerCase();
+  exploreGraphNodes.get().forEach(node => {
+    if (node.isNote) return;  // notes are never touched by this - they aren't part of any edge batch
+    if (node.id.toLowerCase() === rootLower || node.id.toLowerCase() === address.toLowerCase()) return;
+    if (!referencedAddresses.has(node.id.toLowerCase())) {
+      exploreGraphNodes.remove(node.id);
+    }
+  });
+
+  // For a case-linked graph, hiding needs to genuinely delete these
+  // from what's saved too - otherwise they'd silently reappear the
+  // next time this case is reopened, since "Show all" already
+  // persisted them the moment they were added.
+  if (exploreGraphCaseId && removedEdges.length) {
+    const edgesToDelete = removedEdges.map(e => ({ from: e.from, to: e.to, tx_hash: e.id.split("->")[2] }));
+    apiFetch(`/api/cases/${encodeURIComponent(exploreGraphCaseId)}/explore-graph/edges/delete`, {
+      method: "POST", body: JSON.stringify({ edges: edgesToDelete }),
+    }).catch(err => console.error("Could not remove these connections from the saved case:", err.message));
+  }
+}
+
 function addExploreGraphConnection(edge, nodesMeta, chain) {
   const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
   if (exploreGraphEdges.get(edgeId)) return;  // already added
@@ -4455,6 +4601,7 @@ async function changeUserRole(username, newRole) {
   }
 }
 async function deleteUserAccount(username) {
+  if (!confirm(`Remove the account "${username}"? This can't be undone, and immediately signs them out of any active session.`)) return;
   try {
     await apiFetch("/api/users/" + encodeURIComponent(username), { method: "DELETE" });
     loadUsers();
