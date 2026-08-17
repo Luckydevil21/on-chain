@@ -1656,52 +1656,6 @@ def check_address_poisoning(req: PoisoningCheckRequest, _auth=Depends(require_re
     return result
 
 
-class FlagAddressRequest(BaseModel):
-    address: str
-    chain: Optional[str] = None
-    context: Optional[str] = None
-
-
-class ResolveFlagRequest(BaseModel):
-    resolution_notes: Optional[str] = None
-
-
-@app.post("/api/flagged-addresses")
-def flag_address(req: FlagAddressRequest, _auth=Depends(require_read)):
-    """Anyone can flag an unattributed address for an admin/specialist to
-    research later - see link_tracer.py's flag_address_for_review()."""
-    result = lt.flag_address_for_review(req.address, req.chain, req.context, _auth["username"])
-    if not result["success"]:
-        raise HTTPException(503, result["message"])
-    auth.log_action(_auth["username"], "address_flagged", target=req.address)
-    return result
-
-
-@app.get("/api/flagged-addresses")
-def get_flagged_addresses(status: str = "pending", _auth=Depends(require_read)):
-    if status not in ("pending", "resolved", "dismissed"):
-        raise HTTPException(400, "status must be pending, resolved, or dismissed.")
-    return lt.load_flagged_addresses(status)
-
-
-@app.post("/api/flagged-addresses/{flag_id}/resolve")
-def resolve_flag(flag_id: str, req: ResolveFlagRequest, _admin=Depends(require_write)):
-    result = lt.resolve_flagged_address(flag_id, _admin["username"], req.resolution_notes, dismiss=False)
-    if not result["success"]:
-        raise HTTPException(503, result["message"])
-    auth.log_action(_admin["username"], "flag_resolved", target=flag_id)
-    return result
-
-
-@app.post("/api/flagged-addresses/{flag_id}/dismiss")
-def dismiss_flag(flag_id: str, req: ResolveFlagRequest, _admin=Depends(require_write)):
-    result = lt.resolve_flagged_address(flag_id, _admin["username"], req.resolution_notes, dismiss=True)
-    if not result["success"]:
-        raise HTTPException(503, result["message"])
-    auth.log_action(_admin["username"], "flag_dismissed", target=flag_id)
-    return result
-
-
 # ====================================================================
 # SECTION 7D: TRANSACTION HASH LOOKUP + DATE-ANCHORED SEARCH
 # ====================================================================
@@ -1876,4 +1830,3 @@ def check_deposit_consolidation(req: DepositCheckRequest, _auth=Depends(require_
         result = lt.manual_check_deposit_consolidation(req.address)
     auth.log_action(_auth["username"], "deposit_map_check", target=req.address)
     return result
-
