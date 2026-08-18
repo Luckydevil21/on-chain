@@ -2441,7 +2441,7 @@ function renderTraceGraph(data, allPaths, container) {
       shape: isRoot ? "box" : "dot",
       size: isRoot ? 22 : 14,
       color: nodeColor(addr, isRoot),
-      font: { color: "#000000", size: 12 },
+      font: { color: "#c9d1d9", size: 12 },
     };
   }));
 
@@ -2457,7 +2457,7 @@ function renderTraceGraph(data, allPaths, container) {
         title: `Memo-stated destination on ${hint.dest.chain}\n${hint.dest.address}`,
         shape: "dot", size: 14,
         color: { border: "#a371f7", background: "#241a33" },  // distinct purple - "this is a chain jump, not a normal hop"
-        font: { color: "#000000", size: 12 },
+        font: { color: "#c9d1d9", size: 12 },
       });
     }
   });
@@ -3723,10 +3723,12 @@ function renderExploreGraphIntoContainer(container) {
       <button class="btn" id="egStartBtn">Start exploring</button>
     </div>
     <div class="status-line" id="egStatus"></div>
-    <div style="display:flex; gap:8px; margin-bottom:10px;">
+    <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
       <button class="btn secondary" id="egAddNoteBtn" style="display:none; font-size:12px; padding:7px 14px;">📝 Add note</button>
       ${isAdmin() ? `<button class="btn secondary" id="egSaveCaseBtn" style="display:none; font-size:12px; padding:7px 14px;">💾 Save to Saved Cases</button>` : ""}
+      ${isAdmin() ? `<button class="btn secondary" id="egEvidencePackBtn" style="display:none; font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>` : ""}
     </div>
+    <div id="egEvidencePackResult"></div>
     <div id="egGraphRow" style="display:none; margin-top:14px; gap:14px; align-items:flex-start;">
       <div id="egGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
       <div id="egNodeDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
@@ -3746,6 +3748,14 @@ function renderExploreGraphIntoContainer(container) {
   };
   if (isAdmin()) {
     document.getElementById("egSaveCaseBtn").onclick = () => saveExploreGraphAsCase();
+    document.getElementById("egEvidencePackBtn").onclick = () => {
+      const resultEl = document.getElementById("egEvidencePackResult");
+      if (!exploreGraphCaseId) {
+        resultEl.innerHTML = `<div class="status-line error">Save this graph to a Saved Case first (the button above) - an Evidence Pack needs to read from what's actually been saved, not just what's currently on screen.</div>`;
+        return;
+      }
+      generateEvidencePackFromCaseGraph(exploreGraphCaseId, "egEvidencePackBtn", "egEvidencePackResult");
+    };
   }
 }
 
@@ -3915,7 +3925,7 @@ async function loadCaseExploreGraph(caseId) {
       shape: n.is_case_wallet ? "box" : "dot",
       size: n.is_case_wallet ? 22 : 14,
       color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
-      font: { color: "#000000", size: 12 },
+      font: { color: "#c9d1d9", size: 12 },
       shapeProperties: { borderDashes: alreadyExplored ? false : [4, 3] },
       borderWidth: alreadyExplored ? 2 : 1,
       entityName: n.entity_name, entityType: n.entity_type,
@@ -3997,9 +4007,9 @@ async function loadCaseExploreGraph(caseId) {
 // Graph - for an investigation built manually rather than through an
 // automated Link Tracer search. Reuses the exact same PDF download
 // pattern as the regular Evidence Pack card.
-async function generateEvidencePackFromCaseGraph(caseId) {
-  const btn = document.getElementById("caseGraphEvidencePackBtn");
-  const resultEl = document.getElementById("caseGraphEvidencePackResult");
+async function generateEvidencePackFromCaseGraph(caseId, btnId = "caseGraphEvidencePackBtn", resultElId = "caseGraphEvidencePackResult") {
+  const btn = document.getElementById(btnId);
+  const resultEl = document.getElementById(resultElId);
   btn.disabled = true;
   resultEl.innerHTML = `<div class="footnote mt-sm">Generating...</div>`;
   try {
@@ -4133,7 +4143,10 @@ async function startExploreGraph() {
   detailEl.innerHTML = "";
   rowEl.style.display = "flex";
   document.getElementById("egAddNoteBtn").style.display = "inline-block";
-  if (isAdmin()) document.getElementById("egSaveCaseBtn").style.display = "inline-block";
+  if (isAdmin()) {
+    document.getElementById("egSaveCaseBtn").style.display = "inline-block";
+    document.getElementById("egEvidencePackBtn").style.display = "inline-block";
+  }
   containerEl.innerHTML = "";
   exploreGraphExpanded = new Set();
   exploreGraphPendingConnections = new Map();
@@ -4145,7 +4158,7 @@ async function startExploreGraph() {
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
     shape: "box", size: 22, color: EXPLORE_GRAPH_COLORS.root,
-    font: { color: "#000000", size: 12 },
+    font: { color: "#c9d1d9", size: 12 },
   }]);
   exploreGraphEdges = new vis.DataSet([]);
 
@@ -4422,7 +4435,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
         shape: "dot", size: 14,
         color: exploreGraphNodeColor(meta && meta.entity_type),
-        font: { color: "#000000", size: 12 },
+        font: { color: "#c9d1d9", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
         entityName: meta && meta.entity_name, entityType: meta && meta.entity_type,
         x: anchorPos.x + (Math.random() * 200 - 100), y: anchorPos.y + (Math.random() * 200 - 100),
@@ -4452,7 +4465,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         title: `Memo-stated destination on ${edge.embedded_destination_chain}\n${edge.embedded_destination_address}`,
         shape: "dot", size: 14,
         color: EXPLORE_GRAPH_COLORS.crossChain,
-        font: { color: "#000000", size: 12 },
+        font: { color: "#c9d1d9", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },
       });
     }
