@@ -2696,7 +2696,6 @@ function formatFiatLabel(gbp, usd) {
 // ============================================================
 // SAVED CASES
 // ============================================================
-const savedCasesState = { openCaseId: null };
 
 function populateCasePicker() {
   const select = document.getElementById("ltCaseId");
@@ -2729,7 +2728,6 @@ function renderSavedCasesSection() {
     <div id="casesListView">
       <div class="card"><h3>Your saved cases</h3><div id="casesList"></div></div>
     </div>
-    <div id="caseDetailView" style="display:none;"></div>
   `;
   document.getElementById("content").appendChild(section);
 
@@ -2762,11 +2760,14 @@ async function loadCases() {
     const table = el("table", "data-table");
     table.innerHTML = `<tr><th>Name</th><th>Wallets</th><th>Created by</th><th>Created</th><th></th></tr>` + cases.map(c =>
       `<tr>
-        <td><a href="#" onclick="openCase('${escapeHtml(c.id)}'); return false;">${escapeHtml(c.name)}</a></td>
+        <td>${escapeHtml(c.name)}</td>
         <td>${c.wallet_count}</td>
         <td>${escapeHtml(c.created_by)}</td>
         <td>${escapeHtml(c.created_at || "")}</td>
-        <td>${isAdmin() ? `<button class="btn secondary btn-table-action"  onclick="deleteCase('${escapeHtml(c.id)}')">Delete</button>` : ""}</td>
+        <td>
+          <button class="btn secondary btn-table-action" style="margin-right:6px;" onclick="openCaseInGraph('${escapeHtml(c.id)}')">Open</button>
+          ${isAdmin() ? `<button class="btn secondary btn-table-action"  onclick="deleteCase('${escapeHtml(c.id)}')">Delete</button>` : ""}
+        </td>
       </tr>`
     ).join("");
     listEl.appendChild(table);
@@ -2782,100 +2783,41 @@ async function deleteCase(caseId) {
   populateCasePicker();
 }
 
-async function openCase(caseId) {
-  savedCasesState.openCaseId = caseId;
-  document.getElementById("casesListView").style.display = "none";
-  const detailView = document.getElementById("caseDetailView");
-  detailView.style.display = "block";
-  detailView.innerHTML = `<div class="empty-state">Loading...</div>`;
+// Opens a saved case directly into the Link Tracer's Graph tab -
+// reuses the exact same case-linked template and loadCaseExploreGraph
+// logic that used to render inline within Saved Cases itself, just
+// injected into the graph tab's own container instead, so it's the
+// same polished, well-tested graph view everywhere, not a second copy.
+function openCaseInGraph(caseId) {
+  switchSection("link-trace");
+  const graphModeBtn = document.querySelector('#ltModeToggle button[data-mode="graph"]');
+  if (graphModeBtn) graphModeBtn.click();
 
-  try {
-    const caseData = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
-    detailView.innerHTML = `
-      <button class="btn secondary mb-md" id="caseBackBtn" >← All cases</button>
-      <div class="card">
-        <h3>${escapeHtml(caseData.name)}</h3>
-        ${caseData.notes ? `<div class="hint mb-sm" >${escapeHtml(caseData.notes)}</div>` : ""}
-        <div class="footnote">Created by ${escapeHtml(caseData.created_by)} on ${escapeHtml(caseData.created_at || "")}</div>
-      </div>
-      ${isAdmin() ? `<div class="card">
-        <h3>Add a wallet to this case</h3>
-        <div class="field"><label>Address</label><input type="text" id="cwAddress"></div>
-        <div class="field"><label>Source (optional)</label><input type="text" id="cwSource"></div>
-        <div class="field"><label>Context (optional)</label><input type="text" id="cwContext"></div>
-        <button class="btn" id="cwAdd">Add wallet</button>
-      </div>
-      <div class="status-line" id="cwStatus"></div>` : ""}
-      <div class="card"><h3>Wallets in this case</h3><div id="cwList"></div></div>
-      <div class="card"><h3>Case graph</h3>
-        <div class="field hint mb-md">Builds automatically as you explore - reopen this case any time and it's exactly as you left it.</div>
-      </div>
-      <div class="status-line" id="caseGraphStatus"></div>
-      <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-        <button class="btn secondary" id="caseGraphAddNoteBtn" style="font-size:12px; padding:7px 14px;">📝 Add note</button>
-        <button class="btn secondary" id="caseGraphEvidencePackBtn" style="font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>
-      </div>
-      <div id="caseGraphEvidencePackResult"></div>
-      <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
-        <div id="caseGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
-        <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
-      </div>
-    `;
+  const container = document.getElementById("ltGraphTabContent");
+  container.innerHTML = `
+    <button class="btn secondary mb-md" id="caseGraphBackBtn">← Back to standalone graph</button>
+    <div class="card"><h3 id="caseGraphTitle">Loading case...</h3></div>
+    <div class="status-line" id="caseGraphStatus"></div>
+    <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+      <button class="btn secondary" id="caseGraphAddNoteBtn" style="font-size:12px; padding:7px 14px;">📝 Add note</button>
+      <button class="btn secondary" id="caseGraphEvidencePackBtn" style="font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>
+    </div>
+    <div id="caseGraphEvidencePackResult"></div>
+    <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
+      <div id="caseGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
+      <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
+    </div>
+  `;
+  document.getElementById("caseGraphBackBtn").onclick = () => {
+    exploreGraphCaseId = null;
+    renderExploreGraphIntoContainer(container);
+  };
 
-    document.getElementById("caseBackBtn").onclick = () => {
-      detailView.style.display = "none";
-      document.getElementById("casesListView").style.display = "block";
-      savedCasesState.openCaseId = null;
-      exploreGraphCaseId = null;
-    };
+  apiFetch("/api/cases/" + encodeURIComponent(caseId)).then(caseData => {
+    document.getElementById("caseGraphTitle").textContent = caseData.name;
+  }).catch(() => {});
 
-    renderCaseWalletsTable(caseData.wallets);
-    loadCaseExploreGraph(caseId);
-
-    if (isAdmin()) {
-      document.getElementById("cwAdd").onclick = async () => {
-        const address = document.getElementById("cwAddress").value.trim();
-        const source = document.getElementById("cwSource").value.trim();
-        const context = document.getElementById("cwContext").value.trim();
-        const statusEl = document.getElementById("cwStatus");
-        if (!address) { statusEl.textContent = "Enter an address first."; statusEl.className = "status-line error"; return; }
-        try {
-          const r = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/wallets`, { method: "POST", body: JSON.stringify({ address, source, context }) });
-          statusEl.textContent = r.added ? "Added." : (r.message || "Already in this case.");
-          statusEl.className = "status-line";
-          document.getElementById("cwAddress").value = "";
-          const refreshed = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
-          renderCaseWalletsTable(refreshed.wallets);
-          populateCasePicker();
-        } catch (err) { statusEl.textContent = "Error: " + err.message; statusEl.className = "status-line error"; }
-      };
-    }
-  } catch (err) {
-    detailView.innerHTML = `<div class="status-line error">Error: ${escapeHtml(err.message)}</div>`;
-  }
-}
-
-function renderCaseWalletsTable(wallets) {
-  const listEl = document.getElementById("cwList");
-  if (!listEl) return;
-  listEl.innerHTML = "";
-  if (!wallets.length) { listEl.innerHTML = `<div class="empty-state">No wallets in this case yet.</div>`; return; }
-  const table = el("table", "data-table");
-  table.innerHTML = `<tr><th>Address</th><th>Chain</th><th>Added</th><th>Source</th>${isAdmin() ? "<th></th>" : ""}</tr>` + wallets.map(w =>
-    `<tr><td>${escapeHtml(w.address)}</td><td>${escapeHtml(w.chain || "")}</td><td>${escapeHtml(w.added_at || "")}</td><td>${escapeHtml(w.source || "")}</td>
-     ${isAdmin() ? `<td><button class="btn secondary btn-table-action"  onclick="deleteCaseWallet('${escapeHtml(w.address)}')">Remove</button></td>` : ""}</tr>`
-  ).join("");
-  listEl.appendChild(table);
-}
-
-async function deleteCaseWallet(address) {
-  if (!confirm(`Remove ${address} from this case? This can't be undone.`)) return;
-  const caseId = savedCasesState.openCaseId;
-  if (!caseId) return;
-  await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/wallets/${encodeURIComponent(address)}`, { method: "DELETE" });
-  const refreshed = await apiFetch("/api/cases/" + encodeURIComponent(caseId));
-  renderCaseWalletsTable(refreshed.wallets);
-  populateCasePicker();
+  loadCaseExploreGraph(caseId);
 }
 
 // ============================================================
