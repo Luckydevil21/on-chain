@@ -128,7 +128,7 @@ from datetime import datetime, timezone, timedelta
 # SECTION 1: SETTINGS YOU CAN EDIT
 # ====================================================================
 
-ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
+ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "DSYVYN6A6E1FKWNGIPZRYDUR349XEUWYCZ")
 
 # --------------------------------------------------------------
 # OTHER EVM CHAINS. Etherscan's V2 API unifies 60+ EVM-compatible
@@ -2474,27 +2474,41 @@ def decode_op_return_data(scriptpubkey_hex):
 
 def _extract_embedded_destination(decoded_text):
     """
-    PLAIN ENGLISH: Some services (Bridgers.xyz, and likely others) embed
-    the ACTUAL destination address directly in their routing memo, as
-    JSON - e.g. {"destination": "TMbPCvv5c..."}. Unlike swap correlation
-    (a timing/amount HEURISTIC guess), this is the service's OWN stated
+    PLAIN ENGLISH: Some services embed the ACTUAL destination address
+    directly in their routing memo. Unlike swap correlation (a
+    timing/amount HEURISTIC guess), this is the service's OWN stated
     destination - real evidence, not a probability match. Returns
-    {"address", "chain"} if the memo is JSON with a "destination" field
-    that's a recognizable address on any supported chain, else None.
+    {"address", "chain"} if a recognizable address is found in either
+    of two known formats, else None:
+
+    1. JSON: {"destination": "TMbPCvv5c..."}
+    2. Colon-separated (confirmed against a real Bridgers.xyz Bitcoin
+       transaction - Bitcoin's OP_RETURN field is too small for JSON
+       in practice): "{reference}:to:{ASSET}({CHAIN}):{destination}"
+       e.g. "lvY:to:USDT(TRON):THCpJocEp8DQ1wdLZtvZMPuW5jSU7DEDXx" -
+       the reference code varies per transaction, so this doesn't
+       depend on matching it exactly; it looks for the ":to:" marker
+       and validates whatever comes after the final colon as a real
+       address, rather than trusting the memo's own chain label.
     """
     try:
         parsed = json.loads(decoded_text)
+        if isinstance(parsed, dict):
+            destination = parsed.get("destination")
+            if destination and isinstance(destination, str):
+                chain = detect_chain(destination)
+                if chain:
+                    return {"address": destination, "chain": chain}
     except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    destination = parsed.get("destination")
-    if not destination or not isinstance(destination, str):
-        return None
-    chain = detect_chain(destination)
-    if not chain:
-        return None
-    return {"address": destination, "chain": chain}
+        pass
+
+    if ":to:" in decoded_text:
+        candidate = decoded_text.rsplit(":", 1)[-1].strip()
+        chain = detect_chain(candidate)
+        if chain:
+            return {"address": candidate, "chain": chain}
+
+    return None
 
 
 def check_op_return_patterns(decoded_text):
