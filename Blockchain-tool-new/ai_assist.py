@@ -47,7 +47,12 @@ import requests
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "gpt-oss-120b")
+# llama-3.3-70b-versatile was deprecated by Groq on 17 June 2026 - this
+# is their own officially recommended replacement for it specifically
+# (see https://console.groq.com/docs/deprecations). Override via the
+# GROQ_MODEL environment variable without needing a code change if
+# Groq's lineup shifts again later.
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
 if not GROQ_API_KEY:
     print("=" * 70)
