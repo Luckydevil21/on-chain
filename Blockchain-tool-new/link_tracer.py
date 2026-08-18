@@ -2875,16 +2875,25 @@ def _address_has_no_prior_history(address):
 
 
 def get_bitcoin_transaction_by_hash(tx_hash):
-    """Returns full details for a Bitcoin transaction, or None if mempool.space doesn't recognize this hash."""
+    """Returns full details for a Bitcoin transaction. Three possible
+    results - see get_tron_transaction_by_hash's docstring for why
+    "not found" and "the lookup failed" are deliberately kept
+    distinct, not collapsed into the same None."""
     url = f"https://mempool.space/api/tx/{tx_hash}"
     try:
         response = requests.get(url, timeout=15)
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
+    except requests.exceptions.RequestException as error:
+        return {"error": f"Could not reach mempool.space: {error}"}
+
+    if response.status_code == 404:
+        return None  # mempool.space explicitly has no record of this hash - a genuine miss
+    if response.status_code != 200:
+        return {"error": f"mempool.space returned HTTP {response.status_code} - possibly rate-limited."}
+
+    try:
         tx = response.json()
-    except (requests.exceptions.RequestException, ValueError):
-        return None
+    except ValueError:
+        return {"error": "mempool.space returned a response that wasn't valid JSON."}
 
     status = tx.get("status", {})
     tx_time = None
@@ -3102,16 +3111,28 @@ def get_ethereum_transaction_by_hash(tx_hash):
 
 
 def get_xrp_transaction_by_hash(tx_hash):
-    """Returns details for an XRP transaction, or None if the XRPL node doesn't recognize this hash."""
+    """Returns details for an XRP transaction. Three possible results -
+    see get_tron_transaction_by_hash's docstring for why "not found"
+    and "the lookup failed" are deliberately kept distinct."""
     try:
         response = requests.post(XRPL_RPC_URL, json={"method": "tx", "params": [{"transaction": tx_hash}]}, timeout=15)
+    except requests.exceptions.RequestException as error:
+        return {"error": f"Could not reach the XRPL node: {error}"}
+
+    if response.status_code != 200:
+        return {"error": f"The XRPL node returned HTTP {response.status_code} - possibly rate-limited."}
+
+    try:
         data = response.json()
-    except (requests.exceptions.RequestException, ValueError):
-        return None
+    except ValueError:
+        return {"error": "The XRPL node returned a response that wasn't valid JSON."}
 
     result = data.get("result", {})
-    if result.get("status") != "success" or result.get("error"):
-        return None
+    error_name = result.get("error")
+    if error_name == "txnNotFound":
+        return None  # the XRPL node explicitly has no record of this hash - a genuine miss
+    if result.get("status") != "success" or error_name:
+        return {"error": f"The XRPL node returned an unexpected response: {error_name or result.get('status')}"}
 
     meta = result.get("meta", {})
     delivered = meta.get("delivered_amount", result.get("Amount"))
@@ -3146,17 +3167,37 @@ def get_xrp_transaction_by_hash(tx_hash):
 
 
 def get_tron_transaction_by_hash(tx_hash):
-    """Returns details for a Tron transaction (USDT-TRC20 transfer, if decodable), or None if TronGrid doesn't recognize this hash."""
+    """Returns details for a Tron transaction (USDT-TRC20 transfer, if
+    decodable). Three possible results, deliberately NOT collapsed
+    into one:
+      - {"found": True, ...} - a real transaction.
+      - None - TronGrid explicitly has no such transaction.
+      - {"error": "..."} - the lookup itself failed (network issue,
+        rate limit, an unexpected response shape) - genuinely
+        different from "not found," and the caller needs to know
+        which one actually happened rather than treat both the same
+        way, which is exactly what silently hid a real Tron
+        transaction as "not found on any chain" before this fix."""
     headers = {"TRON-PRO-API-KEY": TRON_API_KEY} if TRON_API_KEY else {}
     try:
         response = requests.get(f"{TRONGRID_BASE_URL}/v1/transactions/{tx_hash}", headers=headers, timeout=15)
+    except requests.exceptions.RequestException as error:
+        return {"error": f"Could not reach TronGrid: {error}"}
+
+    if response.status_code != 200:
+        return {"error": f"TronGrid returned HTTP {response.status_code} - possibly rate-limited or a missing/invalid TRON_API_KEY."}
+
+    try:
         data = response.json()
-    except (requests.exceptions.RequestException, ValueError):
-        return None
+    except ValueError:
+        return {"error": "TronGrid returned a response that wasn't valid JSON."}
+
+    if "Error" in data or "error" in data:
+        return {"error": f"TronGrid returned an error: {data.get('Error') or data.get('error')}"}
 
     tx_list = data.get("data", [])
     if not tx_list:
-        return None
+        return None  # TronGrid explicitly has no record of this hash - a genuine miss
     tx = tx_list[0]
 
     block_timestamp = tx.get("block_timestamp") or tx.get("raw_data", {}).get("timestamp")
@@ -3226,15 +3267,27 @@ def lookup_transaction_across_chains(tx_hash):
                        "(Ethereum: 0x + 64 hex characters. Bitcoin/XRP/Tron: 64 hex characters, no prefix).",
         }
 
+    errors_encountered = []
     for chain_name, lookup_function in [
         ("bitcoin", get_bitcoin_transaction_by_hash),
         ("xrp", get_xrp_transaction_by_hash),
         ("tron", get_tron_transaction_by_hash),
     ]:
         result = lookup_function(cleaned)
-        if result:
-            return result
+        if result is None:
+            continue  # a genuine miss on this chain - try the next one
+        if result.get("error"):
+            errors_encountered.append(f"{chain_name}: {result['error']}")
+            continue  # the lookup itself failed - still worth trying the other chains
+        return result  # a real, found transaction
 
+    if errors_encountered:
+        return {
+            "found": False, "tx_hash": cleaned,
+            "message": "Checked Bitcoin, XRP, and Tron, but couldn't fully verify all of them - "
+                       "this is NOT a confident \"not found,\" one or more lookups genuinely failed: "
+                       + "; ".join(errors_encountered),
+        }
     return {
         "found": False, "tx_hash": cleaned,
         "message": "Checked Bitcoin, XRP, and Tron - none of them recognize this hash. "
