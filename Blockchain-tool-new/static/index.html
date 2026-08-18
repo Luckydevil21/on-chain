@@ -2457,7 +2457,7 @@ function renderTraceGraph(data, allPaths, container) {
         title: `Memo-stated destination on ${hint.dest.chain}\n${hint.dest.address}`,
         shape: "dot", size: 14,
         color: { border: "#a371f7", background: "#241a33" },  // distinct purple - "this is a chain jump, not a normal hop"
-        font: { color: "#c9d1d9", size: 12 },
+        font: { color: "#000000", size: 12 },
       });
     }
   });
@@ -3915,7 +3915,7 @@ async function loadCaseExploreGraph(caseId) {
       shape: n.is_case_wallet ? "box" : "dot",
       size: n.is_case_wallet ? 22 : 14,
       color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
-      font: { color: "#c9d1d9", size: 12 },
+      font: { color: "#000000", size: 12 },
       shapeProperties: { borderDashes: alreadyExplored ? false : [4, 3] },
       borderWidth: alreadyExplored ? 2 : 1,
       entityName: n.entity_name, entityType: n.entity_type,
@@ -4145,7 +4145,7 @@ async function startExploreGraph() {
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
     shape: "box", size: 22, color: EXPLORE_GRAPH_COLORS.root,
-    font: { color: "#c9d1d9", size: 12 },
+    font: { color: "#000000", size: 12 },
   }]);
   exploreGraphEdges = new vis.DataSet([]);
 
@@ -4422,7 +4422,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
         shape: "dot", size: 14,
         color: exploreGraphNodeColor(meta && meta.entity_type),
-        font: { color: "#c9d1d9", size: 12 },
+        font: { color: "#000000", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
         entityName: meta && meta.entity_name, entityType: meta && meta.entity_type,
         x: anchorPos.x + (Math.random() * 200 - 100), y: anchorPos.y + (Math.random() * 200 - 100),
@@ -4452,7 +4452,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         title: `Memo-stated destination on ${edge.embedded_destination_chain}\n${edge.embedded_destination_address}`,
         shape: "dot", size: 14,
         color: EXPLORE_GRAPH_COLORS.crossChain,
-        font: { color: "#c9d1d9", size: 12 },
+        font: { color: "#000000", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },
       });
     }
