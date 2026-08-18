@@ -3177,13 +3177,32 @@ def get_tron_transaction_by_hash(tx_hash):
         different from "not found," and the caller needs to know
         which one actually happened rather than treat both the same
         way, which is exactly what silently hid a real Tron
-        transaction as "not found on any chain" before this fix."""
-    headers = {"TRON-PRO-API-KEY": TRON_API_KEY} if TRON_API_KEY else {}
-    try:
-        response = requests.get(f"{TRONGRID_BASE_URL}/v1/transactions/{tx_hash}", headers=headers, timeout=15)
-    except requests.exceptions.RequestException as error:
-        return {"error": f"Could not reach TronGrid: {error}"}
+        transaction as "not found on any chain" before this fix.
 
+    TronGrid is documented to sometimes return a spurious 404 for a
+    transaction that genuinely exists (a known, reported API flakiness
+    issue, not specific to any one hash) - so a 404 here is retried a
+    few times before being trusted, rather than treated as final on
+    the first response."""
+    headers = {"TRON-PRO-API-KEY": TRON_API_KEY} if TRON_API_KEY else {}
+    url = f"{TRONGRID_BASE_URL}/v1/transactions/{tx_hash}"
+
+    response = None
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+        except requests.exceptions.RequestException as error:
+            return {"error": f"Could not reach TronGrid: {error}"}
+        if response.status_code == 404 and attempt < 2:
+            time.sleep(1.5)  # give TronGrid's known intermittent-404 issue a chance to clear
+            continue
+        break
+
+    if response.status_code == 404:
+        return {"error": "TronGrid returned HTTP 404 after retrying - TronGrid is documented to sometimes "
+                          "404 on a transaction that genuinely exists, so this isn't a confident \"not found\"; "
+                          "it may also mean the hash genuinely doesn't exist. Worth checking manually on "
+                          "tronscan.org if this keeps happening."}
     if response.status_code != 200:
         return {"error": f"TronGrid returned HTTP {response.status_code} - possibly rate-limited or a missing/invalid TRON_API_KEY."}
 
