@@ -3744,12 +3744,12 @@ let exploreGraphDetectedChain = null;
 let exploreGraphShowAllTracking = new Map();
 
 const EXPLORE_GRAPH_COLORS = {
-  root: { border: "#4f8cc9", background: "#FFFFFF" },
-  sanctioned: { border: "#e0666c", background: "#2a1416" },
-  entity: { border: "#4fb3a3", background: "#12211f" },
-  unknown: { border: "#5a6472", background: "#1c232c" },
+  root: { border: "#4f8cc9", background: "#ffffff" },
+  sanctioned: { border: "#e0666c", background: "#ffffff" },
+  entity: { border: "#4fb3a3", background: "#ffffff" },
+  unknown: { border: "#5a6472", background: "#ffffff" },
   note: { border: "#d4a72c", background: "#2b230f" },  // amber/sticky-note - visually distinct from every wallet-node color
-  crossChain: { border: "#a371f7", background: "#241a33" },  // distinct purple - matches the trace-results graph's "chain jump" styling exactly
+  crossChain: { border: "#a371f7", background: "#ffffff" },  // distinct purple - matches the trace-results graph's "chain jump" styling exactly
 };
 
 function exploreGraphNodeColor(entityType) {
@@ -3890,10 +3890,10 @@ async function loadCaseExploreGraph(caseId) {
       id: n.id,
       label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
       title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
-      shape: n.is_case_wallet ? "dot" : "dot",
+      shape: "dot",
       size: n.is_case_wallet ? 22 : 14,
       color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
-      font: { color: "#c9d1d9", size: 12 },
+      font: { color: "#000000", size: 12 },
       shapeProperties: { borderDashes: alreadyExplored ? false : [4, 3] },
       borderWidth: alreadyExplored ? 2 : 1,
       entityName: n.entity_name, entityType: n.entity_type,
@@ -4134,7 +4134,7 @@ async function startExploreGraph() {
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
     shape: "dot", size: 22, color: EXPLORE_GRAPH_COLORS.root,
-    font: { color: "#c9d1d9", size: 12 },
+    font: { color: "#000000", size: 12 },
   }]);
   exploreGraphEdges = new vis.DataSet([]);
 
@@ -4224,7 +4224,7 @@ async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
       // node keeps its distinctive box shape rather than becoming a
       // plain dot like everything else.
       const isRootNode = address.toLowerCase() === (exploreGraphRootAddress || "").toLowerCase();
-      exploreGraphNodes.update({ id: address, shape: isRootNode ? "dot" : "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
+      exploreGraphNodes.update({ id: address, shape: "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
       // The root node's chain isn't known until its first expand - add
       // its symbol now that it is (every other node gets it at creation).
       if (isRootNode) {
@@ -4414,7 +4414,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
         shape: "dot", size: 14,
         color: exploreGraphNodeColor(meta && meta.entity_type),
-        font: { color: "#c9d1d9", size: 12 },
+        font: { color: "#000000", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
         entityName: meta && meta.entity_name, entityType: meta && meta.entity_type,
         x: anchorPos.x + (Math.random() * 200 - 100), y: anchorPos.y + (Math.random() * 200 - 100),
@@ -4444,7 +4444,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         title: `Memo-stated destination on ${edge.embedded_destination_chain}\n${edge.embedded_destination_address}`,
         shape: "dot", size: 14,
         color: EXPLORE_GRAPH_COLORS.crossChain,
-        font: { color: "#c9d1d9", size: 12 },
+        font: { color: "#000000", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },
       });
     }
