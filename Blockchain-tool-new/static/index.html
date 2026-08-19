@@ -2515,7 +2515,7 @@ function renderTraceGraph(data, allPaths, container) {
       const card = el("div", "card");
       card.style.marginTop = "10px";
       card.innerHTML = `
-        <div class="mono" style="font-weight:600;">${escapeHtml(addr)}</div>
+        <div class="mono" style="font-weight:600; word-break:break-all;">${escapeHtml(addr)}</div>
         ${isRoot ? `<div class="footnote">The wallet being traced.</div>` : ""}
         ${hop && hop.to_known_entity ? `<div class="hint">${escapeHtml(hop.to_known_entity.name)} (${escapeHtml(hop.to_known_entity.type)})</div>` : `<div class="footnote">No known-entity attribution yet.</div>`}
       `;
@@ -2795,22 +2795,32 @@ function openCaseInGraph(caseId) {
 
   const container = document.getElementById("ltGraphTabContent");
   container.innerHTML = `
-    <button class="btn secondary mb-md" id="caseGraphBackBtn">← Back to standalone graph</button>
-    <div class="card"><h3 id="caseGraphTitle">Loading case...</h3></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:8px 14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);">
+      <button class="btn secondary" id="caseGraphBackBtn" style="font-size:11px; padding:4px 10px;">← Back</button>
+      <h3 id="caseGraphTitle" style="margin:0; font-size:14px;">Loading case...</h3>
+    </div>
     <div class="status-line" id="caseGraphStatus"></div>
     <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
       <button class="btn secondary" id="caseGraphAddNoteBtn" style="font-size:12px; padding:7px 14px;">📝 Add note</button>
       <button class="btn secondary" id="caseGraphEvidencePackBtn" style="font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>
     </div>
     <div id="caseGraphEvidencePackResult"></div>
-    <div id="caseGraphRow" style="display:flex; margin-top:0; gap:14px; align-items:flex-start;">
-      <div id="caseGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
-      <div id="caseGraphDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
+    <div id="caseGraphRow" style="position:relative; margin-top:0;">
+      <div id="caseGraphContainer" class="graph-canvas" style="width:100%; height:calc(100vh - 200px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
+      <div id="caseGraphDetailWrapper" style="display:none; position:absolute; top:14px; right:14px; width:340px; max-height:calc(100% - 28px); flex-direction:column; box-shadow:0 8px 24px rgba(0,0,0,0.35); border-radius:var(--radius); overflow:hidden;">
+        <div style="display:flex; justify-content:flex-end; background:var(--panel); border:1px solid var(--line); border-bottom:none; padding:4px 6px;">
+          <button id="caseGraphDetailClose" class="btn secondary" style="font-size:11px; padding:3px 9px;" title="Hide this panel">✕</button>
+        </div>
+        <div id="caseGraphDetail" style="overflow-y:auto; background:var(--panel);"></div>
+      </div>
     </div>
   `;
   document.getElementById("caseGraphBackBtn").onclick = () => {
     exploreGraphCaseId = null;
     renderExploreGraphIntoContainer(container);
+  };
+  document.getElementById("caseGraphDetailClose").onclick = () => {
+    document.getElementById("caseGraphDetailWrapper").style.display = "none";
   };
 
   apiFetch("/api/cases/" + encodeURIComponent(caseId)).then(caseData => {
@@ -3649,7 +3659,7 @@ function renderFindConnectionSection() {
 // ============================================================
 function renderExploreGraphIntoContainer(container) {
   container.innerHTML = `
-    <div class="card">
+    <div class="card" id="egStartFormCard">
       <h3>Manually build out a graph</h3>
       <div class="field hint mb-md">
         Start with one wallet, then click any node to reveal its immediate connections - you decide
@@ -3664,6 +3674,10 @@ function renderExploreGraphIntoContainer(container) {
       </div>
       <button class="btn" id="egStartBtn">Start exploring</button>
     </div>
+    <div id="egCondensedBar" style="display:none; align-items:center; gap:10px; padding:8px 14px; margin-bottom:10px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);">
+      <span class="footnote">Exploring from <span class="mono" id="egCondensedWallet"></span></span>
+      <button class="btn secondary" id="egStartOverBtn" style="font-size:11px; padding:4px 10px; margin-left:auto;">Start over</button>
+    </div>
     <div class="status-line" id="egStatus"></div>
     <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
       <button class="btn secondary" id="egAddNoteBtn" style="display:none; font-size:12px; padding:7px 14px;">📝 Add note</button>
@@ -3671,9 +3685,14 @@ function renderExploreGraphIntoContainer(container) {
       ${isAdmin() ? `<button class="btn secondary" id="egEvidencePackBtn" style="display:none; font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>` : ""}
     </div>
     <div id="egEvidencePackResult"></div>
-    <div id="egGraphRow" style="display:none; margin-top:14px; gap:14px; align-items:flex-start;">
-      <div id="egGraphContainer" class="graph-canvas" style="flex:1; height:calc(100vh - 260px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
-      <div id="egNodeDetail" style="width:340px; flex-shrink:0; height:calc(100vh - 260px); min-height:420px; overflow-y:auto;"></div>
+    <div id="egGraphRow" style="display:none; position:relative; margin-top:14px;">
+      <div id="egGraphContainer" class="graph-canvas" style="width:100%; height:calc(100vh - 200px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
+      <div id="egNodeDetailWrapper" style="position:absolute; top:14px; right:14px; width:340px; max-height:calc(100% - 28px); display:flex; flex-direction:column; box-shadow:0 8px 24px rgba(0,0,0,0.35); border-radius:var(--radius); overflow:hidden;">
+        <div style="display:flex; justify-content:flex-end; background:var(--panel); border:1px solid var(--line); border-bottom:none; padding:4px 6px;">
+          <button id="egNodeDetailClose" class="btn secondary" style="font-size:11px; padding:3px 9px;" title="Hide this panel">✕</button>
+        </div>
+        <div id="egNodeDetail" style="overflow-y:auto; background:var(--panel);"></div>
+      </div>
     </div>
   `;
 
@@ -3683,6 +3702,13 @@ function renderExploreGraphIntoContainer(container) {
   }).catch(() => {});
 
   document.getElementById("egStartBtn").onclick = () => startExploreGraph();
+  document.getElementById("egNodeDetailClose").onclick = () => {
+    document.getElementById("egNodeDetailWrapper").style.display = "none";
+  };
+  document.getElementById("egStartOverBtn").onclick = () => {
+    exploreGraphCaseId = null;
+    renderExploreGraphIntoContainer(container);
+  };
   document.getElementById("egAddNoteBtn").onclick = () => {
     const statusEl = document.getElementById("egStatus");
     const detailEl = document.getElementById("egNodeDetail");
@@ -3916,6 +3942,9 @@ async function loadCaseExploreGraph(caseId) {
   });
 
   exploreGraphNetwork.on("click", async (params) => {
+    if (params.nodes.length || params.edges.length) {
+      document.getElementById("caseGraphDetailWrapper").style.display = "flex";
+    }
     if (params.nodes.length) {
       const clickedNode = exploreGraphNodes.get(params.nodes[0]);
       if (clickedNode.isNote) {
@@ -4083,7 +4112,12 @@ async function startExploreGraph() {
 
   statusEl.textContent = "";
   detailEl.innerHTML = "";
-  rowEl.style.display = "flex";
+  rowEl.style.display = "block";
+  document.getElementById("egNodeDetailWrapper").style.display = "none";  // nothing selected yet
+  document.getElementById("egStartFormCard").style.display = "none";
+  const condensedBar = document.getElementById("egCondensedBar");
+  condensedBar.style.display = "flex";
+  document.getElementById("egCondensedWallet").textContent = truncateAddress(wallet);
   document.getElementById("egAddNoteBtn").style.display = "inline-block";
   if (isAdmin()) {
     document.getElementById("egSaveCaseBtn").style.display = "inline-block";
@@ -4141,6 +4175,9 @@ async function startExploreGraph() {
   });
 
   exploreGraphNetwork.on("click", async (params) => {
+    if (params.nodes.length || params.edges.length) {
+      document.getElementById("egNodeDetailWrapper").style.display = "flex";
+    }
     if (!params.nodes.length) {
       if (params.edges.length) {
         const edge = exploreGraphEdges.get(params.edges[0]);
@@ -4215,7 +4252,7 @@ function renderExploreGraphConnectionsList(address, detailEl) {
   detailEl.innerHTML = "";
   const headerCard = el("div", "card");
   headerCard.style.marginTop = "10px";
-  headerCard.innerHTML = `<div class="mono" style="font-weight:600;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
+  headerCard.innerHTML = `<div class="mono" style="font-weight:600; word-break:break-all;">${escapeHtml(address)}</div><div class="hint">${escapeHtml(entityLine)}</div>`;
   if (node.entityType === "exchange") {
     // Transaction details live on the EDGE, not the node, here -
     // find any edge that lands on this node to represent the finding.
