@@ -270,13 +270,18 @@ def _hop_rows_for_table(hops, cell_style):
     rows = [["From", "To", "Amount", "Time (UTC)", "Tx Hash"]]
     for hop in hops:
         from reportlab.platypus import Paragraph
-        tx_hash = hop.get("tx_hash", "") or ""
+        # hop.get(key, "") only falls back when the KEY is missing -
+        # it does nothing if the key is present with a value of None,
+        # which genuinely happens (e.g. a graph-derived hop with no
+        # recorded timestamp). reportlab's Paragraph() calls .split()
+        # internally on its text - passing it None directly is exactly
+        # what caused this to fail, not a missing key.
         rows.append([
-            Paragraph(hop.get("from_address", ""), cell_style),
-            Paragraph(hop.get("to_address", ""), cell_style),
-            Paragraph(hop.get("amount", ""), cell_style),
-            Paragraph(hop.get("tx_time_utc", ""), cell_style),
-            Paragraph(tx_hash, cell_style),
+            Paragraph(hop.get("from_address") or "", cell_style),
+            Paragraph(hop.get("to_address") or "", cell_style),
+            Paragraph(hop.get("amount") or "", cell_style),
+            Paragraph(hop.get("tx_time_utc") or "", cell_style),
+            Paragraph(hop.get("tx_hash") or "", cell_style),
         ])
     return rows
 
@@ -793,11 +798,11 @@ def generate_evidence_pack_pdf(evidence_pack_id):
     if all_hops:
         appendix_rows = [["Tx Hash", "From", "To", "Amount", "Time (UTC)"]] + [
             [
-                Paragraph(hop.get("tx_hash", ""), styles["TableCell"]),
-                Paragraph(hop.get("from_address", ""), styles["TableCell"]),
-                Paragraph(hop.get("to_address", ""), styles["TableCell"]),
-                Paragraph(hop.get("amount", ""), styles["TableCell"]),
-                Paragraph(hop.get("tx_time_utc", ""), styles["TableCell"]),
+                Paragraph(hop.get("tx_hash") or "", styles["TableCell"]),
+                Paragraph(hop.get("from_address") or "", styles["TableCell"]),
+                Paragraph(hop.get("to_address") or "", styles["TableCell"]),
+                Paragraph(hop.get("amount") or "", styles["TableCell"]),
+                Paragraph(hop.get("tx_time_utc") or "", styles["TableCell"]),
             ]
             for hop in all_hops
         ]
