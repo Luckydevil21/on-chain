@@ -3744,7 +3744,7 @@ let exploreGraphDetectedChain = null;
 let exploreGraphShowAllTracking = new Map();
 
 const EXPLORE_GRAPH_COLORS = {
-  root: { border: "#4f8cc9", background: "#142331" },
+  root: { border: "#4f8cc9", background: "#FFFFFF" },
   sanctioned: { border: "#e0666c", background: "#2a1416" },
   entity: { border: "#4fb3a3", background: "#12211f" },
   unknown: { border: "#5a6472", background: "#1c232c" },
@@ -3890,7 +3890,7 @@ async function loadCaseExploreGraph(caseId) {
       id: n.id,
       label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
       title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
-      shape: n.is_case_wallet ? "box" : "dot",
+      shape: n.is_case_wallet ? "dot" : "dot",
       size: n.is_case_wallet ? 22 : 14,
       color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
       font: { color: "#c9d1d9", size: 12 },
@@ -4133,7 +4133,7 @@ async function startExploreGraph() {
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
-    shape: "box", size: 22, color: EXPLORE_GRAPH_COLORS.root,
+    shape: "dot", size: 22, color: EXPLORE_GRAPH_COLORS.root,
     font: { color: "#c9d1d9", size: 12 },
   }]);
   exploreGraphEdges = new vis.DataSet([]);
@@ -4224,7 +4224,7 @@ async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
       // node keeps its distinctive box shape rather than becoming a
       // plain dot like everything else.
       const isRootNode = address.toLowerCase() === (exploreGraphRootAddress || "").toLowerCase();
-      exploreGraphNodes.update({ id: address, shape: isRootNode ? "box" : "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
+      exploreGraphNodes.update({ id: address, shape: isRootNode ? "dot" : "dot", borderWidth: 2, shapeProperties: { borderDashes: false } });
       // The root node's chain isn't known until its first expand - add
       // its symbol now that it is (every other node gets it at creation).
       if (isRootNode) {
