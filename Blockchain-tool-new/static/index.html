@@ -3753,6 +3753,23 @@ let exploreGraphRootAddress = null;
 // to that case, restorable later exactly as left.
 let exploreGraphCaseId = null;
 let exploreGraphDetectedChain = null;
+
+// Registered once, ever - not inside startExploreGraph/loadCaseExploreGraph,
+// since those can run repeatedly (switching cases, starting over) and
+// a second registration would fire the delete action twice per keypress.
+// Reads exploreGraphNetwork/exploreGraphCaseId fresh each time it fires,
+// so it always reflects whichever graph is currently active.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Delete" && e.key !== "Backspace") return;
+  const activeTag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
+  if (activeTag === "input" || activeTag === "textarea") return;  // don't hijack normal text editing/deleting
+  if (!exploreGraphNetwork) return;
+  const selected = exploreGraphNetwork.getSelectedNodes();
+  if (!selected.length) return;
+  e.preventDefault();  // Backspace with no text field focused would otherwise trigger the browser's "go back" navigation
+  const detailEl = document.getElementById(exploreGraphCaseId ? "caseGraphDetail" : "egNodeDetail");
+  deleteSelectedExploreGraphNode(exploreGraphCaseId, detailEl);
+});
 // Tracks, per address, exactly which edge IDs the last "Show all"
 // click for that address's connection list added - so "Hide" can
 // reverse precisely that batch, never touching anything individually
@@ -3866,6 +3883,72 @@ function renderNoteDetail(nodeId, nodesDataSet, caseId, detailEl) {
   card.appendChild(saveBtn);
   card.appendChild(deleteBtn);
   detailEl.appendChild(card);
+}
+
+// Deletes whatever node is currently selected (and every edge
+// touching it) - triggered by clicking a node then pressing
+// Delete/Backspace. Notes already have their own delete flow via the
+// detail panel (renderNoteDetail); this defers to the identical
+// confirm+delete logic for them rather than building a second,
+// separate path for the same thing. The root/starting wallet is
+// deliberately protected - deleting it would leave the graph with no
+// clear starting point, so "Start over" is the intended way to
+// abandon a graph entirely instead.
+async function deleteSelectedExploreGraphNode(caseId, detailEl) {
+  if (!exploreGraphNetwork) return;
+  const selected = exploreGraphNetwork.getSelectedNodes();
+  if (!selected.length) return;
+  const nodeId = selected[0];
+  const node = exploreGraphNodes.get(nodeId);
+  if (!node) return;
+
+  if (node.isNote) {
+    if (!confirm("Delete this note? This can't be undone.")) return;
+    if (caseId) {
+      const realId = nodeId.replace("note-", "");
+      try {
+        await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/notes/${encodeURIComponent(realId)}`, { method: "DELETE" });
+      } catch (err) { alert("Could not delete note: " + err.message); return; }
+    }
+    exploreGraphNodes.remove(nodeId);
+    if (detailEl) detailEl.innerHTML = "";
+    return;
+  }
+
+  const isRoot = nodeId.toLowerCase() === (exploreGraphRootAddress || "").toLowerCase();
+  if (isRoot) {
+    alert("The starting wallet can't be deleted this way - use \"Start over\" if you want to begin a new graph.");
+    return;
+  }
+
+  const connectedEdges = exploreGraphEdges.get().filter(e =>
+    (e.from || "").toLowerCase() === nodeId.toLowerCase() || (e.to || "").toLowerCase() === nodeId.toLowerCase()
+  );
+  const label = truncateAddress(nodeId);
+  const warning = connectedEdges.length
+    ? `Delete ${label} and its ${connectedEdges.length} connection(s)? This can't be undone.`
+    : `Delete ${label}? This can't be undone.`;
+  if (!confirm(warning)) return;
+
+  if (caseId && connectedEdges.length) {
+    const edgesToDelete = connectedEdges.map(e => ({ from: e.from, to: e.to, tx_hash: (e.id || "").split("->")[2] }));
+    try {
+      await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/edges/delete`, {
+        method: "POST", body: JSON.stringify({ edges: edgesToDelete }),
+      });
+    } catch (err) {
+      // Don't remove locally if persisting the deletion failed -
+      // otherwise the node would silently reappear next time this
+      // case is reopened, while the user believes it's genuinely gone.
+      alert("Could not remove this from the saved case: " + err.message);
+      return;
+    }
+  }
+
+  exploreGraphEdges.remove(connectedEdges.map(e => e.id));
+  exploreGraphNodes.remove(nodeId);
+  exploreGraphExpanded.delete(nodeId.toLowerCase());
+  if (detailEl) detailEl.innerHTML = "";
 }
 
 // Launched when a Saved Case is opened - restores its graph exactly as
