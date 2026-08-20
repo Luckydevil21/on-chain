@@ -4007,8 +4007,23 @@ async function generateEvidencePackFromCaseGraph(caseId, btnId = "caseGraphEvide
   btn.disabled = true;
   resultEl.innerHTML = `<div class="footnote mt-sm">Generating...</div>`;
   try {
+    // Capture the graph exactly as it currently looks - best-effort,
+    // since a missing image shouldn't block the evidence pack itself
+    // from being generated.
+    let graphImageBase64 = null;
+    try {
+      if (exploreGraphNetwork) {
+        exploreGraphNetwork.fit();  // ensure the whole graph is in frame before capturing, not whatever was last panned/zoomed to
+        await new Promise(r => setTimeout(r, 150));  // let vis-network actually redraw the canvas at the new viewport before reading its pixels
+        const dataUrl = exploreGraphNetwork.canvas.frame.canvas.toDataURL("image/png");
+        graphImageBase64 = dataUrl.split(",")[1] || null;
+      }
+    } catch (imgErr) {
+      console.warn("Could not capture graph image:", imgErr);
+    }
+
     const result = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/explore-graph/evidence-pack`, {
-      method: "POST", body: JSON.stringify({}),
+      method: "POST", body: JSON.stringify({ graph_image_base64: graphImageBase64 }),
     });
     resultEl.innerHTML = `
       <div class="footnote mt-sm">
