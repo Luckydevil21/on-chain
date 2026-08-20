@@ -2466,7 +2466,7 @@ function renderTraceGraph(data, allPaths, container) {
         id: hint.dest.address,
         label: destSymbol ? `${destSymbol} ${truncateAddress(hint.dest.address)}` : truncateAddress(hint.dest.address),
         title: `Memo-stated destination on ${hint.dest.chain}\n${hint.dest.address}`,
-        shape: "dot", size: 14,
+        shape: "dot", size: 18,
         color: { border: "#a371f7", background: "#241a33" },  // distinct purple - "this is a chain jump, not a normal hop"
         font: { color: "#c9d1d9", size: 12 },
       });
@@ -2479,7 +2479,7 @@ function renderTraceGraph(data, allPaths, container) {
       id: i,
       from: h.from_address, to: h.to_address, arrows: "to",
       label: h.tx_time_utc ? `${h.amount || ""}${fiatLabel ? " (" + fiatLabel + ")" : ""}\n${formatFriendlyDate(h.tx_time_utc)}` : (h.amount || ""),
-      font: { color: "#3d4451", size: 9, strokeWidth: 0 },
+      font: { color: "#3d4451", size: 9, strokeWidth: 3, strokeColor: "#ffffff" },
       color: { color: h.is_change ? "#4f8cc9" : "#3d5a78", opacity: h.is_change ? 0.5 : 0.8 },
       dashes: !!h.is_change,
       hop: h,
@@ -2506,7 +2506,7 @@ function renderTraceGraph(data, allPaths, container) {
   container.appendChild(detailDiv);
 
   const network = new vis.Network(graphDiv, { nodes: visNodes, edges: visEdges }, {
-    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 150, springConstant: 0.02, damping: 0.15 } },
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 180, springConstant: 0.02, damping: 0.15 } },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
     edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },
@@ -2812,6 +2812,7 @@ function openCaseInGraph(caseId) {
     </div>
     <div class="status-line" id="caseGraphStatus"></div>
     <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+      <button class="btn secondary" id="caseGraphFitViewBtn" style="font-size:12px; padding:7px 14px;">⤢ Fit view</button>
       <button class="btn secondary" id="caseGraphAddNoteBtn" style="font-size:12px; padding:7px 14px;">📝 Add note</button>
       <button class="btn secondary" id="caseGraphEvidencePackBtn" style="font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>
     </div>
@@ -3693,6 +3694,7 @@ function renderExploreGraphIntoContainer(container) {
     </div>
     <div class="status-line" id="egStatus"></div>
     <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+      <button class="btn secondary" id="egFitViewBtn" style="display:none; font-size:12px; padding:7px 14px;">⤢ Fit view</button>
       <button class="btn secondary" id="egAddNoteBtn" style="display:none; font-size:12px; padding:7px 14px;">📝 Add note</button>
       ${isAdmin() ? `<button class="btn secondary" id="egSaveCaseBtn" style="display:none; font-size:12px; padding:7px 14px;">💾 Save to Saved Cases</button>` : ""}
       ${isAdmin() ? `<button class="btn secondary" id="egEvidencePackBtn" style="display:none; font-size:12px; padding:7px 14px;">📄 Generate Evidence Pack from this graph</button>` : ""}
@@ -3719,6 +3721,9 @@ function renderExploreGraphIntoContainer(container) {
   document.getElementById("egStartOverBtn").onclick = () => {
     exploreGraphCaseId = null;
     renderExploreGraphIntoContainer(container);
+  };
+  document.getElementById("egFitViewBtn").onclick = () => {
+    if (exploreGraphNetwork) exploreGraphNetwork.fit({ animation: { duration: 400, easingFunction: "easeInOutQuad" } });
   };
   document.getElementById("egAddNoteBtn").onclick = () => {
     const statusEl = document.getElementById("egStatus");
@@ -3900,17 +3905,17 @@ async function loadCaseExploreGraph(caseId) {
   exploreGraphNodes = new vis.DataSet(graph.nodes.map(n => {
     const savedPos = graph.positions[n.id] || graph.positions[n.id.toLowerCase()];
     const baseLabel = n.entity_name || truncateAddress(n.id);
-    const alreadyExplored = graph.edges.some(e => e.from.toLowerCase() === n.id.toLowerCase());
+    const alreadyExplored = graph.edges.some(e => (e.from || "").toLowerCase() === n.id.toLowerCase());
     return {
       id: n.id,
       label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
       title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
       shape: "dot",
-      size: n.is_case_wallet ? 22 : 14,
+      size: n.is_case_wallet ? 26 : 18,
       color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
       font: { color: "#000000", size: 12 },
       shapeProperties: { borderDashes: alreadyExplored ? false : [4, 3] },
-      borderWidth: alreadyExplored ? 2 : 1,
+      borderWidth: 2,
       entityName: n.entity_name, entityType: n.entity_type,
       ...(savedPos ? { x: savedPos.x, y: savedPos.y, physics: false } : {}),
     };
@@ -3923,14 +3928,14 @@ async function loadCaseExploreGraph(caseId) {
     return {
       id: `${edge.from}->${edge.to}->${edge.tx_hash}`, from: edge.from, to: edge.to, arrows: "to",
       label: edge.tx_time_utc ? `${edge.amount_label || ""}${fiatLabel ? " (" + fiatLabel + ")" : ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
-      font: { color: "#3d4451", size: 9, strokeWidth: 0 },
+      font: { color: "#3d4451", size: 9, strokeWidth: 3, strokeColor: "#ffffff" },
       color: { color: "#3d5a78", opacity: 0.8 },
       amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
     };
   }));
 
   exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
-    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 150, springConstant: 0.02, damping: 0.15 } },
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 180, springConstant: 0.02, damping: 0.15 } },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
     edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },
@@ -3983,6 +3988,9 @@ async function loadCaseExploreGraph(caseId) {
 
   statusEl.textContent = `${graph.nodes.length} address(es), ${graph.edges.length} transaction(s) restored.`;
 
+  document.getElementById("caseGraphFitViewBtn").onclick = () => {
+    if (exploreGraphNetwork) exploreGraphNetwork.fit({ animation: { duration: 400, easingFunction: "easeInOutQuad" } });
+  };
   document.getElementById("caseGraphAddNoteBtn").onclick = () => {
     promptAddNote(caseId, exploreGraphNetwork, exploreGraphNodes, statusEl);
   };
@@ -4133,6 +4141,7 @@ async function startExploreGraph() {
   const condensedBar = document.getElementById("egCondensedBar");
   condensedBar.style.display = "flex";
   document.getElementById("egCondensedWallet").textContent = truncateAddress(wallet);
+  document.getElementById("egFitViewBtn").style.display = "inline-block";
   document.getElementById("egAddNoteBtn").style.display = "inline-block";
   if (isAdmin()) {
     document.getElementById("egSaveCaseBtn").style.display = "inline-block";
@@ -4148,13 +4157,13 @@ async function startExploreGraph() {
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
-    shape: "dot", size: 22, color: EXPLORE_GRAPH_COLORS.root,
+    shape: "dot", size: 26, color: EXPLORE_GRAPH_COLORS.root,
     font: { color: "#000000", size: 12 },
   }]);
   exploreGraphEdges = new vis.DataSet([]);
 
   exploreGraphNetwork = new vis.Network(containerEl, { nodes: exploreGraphNodes, edges: exploreGraphEdges }, {
-    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 150, springConstant: 0.02, damping: 0.15 } },
+    physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3400, springLength: 180, springConstant: 0.02, damping: 0.15 } },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
     layout: { improvedLayout: true },
     edges: { smooth: false, shadow: { enabled: true, size: 6, x: 1, y: 2, color: "rgba(0,0,0,0.25)" }, width: 1.3 },  // straight lines, not curved
@@ -4271,7 +4280,7 @@ function renderExploreGraphConnectionsList(address, detailEl) {
   if (node.entityType === "exchange") {
     // Transaction details live on the EDGE, not the node, here -
     // find any edge that lands on this node to represent the finding.
-    const representativeEdge = exploreGraphEdges.get().find(e => e.to.toLowerCase() === address.toLowerCase());
+    const representativeEdge = exploreGraphEdges.get().find(e => (e.to || "").toLowerCase() === address.toLowerCase());
     if (representativeEdge) {
       const letterBtn = el("button", "btn secondary", "📄 Generate legal letter");
       letterBtn.style.cssText = "margin-top:8px; font-size:11px; padding:6px 12px;";
@@ -4302,8 +4311,8 @@ function renderExploreGraphConnectionsList(address, detailEl) {
   // fetch order isn't a meaningful reading order for choosing what's
   // worth adding.
   const sortedEdges = result.edges.map((edge, i) => ({ edge, i })).sort((a, b) => {
-    const aOut = a.edge.from.toLowerCase() === address.toLowerCase();
-    const bOut = b.edge.from.toLowerCase() === address.toLowerCase();
+    const aOut = (a.edge.from || "").toLowerCase() === address.toLowerCase();
+    const bOut = (b.edge.from || "").toLowerCase() === address.toLowerCase();
     if (aOut !== bOut) return aOut ? -1 : 1;
     return (b.edge.tx_time_utc || "").localeCompare(a.edge.tx_time_utc || "");
   });
@@ -4312,7 +4321,7 @@ function renderExploreGraphConnectionsList(address, detailEl) {
   listCard.style.marginTop = "10px";
   const rowsHtml = sortedEdges.map(({ edge, i }) => {
     const edgeId = `${edge.from}->${edge.to}->${edge.tx_hash}`;
-    const isOut = edge.from.toLowerCase() === address.toLowerCase();
+    const isOut = (edge.from || "").toLowerCase() === address.toLowerCase();
     const counterparty = isOut ? edge.to : edge.from;
     const alreadyAdded = alreadyAddedIds.has(edgeId);
     const badgeColor = isOut ? "var(--flag)" : "var(--ok)";
@@ -4383,7 +4392,7 @@ function hideShowAllConnections(address, trackedEdgeIds) {
 
   const remainingEdges = exploreGraphEdges.get();
   const referencedAddresses = new Set();
-  remainingEdges.forEach(e => { referencedAddresses.add(e.from.toLowerCase()); referencedAddresses.add(e.to.toLowerCase()); });
+  remainingEdges.forEach(e => { referencedAddresses.add((e.from || "").toLowerCase()); referencedAddresses.add((e.to || "").toLowerCase()); });
 
   const rootLower = (exploreGraphRootAddress || "").toLowerCase();
   exploreGraphNodes.get().forEach(node => {
@@ -4427,7 +4436,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         id: side,
         label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
         title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
-        shape: "dot", size: 14,
+        shape: "dot", size: 18, borderWidth: 2,
         color: exploreGraphNodeColor(meta && meta.entity_type),
         font: { color: "#000000", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },  // dashed = not yet explored
@@ -4441,7 +4450,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
   exploreGraphEdges.add({
     id: edgeId, from: edge.from, to: edge.to, arrows: "to",
     label: edge.tx_time_utc ? `${edge.amount_label || ""}${liveFiatLabel ? " (" + liveFiatLabel + ")" : ""}\n${formatFriendlyDate(edge.tx_time_utc)}` : (edge.amount_label || ""),
-    font: { color: "#3d4451", size: 9, strokeWidth: 0 },
+    font: { color: "#3d4451", size: 9, strokeWidth: 3, strokeColor: "#ffffff" },
     color: { color: "#3d5a78", opacity: 0.8 },
     amountLabel: edge.amount_label, txTimeUtc: edge.tx_time_utc, explorerUrl: edge.explorer_url,
   });
@@ -4457,7 +4466,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         id: edge.embedded_destination_address,
         label: destChainSymbol ? `${destChainSymbol} ${truncateAddress(edge.embedded_destination_address)}` : truncateAddress(edge.embedded_destination_address),
         title: `Memo-stated destination on ${edge.embedded_destination_chain}\n${edge.embedded_destination_address}`,
-        shape: "dot", size: 14,
+        shape: "dot", size: 18, borderWidth: 2,
         color: EXPLORE_GRAPH_COLORS.crossChain,
         font: { color: "#000000", size: 12 },
         shapeProperties: { borderDashes: [4, 3] },
