@@ -1668,6 +1668,7 @@ function renderLinkTraceSection() {
           <label><input type="radio" name="ltSimpleDirection" value="backward"> Where did the money come from</label>
         </div>
       </div>
+      <div class="field"><label>Looking for a specific amount? (optional)</label><input type="text" id="ltSimpleAmount" placeholder="e.g. 2.5 ETH - leave blank to see everything"></div>
       <button class="btn" id="ltSimpleSearchBtn">Search</button>
       <div class="field hint" style="margin-top:12px;">Need to search by transaction hash, a specific date, or other advanced options instead? Switch to <strong>🎓 Technical</strong> mode at the top of the page.</div>
     </div>
@@ -1881,6 +1882,8 @@ function renderLinkTraceSection() {
     // form's own mode-switching UI at all.
     document.getElementById("ltWallet").value = wallet;
     document.querySelector(`input[name="ltDirection"][value="${direction}"]`).checked = true;
+    document.getElementById("ltAmount").value = document.getElementById("ltSimpleAmount").value.trim();
+    document.getElementById("ltExactAmount").checked = false;  // this option isn't exposed in simple mode - never let a stale value from a prior Technical-mode search carry over silently
     runWalletTrace();
   };
 
