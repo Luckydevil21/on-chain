@@ -3912,7 +3912,12 @@ def _lookup_bithomp_service(address):
         if response.status_code == 200:
             data = response.json()
             label = (data.get("service") or {}).get("name") or data.get("username")
-            if label:
+            if label and "bithomp" not in label.lower():
+                # A label containing "bithomp" means Bithomp is identifying
+                # its OWN infrastructure (e.g. a tip jar or service wallet
+                # it operates) - that's never a genuine third-party
+                # exchange/service finding worth surfacing, just the
+                # explorer's own address showing up in its own lookup.
                 result = {"name": label, "type": "exchange", "source": "bithomp"}
         elif response.status_code == 429:
             print("    ⚠️  Bithomp rate limit hit - skipping label lookups for the rest of this run.")
