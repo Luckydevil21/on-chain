@@ -697,6 +697,48 @@ def generate_evidence_pack_pdf(evidence_pack_id):
     story.append(PageBreak())
 
     # ================================================================
+    # GRAPH VISUALIZATION — only present for graph-derived packs where
+    # the frontend successfully captured the graph as it looked at
+    # generation time. Best-effort on the frontend, so this section is
+    # skipped entirely (not shown broken/empty) if it's missing.
+    # ================================================================
+    graph_image_b64 = trace_data.get("graph_image_base64")
+    if graph_image_b64:
+        try:
+            from reportlab.platypus import Image as RLImage
+            from PIL import Image as PILImage
+
+            image_bytes = base64.b64decode(graph_image_b64)
+            pil_img = PILImage.open(_io.BytesIO(image_bytes))
+            img_width_px, img_height_px = pil_img.size
+
+            max_width_mm = 160  # fits well within A4's margins
+            display_width_mm = max_width_mm
+            display_height_mm = display_width_mm * (img_height_px / img_width_px)
+            max_height_mm = 220  # cap height too, for a very tall/narrow graph
+            if display_height_mm > max_height_mm:
+                display_height_mm = max_height_mm
+                display_width_mm = display_height_mm * (img_width_px / img_height_px)
+
+            story.append(heading("6a. Graph Visualization"))
+            story.append(Paragraph(
+                "The image below shows the manually-built investigation graph exactly as it appeared "
+                "at the moment this evidence pack was generated - node positions, colours, and labels "
+                "as arranged by the investigating analyst. See the transaction trail analysis below for "
+                "the full underlying data each connection represents.",
+                styles["Normal"],
+            ))
+            story.append(spacer(4))
+            story.append(RLImage(_io.BytesIO(image_bytes), width=display_width_mm * mm, height=display_height_mm * mm))
+            story.append(spacer(6))
+            story.append(PageBreak())
+        except Exception as error:
+            # A corrupt or unreadable image should never break the whole
+            # evidence pack - the factual data underneath still matters
+            # even if the picture can't be shown.
+            print(f"⚠️  Could not embed graph image in evidence pack: {error}")
+
+    # ================================================================
     # TRANSACTION TRAIL ANALYSIS — auto-generated, factual, with an
     # analyst-commentary placeholder under each stage
     # ================================================================
