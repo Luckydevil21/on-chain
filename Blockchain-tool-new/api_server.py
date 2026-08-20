@@ -1514,6 +1514,7 @@ class CreateEvidencePackFromGraphRequest(BaseModel):
     analyst_name: Optional[str] = None
     analyst_certification: Optional[str] = None
     background_notes: Optional[str] = None
+    graph_image_base64: Optional[str] = None
 
 
 @app.post("/api/cases/{case_id}/explore-graph/evidence-pack")
@@ -1525,6 +1526,8 @@ def create_evidence_pack_from_case_graph(case_id: str, req: CreateEvidencePackFr
     transformed into the same shape the PDF generator already expects."""
     _check_general_rate_limit("evidence-pack", _auth["username"], window_seconds=300, max_requests=10)
     trace_data = lt.build_trace_data_from_case_explore_graph(case_id)
+    if req.graph_image_base64:
+        trace_data["graph_image_base64"] = req.graph_image_base64
     try:
         result = evidence_pack.create_evidence_pack(
             _auth["username"], trace_data, req.case_reference,
