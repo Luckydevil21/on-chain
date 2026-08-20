@@ -308,6 +308,7 @@
   .pill.ok { background: var(--panel-alt); color: var(--ok); }
   .pill.entity { background: var(--entity-bg); color: var(--entity); }
   .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.burn { background: #2b2318; color: #c9a876; }
 
   /* ---------- Trail diagram ---------- */
   .diagram-section-title { font-size: 13px; font-weight: 600; margin: 20px 0 10px; }
@@ -355,6 +356,8 @@
 .wbox.entity::before { background: var(--entity); }
 .wbox.flagged { border-color: var(--flag); background: var(--flag-bg); color: var(--flag); }
 .wbox.flagged::before { background: var(--flag); }
+.wbox.burned { border-color: #8b6f47; background: #2b2318; color: #c9a876; }
+.wbox.burned::before { background: #8b6f47; }
 .wbox.guess { border-style: dashed; border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
 .wbox.guess::before { background: var(--warn); }
 .wbox.change { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
@@ -1332,6 +1335,7 @@ function openQuickSaveEntityModal(address) {
           <option value="exchange">exchange</option>
           <option value="mixer">mixer</option>
           <option value="scam">scam (phishing, fake investment, romance scam, etc.)</option>
+          <option value="burn">burn (provably destroyed - a protocol/token burn address, not theft)</option>
           <option value="instant_swap">instant_swap</option>
           <option value="bridge">bridge</option>
         </select>
@@ -2315,6 +2319,8 @@ function renderLinkTraceResults(data, meta, containerId, focusMode) {
           boxCls = "flagged"; label = `⛔ ${label}`;
         } else if (hop.to_known_entity && hop.to_known_entity.type === "scam") {
           boxCls = "flagged"; label = `🎣 ${label}`;
+        } else if (hop.to_known_entity && hop.to_known_entity.type === "burn") {
+          boxCls = "burned"; label = `🔥 ${label}`;
         } else if (hop.to_known_entity) {
           boxCls = "entity";
         } else if (isFlaggedEnd && hop.matched_pattern) {
@@ -2424,6 +2430,7 @@ function renderTraceGraph(data, allPaths, container) {
     const hop = hops.find(h => h.to_address && h.to_address.toLowerCase() === address.toLowerCase());
     if (hop && hop.to_known_entity && hop.to_known_entity.type === "sanctioned") return { border: "#e0666c", background: "#2a1416" };
     if (hop && hop.to_known_entity && hop.to_known_entity.type === "scam") return { border: "#e0954f", background: "#2b1f14" };
+    if (hop && hop.to_known_entity && hop.to_known_entity.type === "burn") return { border: "#8b6f47", background: "#2b2318" };
     if (hop && hop.to_known_entity) return { border: "#4fb3a3", background: "#12211f" };
     return { border: "#5a6472", background: "#1c232c" };
   };
@@ -2850,6 +2857,7 @@ function renderKnownEntitiesSection() {
           <option value="exchange">exchange</option>
           <option value="mixer">mixer</option>
           <option value="scam">scam (phishing, fake investment, romance scam, etc.)</option>
+          <option value="burn">burn (provably destroyed - a protocol/token burn address, not theft)</option>
           <option value="instant_swap">instant_swap (no-KYC swap service - enables swap correlation)</option>
           <option value="bridge">bridge (cross-chain bridge - enables swap correlation)</option>
         </select>
@@ -2871,6 +2879,7 @@ function renderKnownEntitiesSection() {
           <option value="exchange">exchange</option>
           <option value="mixer">mixer</option>
           <option value="scam">scam (phishing, fake investment, romance scam, etc.)</option>
+          <option value="burn">burn (provably destroyed - a protocol/token burn address, not theft)</option>
           <option value="instant_swap">instant_swap</option>
           <option value="bridge">bridge</option>
         </select>
@@ -2985,7 +2994,7 @@ async function loadKnownEntities() {
     if (!entries.length) { listEl.innerHTML = `<div class="empty-state">No known entities yet.</div>`; return; }
     const table = el("table", "data-table");
     table.innerHTML = `<tr><th>Address</th><th>Name</th><th>Chain</th><th>Type</th>${isAdmin() ? "<th></th>" : ""}</tr>` + entries.map(e =>
-      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.chain || "?")}</td><td><span class="pill ${(e.type === 'instant_swap' || e.type === 'bridge') ? 'entity' : (e.type === 'mixer' || e.type === 'scam') ? 'flag' : 'warn'}">${escapeHtml(e.type)}</span></td>
+      `<tr><td>${escapeHtml(e.address)}</td><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.chain || "?")}</td><td><span class="pill ${(e.type === 'instant_swap' || e.type === 'bridge') ? 'entity' : (e.type === 'mixer' || e.type === 'scam') ? 'flag' : e.type === 'burn' ? 'burn' : 'warn'}">${escapeHtml(e.type)}</span></td>
        ${isAdmin() ? `<td><button class="btn secondary btn-table-action"  onclick="deleteKnownEntity('${escapeHtml(e.address)}')">Remove</button></td>` : ""}</tr>`
     ).join("");
     listEl.appendChild(table);
@@ -3753,6 +3762,7 @@ const EXPLORE_GRAPH_COLORS = {
   root: { border: "#4f8cc9", background: "#ffffff" },
   sanctioned: { border: "#e0666c", background: "#ffffff" },
   scam: { border: "#e0954f", background: "#ffffff" },  // distinct amber - alarming, but visually different from sanctioned's red
+  burn: { border: "#8b6f47", background: "#ffffff" },  // muted brown - "destroyed," not alarming, distinct from every other type
   entity: { border: "#4fb3a3", background: "#ffffff" },
   unknown: { border: "#5a6472", background: "#ffffff" },
   note: { border: "#d4a72c", background: "#2b230f" },  // amber/sticky-note - visually distinct from every wallet-node color
@@ -3762,6 +3772,7 @@ const EXPLORE_GRAPH_COLORS = {
 function exploreGraphNodeColor(entityType) {
   if (entityType === "sanctioned") return EXPLORE_GRAPH_COLORS.sanctioned;
   if (entityType === "scam") return EXPLORE_GRAPH_COLORS.scam;
+  if (entityType === "burn") return EXPLORE_GRAPH_COLORS.burn;
   if (entityType) return EXPLORE_GRAPH_COLORS.entity;
   return EXPLORE_GRAPH_COLORS.unknown;
 }
