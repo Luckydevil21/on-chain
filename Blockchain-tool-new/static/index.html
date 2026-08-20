@@ -2819,10 +2819,8 @@ function openCaseInGraph(caseId) {
     <div id="caseGraphRow" style="position:relative; margin-top:0;">
       <div id="caseGraphContainer" class="graph-canvas" style="width:100%; height:calc(100vh - 200px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
       <div id="caseGraphDetailWrapper" style="display:none; position:absolute; top:14px; right:14px; width:340px; max-height:calc(100% - 28px); flex-direction:column; box-shadow:0 8px 24px rgba(0,0,0,0.35); border-radius:var(--radius); overflow:hidden;">
-        <div style="display:flex; justify-content:flex-end; background:var(--panel); border:1px solid var(--line); border-bottom:none; padding:4px 6px;">
-          <button id="caseGraphDetailClose" class="btn secondary" style="font-size:11px; padding:3px 9px;" title="Hide this panel">✕</button>
-        </div>
-        <div id="caseGraphDetail" style="overflow-y:auto; background:var(--panel);"></div>
+        <button id="caseGraphDetailClose" class="btn secondary" style="position:absolute; top:6px; right:6px; z-index:2; font-size:11px; padding:3px 9px; line-height:1;" title="Hide this panel">✕</button>
+        <div id="caseGraphDetail" style="overflow-y:auto; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);"></div>
       </div>
     </div>
   `;
@@ -3703,10 +3701,8 @@ function renderExploreGraphIntoContainer(container) {
     <div id="egGraphRow" style="display:none; position:relative; margin-top:14px;">
       <div id="egGraphContainer" class="graph-canvas" style="width:100%; height:calc(100vh - 200px); min-height:420px; border:1px solid var(--line); border-radius:var(--radius);"></div>
       <div id="egNodeDetailWrapper" style="position:absolute; top:14px; right:14px; width:340px; max-height:calc(100% - 28px); display:flex; flex-direction:column; box-shadow:0 8px 24px rgba(0,0,0,0.35); border-radius:var(--radius); overflow:hidden;">
-        <div style="display:flex; justify-content:flex-end; background:var(--panel); border:1px solid var(--line); border-bottom:none; padding:4px 6px;">
-          <button id="egNodeDetailClose" class="btn secondary" style="font-size:11px; padding:3px 9px;" title="Hide this panel">✕</button>
-        </div>
-        <div id="egNodeDetail" style="overflow-y:auto; background:var(--panel);"></div>
+        <button id="egNodeDetailClose" class="btn secondary" style="position:absolute; top:6px; right:6px; z-index:2; font-size:11px; padding:3px 9px; line-height:1;" title="Hide this panel">✕</button>
+        <div id="egNodeDetail" style="overflow-y:auto; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);"></div>
       </div>
     </div>
   `;
