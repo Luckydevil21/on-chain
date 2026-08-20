@@ -893,15 +893,17 @@ const CHAIN_COIN_ICON = {
   tron: "tron.png", solana: "solana.png",
 };
 
-// Picks the right coin icon for a graph node. The SPECIFIC asset
-// actually moved (USDT/USDC) takes priority over the underlying
-// chain's native coin - a stablecoin transfer on Ethereum is more
-// informative shown as USDT than as generic ETH, since it tells an
-// investigator at a glance "this hop was a stablecoin movement," not
-// just which network it happened on. Falls back to the chain's native
-// coin, then null if nothing matches (caller keeps a plain dot node).
-function coinIconForNode(chain, amountLabel, isCrossChainDestination) {
-  if (isCrossChainDestination) return COIN_ICON_BASE + "bridgers.png";
+// Picks the right coin icon for a graph node. A node genuinely
+// attributed as Bridgers.xyz (via known_entities or the OP_RETURN
+// pattern match - either mechanism can produce this name) always gets
+// the Bridgers icon, regardless of which chain that hop happened on -
+// it's the service itself, not a plain wallet on that chain. Otherwise
+// the SPECIFIC asset actually moved (USDT/USDC) takes priority over
+// the chain's native coin, since a stablecoin transfer is more
+// informative shown as its own icon than the generic chain coin.
+// Falls back to the chain's native coin, then null if nothing matches.
+function coinIconForNode(chain, amountLabel, entityName) {
+  if (entityName && entityName.toLowerCase().includes("bridgers")) return COIN_ICON_BASE + "bridgers.png";
   const label = (amountLabel || "").toUpperCase();
   if (label.includes("USDT")) return COIN_ICON_BASE + "usdt.png";
   if (label.includes("USDC")) return COIN_ICON_BASE + "usdc.png";
@@ -913,8 +915,8 @@ function coinIconForNode(chain, amountLabel, isCrossChainDestination) {
 // circularImage (the coin logo, clipped to a circle) when an icon
 // resolves, otherwise the existing plain dot shape as a safe fallback
 // so a missing/unrecognized icon never breaks node rendering.
-function coinNodeShapeProps(chain, amountLabel, isCrossChainDestination) {
-  const icon = coinIconForNode(chain, amountLabel, isCrossChainDestination);
+function coinNodeShapeProps(chain, amountLabel, entityName) {
+  const icon = coinIconForNode(chain, amountLabel, entityName);
   return icon ? { shape: "circularImage", image: icon } : { shape: "dot" };
 }
 
@@ -2480,7 +2482,7 @@ function renderTraceGraph(data, allPaths, container) {
       id: addr,
       label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
       title: entityName ? `${entityName} (${entityType})\n${addr}` : addr,
-      ...coinNodeShapeProps(data.chain, hop ? hop.amount : null, false),
+      ...coinNodeShapeProps(data.chain, hop ? hop.amount : null, entityName),
       size: isRoot ? 22 : 14,
       color: nodeColor(addr, isRoot),
       font: { color: "#c9d1d9", size: 12 },
@@ -2497,7 +2499,7 @@ function renderTraceGraph(data, allPaths, container) {
         id: hint.dest.address,
         label: destSymbol ? `${destSymbol} ${truncateAddress(hint.dest.address)}` : truncateAddress(hint.dest.address),
         title: `Memo-stated destination on ${hint.dest.chain}\n${hint.dest.address}`,
-        ...coinNodeShapeProps(null, null, true),
+        ...coinNodeShapeProps(hint.dest.chain, null, null),
         size: 18,
         color: { border: "#a371f7", background: "#241a33" },  // distinct purple - "this is a chain jump, not a normal hop"
         font: { color: "#c9d1d9", size: 12 },
@@ -4026,7 +4028,7 @@ async function loadCaseExploreGraph(caseId) {
       id: n.id,
       label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
       title: n.entity_name ? `${n.entity_name} (${n.entity_type})\n${n.id}` : n.id,
-      ...coinNodeShapeProps(graph.chain, representativeEdge ? representativeEdge.amount_label : null, n.entity_type === "crossChain"),
+      ...coinNodeShapeProps(representativeEdge ? representativeEdge.chain : graph.chain, representativeEdge ? representativeEdge.amount_label : null, n.entity_name),
       size: n.is_case_wallet ? 26 : 18,
       color: n.is_case_wallet ? EXPLORE_GRAPH_COLORS.root : exploreGraphNodeColor(n.entity_type),
       font: { color: "#000000", size: 12 },
@@ -4288,7 +4290,7 @@ async function startExploreGraph() {
 
   exploreGraphNodes = new vis.DataSet([{
     id: wallet, label: truncateAddress(wallet), title: wallet,
-    ...coinNodeShapeProps(seedTx ? seedTx.chain : null, seedTx ? seedTx.amount_label : null, false),
+    ...coinNodeShapeProps(seedTx ? seedTx.chain : null, seedTx ? seedTx.amount_label : null, null),
     size: 26, color: EXPLORE_GRAPH_COLORS.root,
     font: { color: "#000000", size: 12 },
   }]);
@@ -4387,7 +4389,7 @@ async function expandExploreGraphNode(address, evmChain, statusEl, detailEl) {
       if (isRootNode) {
         const symbol = chainSymbol(result.chain);
         if (symbol) exploreGraphNodes.update({ id: address, label: `${symbol} ${truncateAddress(address)}` });
-        exploreGraphNodes.update({ id: address, ...coinNodeShapeProps(result.chain, null, false) });
+        exploreGraphNodes.update({ id: address, ...coinNodeShapeProps(result.chain, null, null) });
       }
       statusEl.textContent = `${result.edges.length} connection(s) found - showing money out first, most recent first.`;
     } catch (err) {
@@ -4570,7 +4572,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         id: side,
         label: symbol ? `${symbol} ${baseLabel}` : baseLabel,
         title: meta && meta.entity_name ? `${meta.entity_name} (${meta.entity_type})\n${side}` : side,
-        ...coinNodeShapeProps(chain, edge.amount_label, meta && meta.entity_type === "crossChain"),
+        ...coinNodeShapeProps(chain, edge.amount_label, meta && meta.entity_name),
         size: 18, borderWidth: 2,
         color: exploreGraphNodeColor(meta && meta.entity_type),
         font: { color: "#000000", size: 12 },
@@ -4601,7 +4603,7 @@ function addExploreGraphConnection(edge, nodesMeta, chain) {
         id: edge.embedded_destination_address,
         label: destChainSymbol ? `${destChainSymbol} ${truncateAddress(edge.embedded_destination_address)}` : truncateAddress(edge.embedded_destination_address),
         title: `Memo-stated destination on ${edge.embedded_destination_chain}\n${edge.embedded_destination_address}`,
-        ...coinNodeShapeProps(null, null, true),
+        ...coinNodeShapeProps(edge.embedded_destination_chain, null, null),
         size: 18, borderWidth: 2,
         color: EXPLORE_GRAPH_COLORS.crossChain,
         font: { color: "#000000", size: 12 },
