@@ -1105,15 +1105,35 @@ class SaveCaseExplorePositionRequest(BaseModel):
     y: float
 
 
+def _check_case_access(case_id, requester):
+    """Admins can access any case. Everyone else can only access cases
+    they personally created - matching the same visibility rule as
+    evidence packs. Raises 404 (not 403) whether the case genuinely
+    doesn't exist or the requester just isn't allowed to see it - a
+    non-admin user shouldn't be able to tell those two situations
+    apart, since that itself would leak whether a given case id
+    belongs to someone else."""
+    if requester["role"] == "admin":
+        return
+    with auth._get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT created_by FROM cases WHERE id = %s;", (case_id,))
+            row = cur.fetchone()
+    if not row or row[0] != requester["username"]:
+        raise HTTPException(404, "No case with that id.")
+
+
 @app.get("/api/cases/{case_id}/explore-graph")
 def get_case_explore_graph(case_id: str, _auth=Depends(require_read)):
     """Everything needed to restore a case's Explore Graph exactly as it
     was left - see link_tracer.py's load_case_explore_graph()."""
+    _check_case_access(case_id, _auth)
     return lt.load_case_explore_graph(case_id)
 
 
 @app.post("/api/cases/{case_id}/explore-graph/edges")
 def add_case_explore_edges(case_id: str, req: SaveCaseExploreEdgesRequest, _auth=Depends(require_read)):
+    _check_case_access(case_id, _auth)
     edges = [{"from": e.from_, "to": e.to, "amount_label": e.amount_label,
               "tx_hash": e.tx_hash, "tx_time_utc": e.tx_time_utc, "explorer_url": e.explorer_url}
              for e in req.edges]
@@ -1126,6 +1146,7 @@ def remove_case_explore_edges(case_id: str, req: SaveCaseExploreEdgesRequest, _a
     """Reverses a "Show all" batch for real - so hidden connections
     stay genuinely gone, not just out of the current view, the next
     time this case's graph is opened."""
+    _check_case_access(case_id, _auth)
     edges = [{"from": e.from_, "to": e.to, "tx_hash": e.tx_hash} for e in req.edges]
     lt.delete_case_explore_edges(case_id, edges)
     auth.log_action(_auth["username"], "case_explore_edges_hidden", target=case_id, detail=f"{len(edges)} edge(s)")
@@ -1134,6 +1155,7 @@ def remove_case_explore_edges(case_id: str, req: SaveCaseExploreEdgesRequest, _a
 
 @app.post("/api/cases/{case_id}/explore-graph/position")
 def save_case_explore_position(case_id: str, req: SaveCaseExplorePositionRequest, _auth=Depends(require_read)):
+    _check_case_access(case_id, _auth)
     result = lt.save_case_explore_position(case_id, req.address, req.x, req.y)
     if not result["success"]:
         raise HTTPException(503, result["message"])
@@ -1154,6 +1176,7 @@ class UpdateCaseExploreNoteRequest(BaseModel):
 
 @app.post("/api/cases/{case_id}/explore-graph/notes")
 def add_case_explore_note(case_id: str, req: SaveCaseExploreNoteRequest, _auth=Depends(require_read)):
+    _check_case_access(case_id, _auth)
     result = lt.save_case_explore_note(case_id, req.text, req.x, req.y, _auth["username"])
     if not result["success"]:
         raise HTTPException(503, result["message"])
@@ -1162,6 +1185,7 @@ def add_case_explore_note(case_id: str, req: SaveCaseExploreNoteRequest, _auth=D
 
 @app.post("/api/cases/{case_id}/explore-graph/notes/{note_id}")
 def update_case_explore_note(case_id: str, note_id: str, req: UpdateCaseExploreNoteRequest, _auth=Depends(require_read)):
+    _check_case_access(case_id, _auth)
     result = lt.update_case_explore_note(note_id, note_text=req.text, x=req.x, y=req.y)
     if not result["success"]:
         raise HTTPException(503, result["message"])
@@ -1170,6 +1194,7 @@ def update_case_explore_note(case_id: str, note_id: str, req: UpdateCaseExploreN
 
 @app.delete("/api/cases/{case_id}/explore-graph/notes/{note_id}")
 def delete_case_explore_note(case_id: str, note_id: str, _auth=Depends(require_read)):
+    _check_case_access(case_id, _auth)
     result = lt.delete_case_explore_note(note_id)
     if not result["success"]:
         raise HTTPException(503, result["message"])
@@ -1178,18 +1203,32 @@ def delete_case_explore_note(case_id: str, note_id: str, _auth=Depends(require_r
 
 @app.get("/api/cases")
 def list_cases(_auth=Depends(require_read)):
-    """Every saved case, newest first, with a wallet count for each."""
+    """Admins see every saved case. Everyone else sees only their own -
+    same visibility rule as evidence packs and the audit log."""
     with auth._get_db_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT c.id, c.name, c.notes, c.created_by, c.created_at, COUNT(w.id) AS wallet_count
-                FROM cases c
-                LEFT JOIN case_wallets w ON w.case_id = c.id
-                GROUP BY c.id
-                ORDER BY c.created_at DESC;
-                """
-            )
+            if _auth["role"] == "admin":
+                cur.execute(
+                    """
+                    SELECT c.id, c.name, c.notes, c.created_by, c.created_at, COUNT(w.id) AS wallet_count
+                    FROM cases c
+                    LEFT JOIN case_wallets w ON w.case_id = c.id
+                    GROUP BY c.id
+                    ORDER BY c.created_at DESC;
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT c.id, c.name, c.notes, c.created_by, c.created_at, COUNT(w.id) AS wallet_count
+                    FROM cases c
+                    LEFT JOIN case_wallets w ON w.case_id = c.id
+                    WHERE c.created_by = %s
+                    GROUP BY c.id
+                    ORDER BY c.created_at DESC;
+                    """,
+                    (_auth["username"],)
+                )
             return [
                 {
                     "id": str(row["id"]), "name": row["name"], "notes": row["notes"] or "",
@@ -1219,6 +1258,7 @@ def create_case(req: CaseIn, _auth=Depends(require_write)):
 
 @app.get("/api/cases/{case_id}")
 def get_case(case_id: str, _auth=Depends(require_read)):
+    _check_case_access(case_id, _auth)
     with auth._get_db_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT id, name, notes, created_by, created_at FROM cases WHERE id = %s;", (case_id,))
@@ -1524,6 +1564,7 @@ def create_evidence_pack_from_case_graph(case_id: str, req: CreateEvidencePackFr
     automated Link Tracer search. See link_tracer.py's
     build_trace_data_from_case_explore_graph() for how the graph gets
     transformed into the same shape the PDF generator already expects."""
+    _check_case_access(case_id, _auth)
     _check_general_rate_limit("evidence-pack", _auth["username"], window_seconds=300, max_requests=10)
     trace_data = lt.build_trace_data_from_case_explore_graph(case_id)
     if req.graph_image_base64:
